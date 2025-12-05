@@ -1,0 +1,78 @@
+# ########## Security & Environment Variables ##########
+# فایل‌های حاوی رمز عبور و توکن (بسیار مهم)
+.env
+.env.*
+bot/.env
+env.py
+secrets.py
+
+# ########## Python & Bytecode ##########
+# فایل‌های کامپایل شده پایتون که نباید کامیت شوند
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ########## Virtual Environments ##########
+# پوشه‌های محیط مجازی
+venv/
+env/
+.venv/
+.env/
+
+# ########## Databases ##########
+# دیتابیس‌های لوکال SQLite (برای تست)
+*.db
+*.sqlite3
+*.sqlite
+*.db-wal
+*.db-shm
+
+# اگر از داکر برای پستگرس استفاده می‌کنید و داده‌ها در پوشه پروژه است
+pgdata/
+postgres_data/
+
+# ########## Logs & Debugging ##########
+# فایل‌های لاگ
+*.log
+logs/
+*.log.*
+
+# ########## IDE & Editor Configs ##########
+# تنظیمات شخصی ادیتورها
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ########## Testing & Coverage ##########
+# اگر در آینده تست بنویسید این‌ها تولید می‌شوند
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# ########## Distribution & Packaging ##########
+# فایل‌های مربوط به پکیج‌بندی
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ########## Celery / Async Tasks ##########
+# اگر از Celery برای تسک‌های زمان‌بندی شده استفاده کنید
+celerybeat-schedule
+celerybeat.pid
+
+# ########## Project Specific ##########
+# فایل‌های موقت خاص پروژه شما
+# مثلاً اگر رسیدهای پرداخت موقتاً جایی ذخیره می‌شوند
+receipts/
+temp/
+backups/
+
+# فایل‌های session تلگرام (اگر از کتابخانه‌هایی استفاده کنید که سشن فایل می‌سازند)
+*.session
+*.session-journal
