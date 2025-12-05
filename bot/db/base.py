@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import expression
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +442,7 @@ class DatabaseManager:
     @property
     def session(self) -> AsyncGenerator[AsyncSession, None]:
         return self.get_session()
-
+    @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
         async with self.session_maker() as session:
             try:
