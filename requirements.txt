@@ -1,6 +1,10 @@
 sqlalchemy>=2.0.0
-asyncpg 
+asyncpg
 python-dotenv
 pytz
 jdatetime
 greenlet
+pyTelegramBotAPI
+aiohttp
+aiofiles
+async-lru

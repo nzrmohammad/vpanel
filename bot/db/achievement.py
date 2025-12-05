@@ -274,10 +274,7 @@ class AchievementDB:
         # from .base import LotteryTicket
         
         async with self.get_session() as session:
-            stmt = delete(LotteryTicket)
-            result = await session.execute(stmt)
-            # نیازی به commit دستی نیست، get_session انجام می‌دهد
-            return result.rowcount
+            pass
 
     # --- توابع مربوط به درخواست نشان ---
 

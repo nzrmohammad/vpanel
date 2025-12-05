@@ -1,5 +1,4 @@
 import os
-from cachetools import TTLCache
 from dotenv import load_dotenv
 from datetime import time
 import pytz
@@ -28,7 +27,6 @@ MARZBAN_API_PASSWORD = os.getenv("MARZBAN_API_PASSWORD")
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY")
 
 TELEGRAM_FILE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024
-api_cache = TTLCache(maxsize=2, ttl=60)
 API_TIMEOUT = 45
 API_RETRY_COUNT = 3
 

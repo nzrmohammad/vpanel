@@ -387,3 +387,28 @@ def find_best_plan_upgrade(current_usage: float, current_limit: float, all_plans
             recommendations[p_type] = upgrades[0]
             
     return recommendations
+
+# ---------------------------------------------------------
+# توابع کمکی گم‌شده (اضافه شود به انتهای فایل)
+# ---------------------------------------------------------
+
+def format_currency(amount: float) -> str:
+    """فرمت‌بندی مبلغ به صورت سه رقم سه رقم (مثلاً 10,000)."""
+    try:
+        return f"{int(amount):,}"
+    except (ValueError, TypeError):
+        return "0"
+
+def format_date(dt) -> str:
+    """تبدیل تاریخ (تایم‌استمپ یا آبجکت) به رشته شمسی."""
+    # از تابع to_shamsi که در همین فایل دارید استفاده می‌کند
+    return to_shamsi(dt, include_time=True)
+
+def get_status_emoji(is_active: bool) -> str:
+    """بازگرداندن ایموجی وضعیت (فعال/غیرفعال)."""
+    return "✅" if is_active else "❌"
+
+def bytes_to_gb(bytes_value: int) -> float:
+    """تبدیل بایت به گیگابایت."""
+    if not bytes_value: return 0.0
+    return round(bytes_value / (1024**3), 2)

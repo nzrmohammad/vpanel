@@ -2,7 +2,7 @@
 
 import logging
 import os
-import uuid
+import uuid as uuid_lib
 from typing import Optional, List, AsyncGenerator
 from datetime import datetime, date
 
@@ -52,7 +52,7 @@ class UserUUID(Base):
     __tablename__ = "user_uuids"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
-    uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), default=uuid.uuid4)
+    uuid: Mapped[uuid_lib.UUID] = mapped_column(UUID(as_uuid=True), default=uuid_lib.uuid4)
     name: Mapped[Optional[str]] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -240,7 +240,7 @@ class UserGeneratedConfig(Base):
 
 class MarzbanMapping(Base):
     __tablename__ = "marzban_mapping"
-    hiddify_uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    hiddify_uuid: Mapped[uuid_lib.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     marzban_username: Mapped[str] = mapped_column(String(64), unique=True)
 
 class LoginToken(Base):

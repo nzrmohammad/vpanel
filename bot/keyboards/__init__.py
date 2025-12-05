@@ -4,7 +4,11 @@ from .user import UserMenu
 from .admin import AdminMenu
 from .base import BaseMenu
 
-# تعریف نمونه‌ها با نام‌های صحیح (همانطور که در فایل‌های دیگر صدا زده شده‌اند)
+# تعریف نمونه‌های اصلی کلاس‌ها
 user = UserMenu()
 admin = AdminMenu()
 base = BaseMenu()
+
+# تعریف نام‌های جایگزین (Alias) برای جلوگیری از خطای ایمپورت در فایل‌های دیگر
+user_menu = user
+admin_menu = admin

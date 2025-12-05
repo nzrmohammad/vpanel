@@ -8,7 +8,6 @@ from datetime import datetime
 from telebot import types
 from bot.bot_instance import bot
 from bot.keyboards import admin_menu
-from bot.config import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
