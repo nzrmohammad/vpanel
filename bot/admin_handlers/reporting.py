@@ -42,9 +42,48 @@ async def reporting_menu_handler(call: types.CallbackQuery):
         "لطفاً نوع گزارش مورد نظر خود را انتخاب کنید:",
         call.from_user.id,
         call.message.message_id,
-        reply_markup=admin.reporting_menu(),
+        reply_markup=admin_menu.reporting_menu(),
         parse_mode='HTML'
     )
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin:quick_dashboard")
+async def handle_quick_dashboard(call: types.CallbackQuery):
+    """داشبورد سریع شامل خلاصه وضعیت سیستم"""
+    user_id = call.from_user.id
+    
+    # دریافت آمار به صورت زنده
+    async with db.get_session() as session:
+        # تعداد کاربران و سرویس‌ها
+        total_users = await session.scalar(select(func.count(User.user_id)))
+        active_uuids = await session.scalar(select(func.count(UserUUID.id)).where(UserUUID.is_active == True))
+        
+        # محاسبه فروش امروز (شروع روز)
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        sales_today = await session.scalar(
+            select(func.sum(func.abs(WalletTransaction.amount))).where(
+                and_(
+                    WalletTransaction.transaction_date >= today_start,
+                    WalletTransaction.type.in_(['purchase', 'addon_purchase', 'gift_purchase'])
+                )
+            )
+        ) or 0
+
+    text = (
+        "🚀 <b>داشبورد وضعیت سریع</b>\n"
+        f"──────────────────\n"
+        f"👥 <b>کل کاربران:</b> {total_users}\n"
+        f"✅ <b>سرویس‌های فعال:</b> {active_uuids}\n"
+        f"💰 <b>فروش امروز:</b> {int(sales_today):,} تومان\n"
+        f"──────────────────\n"
+        f"🕒 بروزرسانی: {datetime.now().strftime('%H:%M')}"
+    )
+    
+    # دکمه‌های رفرش و بازگشت
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔄 بروزرسانی", callback_data="admin:quick_dashboard"))
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel"))
+    
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')    
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:report_general")
 async def handle_report_general(call: types.CallbackQuery):
@@ -72,7 +111,7 @@ async def handle_report_general(call: types.CallbackQuery):
         f"📅 تاریخ گزارش: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     
-    await _safe_edit(user_id, call.message.message_id, report_text, reply_markup=admin.back_to_reporting(), parse_mode='HTML')
+    await _safe_edit(user_id, call.message.message_id, report_text, reply_markup=admin_menu.back_to_reporting(), parse_mode='HTML')
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:report_financial")
 async def handle_report_financial(call: types.CallbackQuery):
@@ -131,7 +170,7 @@ async def handle_report_financial(call: types.CallbackQuery):
         f"📅 تاریخ: {now.strftime('%Y-%m-%d')}"
     )
 
-    await _safe_edit(user_id, call.message.message_id, report_text, reply_markup=admin.back_to_reporting(), parse_mode='HTML')
+    await _safe_edit(user_id, call.message.message_id, report_text, reply_markup=admin_menu.back_to_reporting(), parse_mode='HTML')
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:report_excel")
 async def handle_report_excel(call: types.CallbackQuery):
