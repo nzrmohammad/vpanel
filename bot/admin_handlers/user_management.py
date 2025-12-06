@@ -831,3 +831,157 @@ async def handle_reset_all_balances_execute(call, params):
     count = await db.reset_all_wallet_balances()
     await bot.answer_callback_query(call.id, "✅ انجام شد.")
     await _safe_edit(call.from_user.id, call.message.message_id, f"✅ موجودی {count} کاربر صفر شد.", reply_markup=await admin_menu.system_tools_menu())
+
+# --- اضافه کردن به انتهای فایل bot/admin_handlers/user_management.py ---
+
+# ==============================================================================
+# 11. افزودن کاربر جدید (Add User Flow) - جایگزین فایل‌های قدیمی
+# ==============================================================================
+
+async def handle_add_user_start(call: types.CallbackQuery, params: list):
+    """شروع پروسه افزودن کاربر: انتخاب پنل"""
+    # params[0] = panel_type (hiddify/marzban)
+    panel_type = params[0]
+    uid, msg_id = call.from_user.id, call.message.message_id
+    
+    # دریافت پنل‌های فعال این نوع
+    async with db.get_session() as session:
+        stmt = select(Panel).where(and_(Panel.panel_type == panel_type, Panel.is_active == True))
+        result = await session.execute(stmt)
+        panels = result.scalars().all()
+    
+    if not panels:
+        await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی از این نوع یافت نشد.", show_alert=True)
+        return
+
+    # ذخیره استیت
+    admin_conversations[uid] = {
+        'action': 'add_user',
+        'step': 'select_panel',
+        'panel_type': panel_type,
+        'msg_id': msg_id,
+        'data': {}
+    }
+    
+    # ساخت منوی انتخاب پنل
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for p in panels:
+        kb.add(types.InlineKeyboardButton(f"سرور: {p.name}", callback_data=f"admin:add_user_select_panel:{p.name}"))
+    
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:manage_panel:{panel_type}"))
+    
+    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb)
+
+async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
+    """انتخاب پنل و پرسیدن نام"""
+    # params[0] = panel_name
+    panel_name = params[0]
+    uid = call.from_user.id
+    
+    if uid not in admin_conversations: return
+    
+    admin_conversations[uid]['data']['panel_name'] = panel_name
+    admin_conversations[uid]['step'] = 'get_name'
+    msg_id = admin_conversations[uid]['msg_id']
+    
+    await _safe_edit(uid, msg_id, 
+                     f"👤 سرور انتخاب شد: **{panel_name}**\n\nلطفاً **نام کاربر** را وارد کنید:", 
+                     reply_markup=await admin_menu.cancel_action())
+    
+    # تنظیم مرحله بعدی برای دریافت پیام متنی
+    bot.register_next_step_handler(call.message, get_new_user_name)
+
+async def get_new_user_name(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    
+    if uid not in admin_conversations: return
+    
+    admin_conversations[uid]['data']['name'] = text
+    msg_id = admin_conversations[uid]['msg_id']
+    
+    await _safe_edit(uid, msg_id, 
+                     "📦 لطفاً **حجم محدودیت (GB)** را وارد کنید (عدد):", 
+                     reply_markup=await admin_menu.cancel_action())
+    bot.register_next_step_handler(message, get_new_user_limit)
+
+async def get_new_user_limit(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    if uid not in admin_conversations: return
+    
+    try:
+        limit = float(text)
+        admin_conversations[uid]['data']['limit'] = limit
+        msg_id = admin_conversations[uid]['msg_id']
+        
+        await _safe_edit(uid, msg_id, 
+                         "📅 لطفاً **تعداد روز اعتبار** را وارد کنید (عدد):", 
+                         reply_markup=await admin_menu.cancel_action())
+        bot.register_next_step_handler(message, get_new_user_days)
+    except ValueError:
+        msg_id = admin_conversations[uid]['msg_id']
+        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم (GB):", reply_markup=await admin_menu.cancel_action())
+        bot.register_next_step_handler(message, get_new_user_limit)
+
+async def get_new_user_days(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    if uid not in admin_conversations: return
+    
+    try:
+        days = int(text)
+        data = admin_conversations[uid]['data']
+        msg_id = admin_conversations[uid]['msg_id']
+        
+        # اجرای ساخت کاربر
+        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر در پنل...", reply_markup=None)
+        
+        panel_name = data['panel_name']
+        name = data['name']
+        limit = data['limit']
+        
+        # استفاده از فکتوری برای گرفتن هندلر پنل
+        panel_api = await PanelFactory.get_panel(panel_name)
+        
+        # فراخوانی متد ساخت کاربر
+        new_user = await panel_api.add_user(name, limit, days)
+        
+        if new_user:
+            # ثبت در دیتابیس ربات (اختیاری ولی توصیه شده)
+            # اگر Hiddify باشد UUID دارد، اگر Marzban باشد Username
+            identifier = new_user.get('uuid') or name 
+            
+            # پاک کردن استیت
+            del admin_conversations[uid]
+            
+            res_text = (
+                f"✅ کاربر با موفقیت ساخته شد!\n\n"
+                f"👤 نام: `{name}`\n"
+                f"📦 حجم: `{limit} GB`\n"
+                f"📅 مدت: `{days} روز`\n"
+                f"🔑 شناسه: `{identifier}`"
+            )
+            
+            # نمایش دکمه‌های مدیریت کاربر جدید
+            kb = types.InlineKeyboardMarkup()
+            # اگر شناسه UUID است (هیدیفای) دکمه کپی لینک هم می‌توان گذاشت
+            kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data=f"admin:list:panel_users:{admin_conversations[uid]['panel_type']}:0"))
+            
+            await _safe_edit(uid, msg_id, res_text, reply_markup=kb)
+            
+            # سینک سریع دیتابیس (اختیاری)
+            # await combined_handler.get_combined_user_info(identifier) 
+            
+        else:
+            await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر در پنل. لطفاً لاگ را بررسی کنید.", reply_markup=await admin_menu.main())
+            
+    except ValueError:
+        msg_id = admin_conversations[uid]['msg_id']
+        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد صحیح وارد کنید. روز:", reply_markup=await admin_menu.cancel_action())
+        bot.register_next_step_handler(message, get_new_user_days)
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        if uid in admin_conversations:
+            msg_id = admin_conversations[uid]['msg_id']
+            await _safe_edit(uid, msg_id, f"❌ خطای غیرمنتظره: {e}", reply_markup=await admin_menu.main())
