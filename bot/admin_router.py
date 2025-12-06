@@ -226,7 +226,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "ga_ask_value": group_actions.handle_ask_action_value,
     "adv_ga_select_filter": group_actions.handle_select_advanced_filter,
     "adv_ga_select_action": group_actions.handle_select_action_for_filter,
-    "ga_confirm": group_actions.ga_execute, # اگر این تابع در فایل باشد
+    "ga_confirm": group_actions.ga_execute,
     
     # --- System Tools & Backup ---
     "system_tools_menu": user_management.handle_system_tools_menu,
@@ -240,8 +240,8 @@ ADMIN_CALLBACK_HANDLERS = {
     "reset_all_balances_confirm": user_management.handle_reset_all_balances_confirm,
     "reset_all_balances_exec": user_management.handle_reset_all_balances_execute,
     
-    "backup_menu": backup.handle_backup_menu,
-    "backup": backup.handle_backup_action,
+    "backup_menu": backup.backup_menu_handler,
+    "backup": backup.backup_panel_data,
     
     "broadcast": broadcast.start_broadcast_flow,
     "broadcast_target": broadcast.ask_for_broadcast_message,

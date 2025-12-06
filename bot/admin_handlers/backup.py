@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:backup_menu")
-async def backup_menu_handler(call: types.CallbackQuery):
+async def backup_menu_handler(call: types.CallbackQuery, params: list = None):
     """نمایش منوی انتخاب نوع بکاپ"""
     await bot.edit_message_text(
         "💾 <b>منوی پشتیبان‌گیری</b>\n\nلطفاً نوع داده‌ای که می‌خواهید بکاپ بگیرید را انتخاب کنید:",
