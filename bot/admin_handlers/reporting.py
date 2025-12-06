@@ -368,3 +368,30 @@ async def handle_confirm_delete_transaction(call, params):
 
 async def handle_do_delete_transaction(call, params):
     pass
+
+# ---------------------------------------------------------
+# Missing Handlers (اضافه شده برای رفع خطا)
+# ---------------------------------------------------------
+
+async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: list = None):
+    """
+    نمایش منوی انتخاب پلن برای گزارش‌گیری.
+    این تابع توسط navigation.py و admin_router فراخوانی می‌شود.
+    """
+    # دریافت لیست پلن‌ها از دیتابیس
+    plans = await db.get_all_plans()
+    
+    # ساخت کیبورد انتخاب پلن
+    markup = await admin_menu.select_plan_for_report_menu(plans)
+    
+    await _safe_edit(
+        call.from_user.id,
+        call.message.message_id,
+        "📊 <b>گزارش بر اساس پلن</b>\n\nلطفاً پلن مورد نظر را برای مشاهده آمار انتخاب کنید:",
+        reply_markup=markup,
+        parse_mode='HTML'
+    )
+
+# ایجاد نام مستعار برای سازگاری با admin_router.py
+# در router با این نام صدا زده شده است: report_by_plan_select
+handle_report_by_plan_selection = handle_select_plan_for_report_menu

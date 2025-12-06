@@ -25,7 +25,7 @@ async def main():
         
         # 3. فعال‌سازی هندلرها (فراخوانی دکوریتورها)
         logger.info("📡 Registering Handlers...")
-        register_admin_handlers()
+        register_admin_handlers(bot, None)
         register_user_handlers()
         
         # 4. حذف وب‌هوک‌های احتمالی قبلی (برای جلوگیری از تداخل با پولینگ)
