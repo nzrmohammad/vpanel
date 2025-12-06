@@ -8,16 +8,13 @@ import jdatetime
 from datetime import datetime
 from telebot import types
 
-# --- Imports from your project structure ---
+# --- Imports ---
 from bot.bot_instance import bot
 from bot.database import db
 from bot.keyboards import user as user_menu
 from bot.utils import escape_markdown, _safe_edit, _UUID_RE
 from bot.language import get_string
-
-# --- اصلاح ایمپورت فرمترها ---
-from bot.formatters import user_formatter  # استفاده از اینستنس کلاس
-
+from bot.formatters import user_formatter
 from bot.config import (
     ADMIN_IDS, ADMIN_SUPPORT_CONTACT, TUTORIAL_LINKS, 
     ACHIEVEMENTS, ACHIEVEMENT_SHOP_ITEMS, ENABLE_REFERRAL_SYSTEM, REFERRAL_REWARD_GB
@@ -26,19 +23,9 @@ from bot import combined_handler
 from bot.services.panels.hiddify import HiddifyPanel
 from bot.services.panels.marzban import MarzbanPanel
 
-# تنظیم لاگر
 logger = logging.getLogger(__name__)
 
-# --- تنظیمات گردونه شانس ---
-SPIN_COST = 50  # هزینه هر بار چرخش
-REWARDS_CONFIG = [
-    {"name": "پوچ 😢",           "weight": 40, "type": "none"},
-    {"name": "۲۰ سکه بازگشت 🪙", "weight": 30, "type": "points", "value": 20},
-    {"name": "۵۰۰ مگابایت حجم 🎁", "weight": 20, "type": "volume", "value": 0.5},
-    {"name": "۱ گیگابایت حجم 🔥",  "weight": 10, "type": "volume", "value": 1.0},
-]
-
-# دیکشنری برای نگهداری وضعیت مکالمات (مثل دریافت متن تیکت یا تاریخ تولد)
+# User states (non-admin)
 user_conversations = {}
 
 # =============================================================================
@@ -47,36 +34,29 @@ user_conversations = {}
 
 @bot.message_handler(commands=['start'])
 async def start_command(message: types.Message):
-    """هندلر دستور /start: ثبت نام کاربر و نمایش منوی اصلی."""
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
     
-    # ثبت نام یا آپدیت اطلاعات کاربر
     await db.add_or_update_user(user_id, username, first_name, last_name)
     
-    # بررسی کد دعوت (Referral System)
     args = message.text.split()
     if len(args) > 1 and ENABLE_REFERRAL_SYSTEM:
         referral_code = args[1]
         referrer_info = await db.get_referrer_info(user_id)
-        if not referrer_info: # اگر قبلاً معرفی نشده
+        if not referrer_info:
             await db.set_referrer(user_id, referral_code)
 
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
     
-    # بررسی وجود اکانت برای نمایش منو
     user_uuids = await db.uuids(user_id)
     
-    # --- تغییر مهم: اگر کاربر ادمین بود (is_admin) یا اکانت داشت، منو باز شود ---
     if user_uuids or is_admin:
         text = get_string('main_menu_title', lang)
-        # چون is_admin را True می‌فرستیم، دکمه "پنل مدیریت" در منو ساخته می‌شود
         markup = await user_menu.main(is_admin, lang)
     else:
-        # اگر کاربر عادی بود و اکانت نداشت، پیام خوش‌آمدگویی و درخواست UUID
         text = get_string('start_prompt', lang)
         markup = types.ReplyKeyboardRemove()
     
@@ -85,12 +65,20 @@ async def start_command(message: types.Message):
 
 @bot.message_handler(regexp=_UUID_RE.pattern)
 async def handle_uuid_login(message: types.Message):
-    """هندلر دریافت UUID برای لاگین."""
+    """Handler for UUID login."""
     user_id = message.from_user.id
+    
+    # 🔥 Prevent conflict with admin operations
+    # If user is admin and is in an active state in context_state, skip this handler
+    if user_id in ADMIN_IDS:
+        if hasattr(bot, 'context_state') and user_id in bot.context_state:
+            # Allow Global Step Handler in Admin Router to process it
+            return 
+
     uuid_str = message.text.strip()
     lang = await db.get_user_language(user_id)
     
-    msg = await bot.send_message(message.chat.id, "⏳ در حال بررسی UUID...")
+    msg = await bot.send_message(message.chat.id, "⏳ Checking UUID...")
 
     try:
         info = await combined_handler.get_combined_user_info(uuid_str)
@@ -107,17 +95,16 @@ async def handle_uuid_login(message: types.Message):
             elif result == "db_err_uuid_already_active_self":
                 await bot.edit_message_text(get_string(result, lang), message.chat.id, msg.message_id)
             else:
-                await bot.edit_message_text("❌ این UUID قبلا ثبت شده است.", message.chat.id, msg.message_id)
+                await bot.edit_message_text("❌ This UUID is already registered.", message.chat.id, msg.message_id)
         else:
             await bot.edit_message_text(get_string("uuid_not_found", lang), message.chat.id, msg.message_id)
     except Exception as e:
         logger.error(f"UUID Login Error: {e}")
-        await bot.edit_message_text("❌ خطایی رخ داد.", message.chat.id, msg.message_id)
+        await bot.edit_message_text("❌ An error occurred.", message.chat.id, msg.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 async def back_to_main_menu_handler(call: types.CallbackQuery):
-    """بازگشت به منوی اصلی."""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
@@ -127,72 +114,72 @@ async def back_to_main_menu_handler(call: types.CallbackQuery):
     
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
 
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_start_menu")
-async def back_to_start_menu(call: types.CallbackQuery):
-    await back_to_main_menu_handler(call)
-
 # =============================================================================
 # 2. Daily Check-in & Lucky Spin
 # =============================================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "daily_checkin")
 async def daily_checkin_handler(call: types.CallbackQuery):
-    """هندلر دریافت جایزه روزانه."""
     user_id = call.from_user.id
     
     result = await db.claim_daily_checkin(user_id)
     
     if result['status'] == 'success':
-        msg = f"✅ تبریک! شما {result['points']} امتیاز دریافت کردید.\n🔥 تعداد روزهای متوالی: {result['streak']}"
+        msg = f"✅ Congrats! You received {result['points']} points.\n🔥 Streak: {result['streak']}"
         await bot.answer_callback_query(call.id, msg, show_alert=True)
     elif result['status'] == 'already_claimed':
-        msg = f"⏳ شما امروز قبلاً امتیاز خود را دریافت کرده‌اید. فردا دوباره سر بزنید!"
+        msg = f"⏳ You have already claimed your daily points. Come back tomorrow!"
         await bot.answer_callback_query(call.id, msg, show_alert=True)
     else:
-        await bot.answer_callback_query(call.id, "❌ خطایی رخ داد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ An error occurred.", show_alert=True)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "lucky_spin_menu")
 async def lucky_spin_menu_handler(call: types.CallbackQuery):
-    """نمایش منوی گردونه شانس."""
     user_id = call.from_user.id
     user_data = await db.user(user_id)
     current_points = user_data.get('achievement_points', 0) if user_data else 0
+    SPIN_COST = 50
     
     msg = (
-        f"🎰 **گردونه شانس**\n\n"
-        f"💰 موجودی شما: *{current_points} سکه*\n"
-        f"💎 هزینه هر چرخش: *{SPIN_COST} سکه*\n\n"
-        f"🎁 **جوایز احتمالی:**\n"
-        f"▫️ حجم اضافه (تا ۱ گیگ)\n"
-        f"▫️ سکه رایگان\n"
-        f"▫️ و شاید هم پوچ!\n\n"
-        f"آیا شانست رو امتحان می‌کنی؟"
+        f"🎰 **Lucky Spin**\n\n"
+        f"💰 Your Balance: *{current_points} coins*\n"
+        f"💎 Cost per spin: *{SPIN_COST} coins*\n\n"
+        f"🎁 **Prizes:**\n"
+        f"▫️ Extra Volume\n"
+        f"▫️ Free Coins\n"
+        f"▫️ Or nothing!\n\n"
+        f"Do you want to try your luck?"
     )
     
     kb = types.InlineKeyboardMarkup()
     if current_points >= SPIN_COST:
-        kb.add(types.InlineKeyboardButton("🎲 بچرخون! (50- سکه)", callback_data="do_spin"))
+        kb.add(types.InlineKeyboardButton("🎲 Spin! (-50 coins)", callback_data="do_spin"))
     else:
-        kb.add(types.InlineKeyboardButton("❌ موجودی ناکافی", callback_data="shop:main"))
+        kb.add(types.InlineKeyboardButton("❌ Insufficient Balance", callback_data="shop:main"))
     
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت به فروشگاه", callback_data="shop:main"))
+    kb.add(types.InlineKeyboardButton("🔙 Back to Shop", callback_data="shop:main"))
     
     await _safe_edit(user_id, call.message.message_id, msg, reply_markup=kb, parse_mode="Markdown")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "do_spin")
 async def do_spin_handler(call: types.CallbackQuery):
-    """اجرای منطق چرخش گردونه."""
     user_id = call.from_user.id
+    SPIN_COST = 50
+    REWARDS_CONFIG = [
+        {"name": "Nothing 😢",           "weight": 40, "type": "none"},
+        {"name": "20 Coins Back 🪙", "weight": 30, "type": "points", "value": 20},
+        {"name": "500MB Data 🎁", "weight": 20, "type": "volume", "value": 0.5},
+        {"name": "1GB Data 🔥",  "weight": 10, "type": "volume", "value": 1.0},
+    ]
     
     if not await db.spend_achievement_points(user_id, SPIN_COST):
-        await bot.answer_callback_query(call.id, "موجودی شما کافی نیست!", show_alert=True)
+        await bot.answer_callback_query(call.id, "Insufficient balance!", show_alert=True)
         return
 
     try:
-        await bot.edit_message_text("🎰 در حال چرخش... 🎲", call.message.chat.id, call.message.message_id)
+        await bot.edit_message_text("🎰 Spinning... 🎲", call.message.chat.id, call.message.message_id)
         time.sleep(1.0) 
     except:
         pass
@@ -201,11 +188,11 @@ async def do_spin_handler(call: types.CallbackQuery):
     result_msg = ""
     
     if reward['type'] == "none":
-        result_msg = f"😢 اوه! {reward['name']}\nشانس بعدی شاید بهتر باشه."
+        result_msg = f"😢 Oh! {reward['name']}\nMaybe next time."
         
     elif reward['type'] == "points":
         await db.add_achievement_points(user_id, reward['value'])
-        result_msg = f"🎉 تبریک! برنده شدی:\n**{reward['name']}**"
+        result_msg = f"🎉 Congrats! You won:\n**{reward['name']}**"
         
     elif reward['type'] == "volume":
         user_uuids = await db.uuids(user_id)
@@ -214,17 +201,17 @@ async def do_spin_handler(call: types.CallbackQuery):
             success = await combined_handler.modify_user_on_all_panels(first_uuid, add_gb=reward['value'], add_days=0)
             
             if success:
-                result_msg = f"🔥 عالیه! برنده شدی:\n**{reward['name']}**\n(به سرویس شما اضافه شد)"
+                result_msg = f"🔥 Awesome! You won:\n**{reward['name']}**\n(Added to your service)"
             else:
                 await db.add_achievement_points(user_id, SPIN_COST)
-                result_msg = "❌ خطا در واریز حجم. سکه‌های شما برگشت داده شد."
+                result_msg = "❌ Error adding volume. Coins refunded."
         else:
             await db.add_achievement_points(user_id, SPIN_COST)
-            result_msg = "❌ سرویس فعالی برای دریافت حجم ندارید. سکه‌ها برگشت داده شد."
+            result_msg = "❌ No active service to receive volume. Coins refunded."
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🎲 دوباره بچرخون", callback_data="lucky_spin_menu"))
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت به فروشگاه", callback_data="shop:main"))
+    kb.add(types.InlineKeyboardButton("🎲 Spin Again", callback_data="lucky_spin_menu"))
+    kb.add(types.InlineKeyboardButton("🔙 Back to Shop", callback_data="shop:main"))
     
     await _safe_edit(user_id, call.message.message_id, result_msg, reply_markup=kb, parse_mode="Markdown")
 
@@ -234,12 +221,10 @@ async def do_spin_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "referral:info")
 async def referral_info_handler(call: types.CallbackQuery):
-    """نمایش صفحه دعوت از دوستان."""
     user_id = call.from_user.id
     lang_code = await db.get_user_language(user_id)
     bot_username = (await bot.get_me()).username
     
-    # استفاده از متد کلاس UserFormatter
     text = await user_formatter.referral_page(user_id, bot_username, lang_code)
     
     kb = types.InlineKeyboardMarkup().add(
@@ -253,14 +238,14 @@ async def referral_info_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "support:new")
 async def handle_support_request(call: types.CallbackQuery):
-    """شروع فرآیند ارسال تیکت پشتیبانی."""
-    uid, msg_id = call.from_user.id, call.message.message_id
+    uid = call.from_user.id
+    msg_id = call.message.message_id
     lang_code = await db.get_user_language(uid)
     
     prompt = (
-        f"*{escape_markdown('📝 ارسال تیکت پشتیبانی')}*\n\n"
-        f"{escape_markdown('لطفاً پیام خود را (متن، عکس و...) ارسال کنید.')}\n\n"
-        f"{escape_markdown('⚠️ پیام شما مستقیم برای ادمین ارسال می‌شود.')}"
+        f"*{escape_markdown('📝 New Support Ticket')}*\n\n"
+        f"{escape_markdown('Please send your message (text, photo, etc.).')}\n\n"
+        f"{escape_markdown('⚠️ Your message will be sent directly to the admin.')}"
     )
     
     kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
@@ -269,11 +254,10 @@ async def handle_support_request(call: types.CallbackQuery):
     bot.register_next_step_handler(call.message, get_support_ticket_message, original_msg_id=msg_id)
 
 async def get_support_ticket_message(message: types.Message, original_msg_id: int):
-    """دریافت پیام کاربر و ارسال به ادمین."""
     uid = message.from_user.id
     lang_code = await db.get_user_language(uid)
 
-    await _safe_edit(uid, original_msg_id, "⏳ در حال ارسال...", reply_markup=None)
+    await _safe_edit(uid, original_msg_id, "⏳ Sending...", reply_markup=None)
 
     try:
         user_info = message.from_user
@@ -281,10 +265,10 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
         wallet_balance = user_data.get('wallet_balance', 0.0) if user_data else 0.0
         
         caption_lines = [
-            f"💬 *تیکت جدید*",
+            f"💬 *New Ticket*",
             f"👤 {escape_markdown(user_info.first_name)}",
             f"🆔 `{uid}`",
-            f"💰 موجودی: {wallet_balance:,.0f}"
+            f"💰 Balance: {wallet_balance:,.0f}"
         ]
         if user_info.username:
             caption_lines.insert(2, f"🔗 @{escape_markdown(user_info.username)}")
@@ -306,18 +290,18 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
             
             kb_admin = types.InlineKeyboardMarkup()
             kb_admin.add(types.InlineKeyboardButton(
-                "✍️ پاسخ به این تیکت", 
+                "✍️ Reply to Ticket", 
                 callback_data=f"admin:support_reply:{ticket_id}:{uid}"
             ))
             
-            final_caption = f"🎫 *تیکت شماره:* `{ticket_id}`\n" + admin_caption
+            final_caption = f"🎫 *Ticket #:* `{ticket_id}`\n" + admin_caption
             
             for admin_id, msg_id in admin_message_ids.items():
                 try:
                     await bot.edit_message_text(final_caption, admin_id, msg_id, parse_mode="MarkdownV2", reply_markup=kb_admin)
                 except: pass
 
-        success_text = escape_markdown("✅ پیام شما ارسال شد. منتظر پاسخ باشید.")
+        success_text = escape_markdown("✅ Message sent. Please wait for a response.")
         kb_back = types.InlineKeyboardMarkup().add(
             types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back")
         )
@@ -325,7 +309,7 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
 
     except Exception as e:
         logger.error(f"Support Error: {e}")
-        await _safe_edit(uid, original_msg_id, "❌ خطا در ارسال.", reply_markup=None)
+        await _safe_edit(uid, original_msg_id, "❌ Error sending message.", reply_markup=None)
 
 # =============================================================================
 # 5. Tutorials
@@ -358,7 +342,7 @@ async def send_tutorial_link(call: types.CallbackQuery):
     link = TUTORIAL_LINKS.get(os_type, {}).get(app_name)
     if link:
         app_display = f"{os_type.capitalize()} - {app_name.capitalize()}"
-        text = f"✅ آموزش {app_display} آماده است.\n\n👇 روی دکمه زیر کلیک کنید:"
+        text = f"✅ Tutorial for {app_display} is ready.\n\n👇 Click the button below:"
         
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton(get_string("btn_view_tutorial", lang), url=link))
@@ -366,23 +350,22 @@ async def send_tutorial_link(call: types.CallbackQuery):
         
         await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb)
     else:
-        await bot.answer_callback_query(call.id, "لینک یافت نشد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "Link not found.", show_alert=True)
 
 # =============================================================================
 # 6. Birthday Gift
 # =============================================================================
 
-# تابع کمکی برای فرمت تاریخ تولد
 def _fmt_birthday_info(user_data, lang_code):
     bday = user_data.get('birthday')
     if not bday:
-        return "تاریخ تولدی ثبت نشده است."
-    # تبدیل به شمسی اگر لازم است یا فرمت ساده
-    return f"🎂 تاریخ تولد ثبت شده: {bday}"
+        return "No birthday registered."
+    return f"🎂 Registered Birthday: {bday}"
 
 @bot.callback_query_handler(func=lambda call: call.data == "birthday_gift")
 async def handle_birthday_gift_request(call: types.CallbackQuery):
-    uid, msg_id = call.from_user.id, call.message.message_id
+    uid = call.from_user.id
+    msg_id = call.message.message_id
     lang_code = await db.get_user_language(uid)
     user_data = await db.user(uid)
     
@@ -428,21 +411,21 @@ async def show_achievements_page(call: types.CallbackQuery):
     
     total_points = sum(ACHIEVEMENTS.get(ach, {}).get('points', 0) for ach in user_achievements)
     
-    level = "تازه‌کار"
-    if total_points >= 1000: level = "اسطوره"
-    elif total_points >= 500: level = "افسانه"
-    elif total_points >= 250: level = "حرفه‌ای"
-    elif total_points >= 100: level = "باتجربه"
+    level = "Novice"
+    if total_points >= 1000: level = "Myth"
+    elif total_points >= 500: level = "Legend"
+    elif total_points >= 250: level = "Pro"
+    elif total_points >= 100: level = "Experienced"
 
     categories = {
-        "ورزشی": ["bodybuilder", "water_athlete", "aerialist", "swimming_champion"],
-        "اجتماعی": ["media_partner", "ambassador", "support_contributor"],
-        "وفاداری": ["veteran", "loyal_supporter"],
-        "عملکرد": ["pro_consumer", "weekly_champion", "night_owl", "early_bird"],
-        "ویژه": ["legend", "vip_friend", "lucky_one"]
+        "Sports": ["bodybuilder", "water_athlete", "aerialist", "swimming_champion"],
+        "Social": ["media_partner", "ambassador", "support_contributor"],
+        "Loyalty": ["veteran", "loyal_supporter"],
+        "Performance": ["pro_consumer", "weekly_champion", "night_owl", "early_bird"],
+        "Special": ["legend", "vip_friend", "lucky_one"]
     }
     
-    text = f"🏅 *دستاوردها*\n🏆 سطح: *{level}*\n⭐ امتیاز: *{total_points}*\n───────────────\n\n"
+    text = f"🏅 *Achievements*\n🏆 Level: *{level}*\n⭐ Points: *{total_points}*\n───────────────\n\n"
     
     has_any = False
     for cat_name, codes in categories.items():
@@ -456,34 +439,34 @@ async def show_achievements_page(call: types.CallbackQuery):
             text += "\n"
             
     if not has_any:
-        text += escape_markdown("هنوز هیچ نشانی دریافت نکرده‌اید. با فعالیت بیشتر، نشان‌ها را کشف کنید!")
+        text += escape_markdown("You haven't earned any badges yet. Keep active to discover them!")
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("🏅 درخواست نشان ورزشی", callback_data="achievements:req_menu"),
-        types.InlineKeyboardButton("ℹ️ راهنما", callback_data="achievements:info")
+        types.InlineKeyboardButton("🏅 Request Sports Badge", callback_data="achievements:req_menu"),
+        types.InlineKeyboardButton("ℹ️ Guide", callback_data="achievements:info")
     )
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
+    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="back"))
     
     await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "achievements:info")
 async def show_achievements_info(call: types.CallbackQuery):
     uid = call.from_user.id
-    text = "ℹ️ *راهنمای نشان‌ها*\n\n"
+    text = "ℹ️ *Badges Guide*\n\n"
     
     for code, info in ACHIEVEMENTS.items():
-        text += f"{info['icon']} *{escape_markdown(info['name'])}* ({info['points']} امتیاز):\n"
+        text += f"{info['icon']} *{escape_markdown(info['name'])}* ({info['points']} pts):\n"
         text += f"{escape_markdown(info['description'])}\n\n"
         
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="achievements"))
+    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="achievements"))
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "achievements:req_menu")
 async def request_badge_menu_handler(call: types.CallbackQuery):
     markup = await user_menu.request_badge_menu()
-    await _safe_edit(call.from_user.id, call.message.message_id, "رشته ورزشی خود را انتخاب کنید:", reply_markup=markup)
+    await _safe_edit(call.from_user.id, call.message.message_id, "Select your sport:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("achievements:req:"))
 async def handle_badge_request(call: types.CallbackQuery):
@@ -492,19 +475,19 @@ async def handle_badge_request(call: types.CallbackQuery):
     
     user_achievements = await db.get_user_achievements(uid)
     if badge_code in user_achievements:
-        await bot.answer_callback_query(call.id, "قبلاً این نشان را دارید!", show_alert=True)
+        await bot.answer_callback_query(call.id, "You already have this badge!", show_alert=True)
         return
 
     req_id = await db.add_achievement_request(uid, badge_code)
     
     user = call.from_user
     badge_name = ACHIEVEMENTS.get(badge_code, {}).get('name', badge_code)
-    admin_msg = f"🏅 *درخواست نشان*\n👤 {escape_markdown(user.first_name)}\nنشان: {escape_markdown(badge_name)}"
+    admin_msg = f"🏅 *Badge Request*\n👤 {escape_markdown(user.first_name)}\nBadge: {escape_markdown(badge_name)}"
     
     admin_kb = types.InlineKeyboardMarkup()
     admin_kb.add(
-        types.InlineKeyboardButton("✅ تایید", callback_data=f"admin:ach_approve:{req_id}"),
-        types.InlineKeyboardButton("❌ رد", callback_data=f"admin:ach_reject:{req_id}")
+        types.InlineKeyboardButton("✅ Approve", callback_data=f"admin:ach_approve:{req_id}"),
+        types.InlineKeyboardButton("❌ Reject", callback_data=f"admin:ach_reject:{req_id}")
     )
     
     for admin_id in ADMIN_IDS:
@@ -512,9 +495,9 @@ async def handle_badge_request(call: types.CallbackQuery):
             await bot.send_message(admin_id, admin_msg, parse_mode="MarkdownV2", reply_markup=admin_kb)
         except: pass
 
-    await _safe_edit(uid, call.message.message_id, "✅ درخواست شما ثبت شد.", reply_markup=None)
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="achievements"))
-    await bot.send_message(uid, "نتیجه بررسی به شما اطلاع داده می‌شود.", reply_markup=kb)
+    await _safe_edit(uid, call.message.message_id, "✅ Request sent.", reply_markup=None)
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 Back", callback_data="achievements"))
+    await bot.send_message(uid, "You will be notified of the result.", reply_markup=kb)
 
 # =============================================================================
 # 8. Achievement Shop
@@ -527,7 +510,7 @@ async def shop_main_handler(call: types.CallbackQuery):
     points = user_data.get('achievement_points', 0) if user_data else 0
     access = await db.get_user_access_rights(uid)
     
-    text = f"🛍️ *فروشگاه*\nموجودی شما: *{points} امتیاز*\n\nجوایز قابل خرید:"
+    text = f"🛍️ *Shop*\nBalance: *{points} points*\n\nAvailable items:"
     markup = await user_menu.achievement_shop_menu(points, access, list(ACHIEVEMENT_SHOP_ITEMS.values()))
     
     await _safe_edit(uid, call.message.message_id, text, reply_markup=markup, parse_mode="MarkdownV2")
@@ -543,7 +526,7 @@ async def shop_confirm_handler(call: types.CallbackQuery):
     
     user_uuids = await db.uuids(uid)
     if not user_uuids:
-        await bot.answer_callback_query(call.id, "سرویس فعال ندارید.", show_alert=True)
+        await bot.answer_callback_query(call.id, "No active service.", show_alert=True)
         return
     
     main_uuid = user_uuids[0]['uuid']
@@ -558,21 +541,20 @@ async def shop_confirm_handler(call: types.CallbackQuery):
     if info_after.get('expire') and add_days:
         info_after['expire'] += add_days
 
-    # استفاده از متد کلاس UserFormatter
     summary = await user_formatter.purchase_summary(info_before, info_after, {"name": item['name']}, lang)
     
     text = (
-        f"❓ *تایید خرید*\n\n"
-        f"آیتم: {escape_markdown(item['name'])}\n"
-        f"هزینه: {item['cost']} امتیاز\n\n"
+        f"❓ *Confirm Purchase*\n\n"
+        f"Item: {escape_markdown(item['name'])}\n"
+        f"Cost: {item['cost']} points\n\n"
         f"{summary}\n\n"
-        "آیا مطمئن هستید؟"
+        "Are you sure?"
     )
     
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton("✅ بله، خرید", callback_data=f"shop:exec:{item_id}"),
-        types.InlineKeyboardButton("❌ خیر", callback_data="shop:main")
+        types.InlineKeyboardButton("✅ Yes", callback_data=f"shop:exec:{item_id}"),
+        types.InlineKeyboardButton("❌ No", callback_data="shop:main")
     )
     
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
@@ -602,18 +584,18 @@ async def shop_execute_handler(call: types.CallbackQuery):
             
             if success:
                 await db.log_shop_purchase(uid, item_key, item['cost'])
-                await bot.answer_callback_query(call.id, "✅ خرید انجام شد.", show_alert=True)
+                await bot.answer_callback_query(call.id, "✅ Purchase successful.", show_alert=True)
                 await shop_main_handler(call)
                 try:
                     for aid in ADMIN_IDS:
-                        await bot.send_message(aid, f"🛍 کاربر {uid} آیتم {item['name']} را خرید.")
+                        await bot.send_message(aid, f"🛍 User {uid} bought {item['name']}.")
                 except: pass
                 return
 
         await db.add_achievement_points(uid, item['cost'])
-        await bot.answer_callback_query(call.id, "❌ خطا در اعمال جایزه.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ Error applying reward.", show_alert=True)
     else:
-        await bot.answer_callback_query(call.id, "❌ موجودی کافی نیست.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ Insufficient balance.", show_alert=True)
 
 # =============================================================================
 # 9. Connection Doctor
@@ -621,11 +603,10 @@ async def shop_execute_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "connection_doctor")
 async def connection_doctor_handler(call: types.CallbackQuery):
-    """پزشک اتصال: بررسی وضعیت اکانت و سرورها."""
     uid = call.from_user.id
     lang = await db.get_user_language(uid)
     
-    await _safe_edit(uid, call.message.message_id, "🩺 در حال بررسی...", reply_markup=None)
+    await _safe_edit(uid, call.message.message_id, "🩺 Checking...", reply_markup=None)
     
     report = [f"*{escape_markdown(get_string('doctor_report_title', lang))}*", "`──────────────────`"]
     
@@ -636,8 +617,8 @@ async def connection_doctor_handler(call: types.CallbackQuery):
         if info and info.get('is_active'):
             is_user_ok = True
             
-    status = "✅ فعال" if is_user_ok else "🔴 غیرفعال"
-    report.append(f"وضعیت اکانت: {status}")
+    status = "✅ Active" if is_user_ok else "🔴 Inactive"
+    report.append(f"Account Status: {status}")
     
     active_panels = await db.get_active_panels()
     for p in active_panels:
@@ -649,20 +630,20 @@ async def connection_doctor_handler(call: types.CallbackQuery):
             
         is_online = await handler.check_connection()
         icon = "✅" if is_online else "⚠️"
-        report.append(f"{icon} سرور {escape_markdown(p['name'])}")
+        report.append(f"{icon} Server {escape_markdown(p['name'])}")
 
     report.append("`──────────────────`")
     if is_user_ok:
-        report.append("اگر متصل نمی‌شوید، لینک را آپدیت کنید.")
+        report.append("If you can't connect, update your link.")
     else:
-        report.append("اکانت شما غیرفعال است. لطفا تمدید کنید.")
+        report.append("Your account is inactive. Please renew.")
         
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 Back", callback_data="back"))
     await _safe_edit(uid, call.message.message_id, "\n".join(report), reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
 async def coming_soon(call: types.CallbackQuery):
-    await bot.answer_callback_query(call.id, "🔜 به زودی...", show_alert=True)
+    await bot.answer_callback_query(call.id, "🔜 Coming soon...", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_features_guide")
 async def show_features_guide_handler(call: types.CallbackQuery):
@@ -670,17 +651,17 @@ async def show_features_guide_handler(call: types.CallbackQuery):
     lang = await db.get_user_language(uid)
     text = get_string("features_guide_body", lang)
     
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 Back", callback_data="back"))
     await _safe_edit(uid, call.message.message_id, escape_markdown(text), reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_service")
 async def request_service_handler(call: types.CallbackQuery):
     uid = call.from_user.id
     user = call.from_user
-    msg = f"👤 درخواست سرویس جدید از:\n{user.first_name} (@{user.username})\nID: {uid}"
+    msg = f"👤 Service Request from:\n{user.first_name} (@{user.username})\nID: {uid}"
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(admin_id, msg)
         except: pass
         
-    await bot.answer_callback_query(call.id, "✅ درخواست شما برای ادمین ارسال شد.", show_alert=True)
+    await bot.answer_callback_query(call.id, "✅ Request sent to admin.", show_alert=True)

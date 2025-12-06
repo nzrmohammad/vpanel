@@ -4,15 +4,14 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from telebot import types
-from sqlalchemy import select, or_, cast, String, func, desc, and_
+from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot
 from bot.keyboards import admin as admin_menu
 from bot.database import db
-from bot.db.base import User, UserUUID, Panel, WalletTransaction
-from bot.utils import _safe_edit, escape_markdown, format_currency
-from bot.formatters import admin_formatter
+from bot.db.base import User, UserUUID, Panel
+from bot.utils import _safe_edit, escape_markdown
 from bot import combined_handler
 from bot.services.panels import PanelFactory
 
@@ -41,20 +40,26 @@ async def _delete_user_message(msg: types.Message):
 async def handle_global_search_convo(call, params):
     """شروع جستجوی کاربر با نام، یوزرنیم یا UUID"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {'step': 'global_search', 'msg_id': msg_id}
+    admin_conversations[uid] = {
+        'step': 'global_search', 
+        'msg_id': msg_id,
+        'next_handler': process_search_input  # <--- ست کردن هندلر بعدی برای روتر
+    }
     
     text = "🔎 لطفاً **نام**، **نام کاربری** یا بخشی از **UUID** کاربر را ارسال کنید:"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
-    bot.register_next_step_handler(call.message, process_search_input)
 
 async def handle_search_by_telegram_id_convo(call, params):
     """شروع جستجو با آیدی عددی تلگرام"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {'step': 'tid_search', 'msg_id': msg_id}
+    admin_conversations[uid] = {
+        'step': 'tid_search', 
+        'msg_id': msg_id,
+        'next_handler': process_search_input  # <--- ست کردن هندلر بعدی
+    }
     
     text = "🆔 لطفاً **آیدی عددی تلگرام** (User ID) کاربر را ارسال کنید:"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
-    bot.register_next_step_handler(call.message, process_search_input)
 
 async def process_search_input(message: types.Message):
     """پردازش ورودی جستجو"""
@@ -110,10 +115,13 @@ async def process_search_input(message: types.Message):
 async def handle_purge_user_convo(call, params):
     """شروع پروسه حذف کامل (Purge) با آیدی"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {'step': 'purge_user', 'msg_id': msg_id}
+    admin_conversations[uid] = {
+        'step': 'purge_user', 
+        'msg_id': msg_id,
+        'next_handler': process_purge_user  # <--- ست کردن هندلر بعدی
+    }
     await _safe_edit(uid, msg_id, "🔥 برای **پاکسازی کامل** (حذف از دیتابیس)، آیدی عددی کاربر را بفرستید:", 
                      reply_markup=await admin_menu.cancel_action("admin:search_menu"))
-    bot.register_next_step_handler(call.message, process_purge_user)
 
 async def process_purge_user(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -141,8 +149,6 @@ async def handle_show_user_summary(call, params):
     """هندلر کال‌بک نمایش پروفایل کاربر"""
     # params: [target_id, context_suffix] (optional)
     target_id = params[0]
-    # تشخیص اینکه آیا ورودی ID عددی است یا UUID (معمولاً در لیست‌ها ID عددی داریم)
-    # اگر UUID بود، باید UserID را پیدا کنیم
     uid, msg_id = call.from_user.id, call.message.message_id
     
     real_user_id = None
@@ -172,11 +178,8 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
         uuids = await db.uuids(target_user_id)
         active_uuids = [u for u in uuids if u['is_active']]
         
-        # دریافت مجموع مصرف (Hiddify + Marzban)
-        # برای سادگی، فعلاً مصرف سرویس اول را نشان می‌دهیم یا جمع کل
         total_usage = 0
         total_limit = 0
-        main_uuid = None
         
         if active_uuids:
             # دریافت اطلاعات لایو از پنل‌ها
@@ -205,27 +208,153 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
     # تعیین دکمه بازگشت بر اساس کانتکست
     back_cb = "admin:search_menu" if context == 's' else "admin:management_menu"
     
-    # استفاده از پنل پیش‌فرض برای دکمه‌ها (می‌تواند بهبود یابد)
+    # استفاده از پنل پیش‌فرض برای دکمه‌ها
     panel_type = 'hiddify' 
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="Markdown")
 
 # ==============================================================================
-# 3. ویرایش سرویس (Edit User - Volume/Days)
+# 3. افزودن کاربر جدید (Add User Flow)
+# ==============================================================================
+
+async def handle_add_user_start(call: types.CallbackQuery, params: list):
+    """شروع پروسه افزودن کاربر: انتخاب پنل"""
+    # params[0] = panel_type (hiddify/marzban)
+    panel_type = params[0]
+    uid, msg_id = call.from_user.id, call.message.message_id
+    
+    # دریافت پنل‌های فعال این نوع
+    async with db.get_session() as session:
+        stmt = select(Panel).where(and_(Panel.panel_type == panel_type, Panel.is_active == True))
+        result = await session.execute(stmt)
+        panels = result.scalars().all()
+    
+    if not panels:
+        await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی از این نوع یافت نشد.", show_alert=True)
+        return
+
+    # ساخت منوی انتخاب پنل
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for p in panels:
+        kb.add(types.InlineKeyboardButton(f"سرور: {p.name}", callback_data=f"admin:add_user_select_panel:{p.name}"))
+    
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:management_menu"))
+    
+    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb)
+
+async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
+    """انتخاب پنل و پرسیدن نام"""
+    # params[0] = panel_name
+    panel_name = params[0]
+    uid = call.from_user.id
+    msg_id = call.message.message_id
+    
+    admin_conversations[uid] = {
+        'action': 'add_user',
+        'step': 'get_name',
+        'data': {'panel_name': panel_name},
+        'msg_id': msg_id,
+        'next_handler': get_new_user_name # <--- ست کردن هندلر بعدی
+    }
+    
+    await _safe_edit(uid, msg_id, 
+                     f"👤 سرور انتخاب شد: **{panel_name}**\n\nلطفاً **نام کاربر** را وارد کنید:", 
+                     reply_markup=await admin_menu.cancel_action())
+
+async def get_new_user_name(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    
+    if uid not in admin_conversations: return
+    
+    admin_conversations[uid]['data']['name'] = text
+    admin_conversations[uid]['next_handler'] = get_new_user_limit
+    msg_id = admin_conversations[uid]['msg_id']
+    
+    await _safe_edit(uid, msg_id, 
+                     "📦 لطفاً **حجم محدودیت (GB)** را وارد کنید (عدد):", 
+                     reply_markup=await admin_menu.cancel_action())
+
+async def get_new_user_limit(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    if uid not in admin_conversations: return
+    
+    try:
+        limit = float(text)
+        admin_conversations[uid]['data']['limit'] = limit
+        admin_conversations[uid]['next_handler'] = get_new_user_days
+        msg_id = admin_conversations[uid]['msg_id']
+        
+        await _safe_edit(uid, msg_id, 
+                         "📅 لطفاً **تعداد روز اعتبار** را وارد کنید (عدد):", 
+                         reply_markup=await admin_menu.cancel_action())
+    except ValueError:
+        msg_id = admin_conversations[uid]['msg_id']
+        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم (GB):", reply_markup=await admin_menu.cancel_action())
+
+async def get_new_user_days(message: types.Message):
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    if uid not in admin_conversations: return
+    
+    try:
+        days = int(text)
+        data = admin_conversations.pop(uid)['data']
+        msg_id = admin_conversations[uid]['msg_id'] # ممکن است با pop پاک شده باشد، اما در متغیر لوکال هست
+        
+        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر در پنل...", reply_markup=None)
+        
+        panel_name = data['panel_name']
+        name = data['name']
+        limit = data['limit']
+        
+        # استفاده از فکتوری برای گرفتن هندلر پنل
+        panel_api = await PanelFactory.get_panel(panel_name)
+        
+        # فراخوانی متد ساخت کاربر
+        new_user = await panel_api.add_user(name, limit, days)
+        
+        if new_user:
+            identifier = new_user.get('uuid') or name 
+            
+            res_text = (
+                f"✅ کاربر با موفقیت ساخته شد!\n\n"
+                f"👤 نام: `{name}`\n"
+                f"📦 حجم: `{limit} GB`\n"
+                f"📅 مدت: `{days} روز`\n"
+                f"🔑 شناسه: `{identifier}`"
+            )
+            
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت", callback_data=f"admin:management_menu"))
+            
+            await _safe_edit(uid, msg_id, res_text, reply_markup=kb)
+            
+        else:
+            await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر در پنل. لطفاً لاگ را بررسی کنید.", reply_markup=await admin_menu.main())
+            
+    except ValueError:
+        if uid in admin_conversations:
+            msg_id = admin_conversations[uid]['msg_id']
+            await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد صحیح وارد کنید. روز:", reply_markup=await admin_menu.cancel_action())
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        if uid in admin_conversations:
+            msg_id = admin_conversations[uid].get('msg_id')
+            await _safe_edit(uid, msg_id, f"❌ خطای غیرمنتظره: {e}", reply_markup=await admin_menu.main())
+
+# ==============================================================================
+# 4. ویرایش سرویس (Edit User - Volume/Days)
 # ==============================================================================
 
 async def handle_edit_user_menu(call, params):
     """منوی انتخاب نوع ویرایش (حجم یا زمان)"""
-    # params[0] = user_id
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # برای ویرایش نیاز است بدانیم روی کدام پنل اعمال شود
-    # فعلاً منویی برای انتخاب پنل یا اعمال روی همه نشان می‌دهیم
-    # اما admin_menu.edit_user_menu دکمه‌های مستقیم دارد.
-    
-    markup = await admin_menu.edit_user_menu(target_id, 'both') # Default to both/auto
+    markup = await admin_menu.edit_user_menu(target_id, 'both') 
     await _safe_edit(uid, msg_id, "🔧 چه تغییری می‌خواهید اعمال کنید؟", reply_markup=markup)
 
 async def handle_ask_edit_value(call, params):
@@ -241,12 +370,12 @@ async def handle_ask_edit_value(call, params):
         'msg_id': msg_id,
         'action': action,
         'scope': scope,
-        'target_id': target_id
+        'target_id': target_id,
+        'next_handler': process_edit_value # <--- ست کردن هندلر بعدی
     }
     
     text = f"🔢 لطفاً مقدار **{action_name}** را که می‌خواهید **اضافه** کنید وارد نمایید (عدد مثبت برای افزودن، منفی برای کسر):"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
-    bot.register_next_step_handler(call.message, process_edit_value)
 
 async def process_edit_value(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -272,8 +401,6 @@ async def process_edit_value(message: types.Message):
         await _safe_edit(uid, msg_id, "❌ کاربر سرویس فعالی ندارد.", reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
         return
         
-    # اعمال روی اولین UUID (معمولاً کاربر یک UUID دارد)
-    # اگر چندتا داشت، باید منطق پیچیده‌تری باشد یا روی همه اعمال شود
     main_uuid_str = str(uuids[0]['uuid'])
     
     add_gb = value if 'gb' in action else 0
@@ -287,23 +414,19 @@ async def process_edit_value(message: types.Message):
     
     if success:
         result_text = f"✅ تغییرات با موفقیت اعمال شد.\n➕ {value} {'GB' if add_gb else 'روز'}"
-        # ثبت در دیتابیس اگر لازم است (مثلاً برای تاریخچه)
-        # اما modify_user_on_all_panels خودش با پنل‌ها سینک می‌کند
     else:
         result_text = "❌ خطا در اعمال تغییرات روی پنل(ها)."
         
     await _safe_edit(uid, msg_id, result_text, reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
 
-# این هندلر برای انتخاب پنل در صورت نیاز (فعلاً استفاده نشده در فلو اصلی ولی در روتر هست)
 async def handle_select_panel_for_edit(call, params):
     pass 
 
 # ==============================================================================
-# 4. تغییر وضعیت (Toggle Status)
+# 5. تغییر وضعیت (Toggle Status)
 # ==============================================================================
 
 async def handle_toggle_status(call, params):
-    """منوی تغییر وضعیت (فعال/غیرفعال)"""
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -318,7 +441,6 @@ async def handle_toggle_status(call, params):
     await _safe_edit(uid, msg_id, text, reply_markup=kb)
 
 async def handle_toggle_status_action(call, params):
-    """اجرای تغییر وضعیت"""
     action, target_id = params[0], params[1]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -331,37 +453,21 @@ async def handle_toggle_status_action(call, params):
     uuid_id = uuids[0]['id']
     
     if action == 'disable':
-        # حذف موقت از پنل‌ها یا تغییر وضعیت به غیرفعال
-        # در اینجا از delete_user_from_all_panels استفاده نمی‌کنیم چون می‌خواهیم فقط غیرفعال شود
-        # اما پنل‌ها معمولاً متد disable ندارند، مگر اینکه لیمیت را 0 کنیم یا تاریخ را منقضی
-        # روش بهتر: Deactivate در دیتابیس و حذف از پنل (کاربر باید بداند)
-        
-        # راه حل ساده: فعلاً فقط در دیتابیس غیرفعال می‌کنیم
         await db.deactivate_uuid(uuid_id)
-        # و حذف از پنل‌ها (طبق منطق مرسوم)
         await combined_handler.delete_user_from_all_panels(uuid_str)
-        
         msg = "🔴 کاربر غیرفعال و از پنل‌ها حذف شد."
         
-    else: # Enable
-        # فعال‌سازی مجدد در دیتابیس
-        # و افزودن مجدد به پنل‌ها (نیاز به بازسازی دارد)
-        # این بخش پیچیده است چون باید پلان کاربر را بدانیم.
-        # فعلاً فقط دیتابیس را فعال می‌کنیم و پیغام می‌دهیم که باید تمدید شود.
-        
-        # برای فعال‌سازی واقعی، بهتر است از دکمه "تمدید اشتراک" استفاده شود.
+    else: 
         await bot.answer_callback_query(call.id, "برای فعال‌سازی مجدد، لطفاً اشتراک را تمدید کنید.", show_alert=True)
         return
 
     await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
 
 # ==============================================================================
-# 5. تاریخچه پرداخت و ثبت دستی (Payment)
+# 6. تاریخچه پرداخت و ثبت دستی
 # ==============================================================================
 
 async def handle_payment_history(call, params):
-    """نمایش تاریخچه پرداخت"""
-    # params: [target_id, page, context]
     target_id = int(params[0])
     page = int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
@@ -371,7 +477,6 @@ async def handle_payment_history(call, params):
         await bot.answer_callback_query(call.id, "بدون سرویس.")
         return
         
-    # تاریخچه پرداخت مربوط به اولین سرویس
     history = await db.get_user_payment_history(uuids[0]['id'])
     
     if not history:
@@ -390,16 +495,14 @@ async def handle_payment_history(call, params):
     await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
 
 async def handle_log_payment(call, params):
-    """ثبت دستی یک پرداخت (تمدید)"""
     target_id = int(params[0])
     uuids = await db.uuids(target_id)
     
     if uuids:
         await db.add_payment_record(uuids[0]['id'])
         await bot.answer_callback_query(call.id, "✅ پرداخت ثبت شد.")
-        # رفرش تاریخچه اگر باز بود، یا فقط نوتیفیکیشن
     else:
-        await bot.answer_callback_query(call.id, "سرویسی برای ثبت پرداخت وجود ندارد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "سرویسی وجود ندارد.", show_alert=True)
 
 async def handle_reset_payment_history_confirm(call, params):
     uuid_id, target_id = params[0], params[1]
@@ -420,7 +523,7 @@ async def handle_reset_payment_history_action(call, params):
     await handle_show_user_summary(call, [target_id])
 
 # ==============================================================================
-# 6. ریست‌ها و ابزارها (Resets & Tools)
+# 7. سایر (ریست، هشدار، یادداشت، حذف، تمدید، بج)
 # ==============================================================================
 
 async def handle_user_reset_menu(call, params):
@@ -429,22 +532,19 @@ async def handle_user_reset_menu(call, params):
     
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
-        types.InlineKeyboardButton("🔄 ریست حجم مصرفی (پنل‌ها)", callback_data=f"admin:us_rusg:{target_id}"),
+        types.InlineKeyboardButton("🔄 ریست حجم مصرفی", callback_data=f"admin:us_rusg:{target_id}"),
         types.InlineKeyboardButton("🎂 حذف تاریخ تولد", callback_data=f"admin:us_rb:{target_id}"),
         types.InlineKeyboardButton("⏳ ریست محدودیت انتقال", callback_data=f"admin:us_rtr:{target_id}")
     )
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
-    
-    await _safe_edit(uid, msg_id, "♻️ کدام مورد را می‌خواهید ریست کنید؟", reply_markup=kb)
+    await _safe_edit(uid, msg_id, "♻️ انتخاب کنید:", reply_markup=kb)
 
 async def handle_reset_usage_menu(call, params):
     target_id = params[0]
-    # نمایش منوی انتخاب پنل برای ریست حجم
-    markup = await admin_menu.reset_usage_selection_menu(target_id, "rsa") # rsa = Reset Usage Action
+    markup = await admin_menu.reset_usage_selection_menu(target_id, "rsa") 
     await _safe_edit(call.from_user.id, call.message.message_id, "انتخاب پنل برای ریست حجم:", reply_markup=markup)
 
 async def handle_reset_usage_action(call, params):
-    # params: [panel_scope, target_id]
     scope, target_id = params[0], params[1]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -454,38 +554,25 @@ async def handle_reset_usage_action(call, params):
     
     await _safe_edit(uid, msg_id, "⏳ در حال ریست حجم...", reply_markup=None)
     
-    # باید هندلر مربوطه صدا زده شود
-    # برای سادگی، فرض می‌کنیم متد ریست در combined_handler نیست و باید مستقیم صدا زد
-    # اما می‌توان از modify_user_on_all_panels با فلگ خاص استفاده کرد یا متد جدید
-    
-    # پیاده‌سازی مستقیم:
     panels = await db.get_active_panels()
     success_count = 0
     
     for p in panels:
-        if scope != 'both' and p['panel_type'] != scope: continue # فیلتر پنل
+        if scope != 'both' and p['panel_type'] != scope: continue 
         
         handler = await PanelFactory.get_panel(p['name'])
         try:
-            # متد reset_user_usage باید در کلاس‌های پنل پیاده‌سازی شده باشد
-            # برای هیدیفای: usage=0، برای مرزبان: endpoint reset
-            # در فایل‌های شما: HiddifyPanel.reset_user_usage و MarzbanPanel.reset_user_usage وجود دارد.
-            
             identifier = uuid_str
             if p['panel_type'] == 'marzban':
-                identifier = await db.get_marzban_username_by_uuid(uuid_str) or f"marzban_{uuid_str}" # Fallback
+                identifier = await db.get_marzban_username_by_uuid(uuid_str) or f"marzban_{uuid_str}" 
                 
             if await handler.reset_user_usage(identifier):
                 success_count += 1
         except Exception as e:
             logger.error(f"Reset usage failed for {p['name']}: {e}")
 
-    if success_count > 0:
-        await _safe_edit(uid, msg_id, "✅ حجم کاربر در پنل‌های انتخابی ریست شد.", 
-                         reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
-    else:
-        await _safe_edit(uid, msg_id, "❌ خطا در ریست حجم.", 
-                         reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
+    msg = "✅ حجم ریست شد." if success_count > 0 else "❌ خطا در ریست."
+    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
 
 async def handle_reset_birthday(call, params):
     target_id = int(params[0])
@@ -495,82 +582,64 @@ async def handle_reset_birthday(call, params):
 
 async def handle_reset_transfer_cooldown(call, params):
     target_id = int(params[0])
-    # پیدا کردن UUID
     uuids = await db.uuids(target_id)
     if uuids:
-        # حذف رکوردهای انتقال از دیتابیس (TransferDB)
-        # چون کلاس TransferDB میکس شده، متد delete_transfer_history در db موجود است
         await db.delete_transfer_history(uuids[0]['id'])
         await bot.answer_callback_query(call.id, "✅ محدودیت انتقال ریست شد.")
     else:
         await bot.answer_callback_query(call.id, "سرویسی یافت نشد.")
-    
     await handle_user_reset_menu(call, params)
-
-# ==============================================================================
-# 7. هشدارها و پیام‌ها (Warnings & Notes)
-# ==============================================================================
 
 async def handle_user_warning_menu(call, params):
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
         types.InlineKeyboardButton("🔔 یادآوری پرداخت", callback_data=f"admin:us_spn:{target_id}"),
         types.InlineKeyboardButton("🚨 هشدار قطع سرویس", callback_data=f"admin:us_sdw:{target_id}")
     )
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
-    
-    await _safe_edit(uid, msg_id, "⚠️ ارسال پیام هشدار به کاربر:", reply_markup=kb)
+    await _safe_edit(uid, msg_id, "⚠️ ارسال هشدار:", reply_markup=kb)
 
 async def handle_send_payment_reminder(call, params):
     target_id = int(params[0])
     from bot.language import get_string
-    
-    # دریافت زبان کاربر
     user = await db.user(target_id)
     lang = user.get('lang_code', 'fa')
-    
     msg = get_string('payment_reminder_message', lang)
     try:
         await bot.send_message(target_id, msg)
-        await bot.answer_callback_query(call.id, "✅ پیام ارسال شد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "✅ ارسال شد.", show_alert=True)
     except:
-        await bot.answer_callback_query(call.id, "❌ خطا در ارسال (شاید ربات بلاک شده).", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ خطا (شاید بلاک).", show_alert=True)
 
 async def handle_send_disconnection_warning(call, params):
     target_id = int(params[0])
     from bot.language import get_string
-    
     user = await db.user(target_id)
     lang = user.get('lang_code', 'fa')
-    
     msg = get_string('disconnection_warning_message', lang)
     try:
         await bot.send_message(target_id, msg)
-        await bot.answer_callback_query(call.id, "✅ هشدار ارسال شد.", show_alert=True)
-        # لاگ کردن هشدار
-        uuids = await db.uuids(target_id)
-        if uuids:
-            await db.log_warning(uuids[0]['id'], 'manual_disconnect_warn')
+        await bot.answer_callback_query(call.id, "✅ ارسال شد.", show_alert=True)
     except:
-        await bot.answer_callback_query(call.id, "❌ خطا در ارسال.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ خطا.", show_alert=True)
 
 async def handle_ask_for_note(call, params):
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
-    admin_conversations[uid] = {'step': 'save_note', 'msg_id': msg_id, 'target_id': int(target_id)}
-    
-    await _safe_edit(uid, msg_id, "📝 لطفاً یادداشت خود را برای این کاربر بنویسید (برای حذف یادداشت، 'پاک' بفرستید):",
+    admin_conversations[uid] = {
+        'step': 'save_note', 
+        'msg_id': msg_id, 
+        'target_id': int(target_id),
+        'next_handler': process_save_note # <--- Next handler
+    }
+    await _safe_edit(uid, msg_id, "📝 یادداشت خود را بنویسید (برای حذف، 'پاک' بفرستید):",
                      reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
-    bot.register_next_step_handler(call.message, process_save_note)
 
 async def process_save_note(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
-    
     if uid not in admin_conversations: return
     data = admin_conversations.pop(uid)
     target_id = data['target_id']
@@ -582,36 +651,6 @@ async def process_save_note(message: types.Message):
     await _safe_edit(uid, msg_id, "✅ یادداشت ذخیره شد.", 
                      reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
 
-async def manual_winback_handler(call, params):
-    """ارسال پیام دلتنگی (Winback)"""
-    target_id = int(params[0])
-    # می‌توانیم متن پیش‌فرض یا کاستوم داشته باشیم
-    msg = "👋 سلام! دلمون برات تنگ شده. 🌹\nخیلی وقته سری به ما نزدی. یه کد تخفیف ویژه برات داریم:\n🎁 Code: `WELCOME_BACK`"
-    
-    try:
-        await bot.send_message(target_id, msg, parse_mode="Markdown")
-        await bot.answer_callback_query(call.id, "✅ پیام ارسال شد.")
-    except:
-        await bot.answer_callback_query(call.id, "❌ ارسال ناموفق.")
-
-async def handle_churn_contact_user(call, params):
-    """تماس با کاربر در لیست ریزش (Churn)"""
-    # در اینجا فقط به هندلر ارسال پیام ارجاع می‌دهیم
-    # params: [user_id]
-    from bot.admin_handlers.user_management import handle_user_send_msg 
-    # اما چون در همان فایل هستیم، نیاز به ایمپورت نیست، فقط باید به router وصل باشد
-    # یا مستقیماً لاجیک را اجرا کنیم.
-    # برای سادگی، لاجیک ارسال پیام را دوباره استفاده می‌کنیم اما با context خاص
-    pass # Implementation shared with send_msg
-
-async def handle_churn_send_offer(call, params):
-    """ارسال پیشنهاد ویژه به کاربر ریزشی"""
-    await manual_winback_handler(call, params)
-
-# ==============================================================================
-# 8. حذف و دستگاه‌ها (Delete & Devices)
-# ==============================================================================
-
 async def handle_delete_user_confirm(call, params):
     target_id = params[0]
     markup = await admin_menu.confirm_delete(target_id, 'both')
@@ -620,7 +659,6 @@ async def handle_delete_user_confirm(call, params):
                      reply_markup=markup, parse_mode="Markdown")
 
 async def handle_delete_user_action(call, params):
-    # params: [decision, panel, target_id]
     decision, target_id = params[0], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -628,34 +666,22 @@ async def handle_delete_user_action(call, params):
         await show_user_summary(uid, msg_id, int(target_id))
         return
         
-    # اجرای حذف
     uuids = await db.uuids(int(target_id))
-    
-    # 1. حذف از پنل‌ها
     if uuids:
         await combined_handler.delete_user_from_all_panels(str(uuids[0]['uuid']))
-    
-    # 2. حذف از دیتابیس
     await db.purge_user_by_telegram_id(int(target_id))
-    
-    await _safe_edit(uid, msg_id, "✅ کاربر با موفقیت حذف شد.", reply_markup=await admin_menu.management_menu())
+    await _safe_edit(uid, msg_id, "✅ کاربر حذف شد.", reply_markup=await admin_menu.management_menu([])) # Pass empty list or fetch panels
 
 async def handle_delete_devices_confirm(call, params):
     target_id = params[0]
-    # نمایش تعداد دستگاه‌ها
     uuids = await db.uuids(int(target_id))
-    count = 0
-    if uuids:
-        count = await db.count_user_agents(uuids[0]['id'])
-        
-    text = f"📱 کاربر دارای {count} دستگاه ثبت شده است.\nآیا می‌خواهید همه را حذف کنید؟ (کاربر مجبور به لاگین مجدد نمی‌شود، فقط لیست پاک می‌شود)"
-    
+    count = await db.count_user_agents(uuids[0]['id']) if uuids else 0
     kb = types.InlineKeyboardMarkup()
     kb.add(
         types.InlineKeyboardButton("بله، پاک کن", callback_data=f"admin:del_devs_exec:{target_id}"),
         types.InlineKeyboardButton("خیر", callback_data=f"admin:us:{target_id}")
     )
-    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, f"📱 حذف {count} دستگاه؟", reply_markup=kb)
 
 async def handle_delete_devices_action(call, params):
     target_id = int(params[0])
@@ -663,325 +689,172 @@ async def handle_delete_devices_action(call, params):
     if uuids:
         await db.delete_user_agents_by_uuid_id(uuids[0]['id'])
         await bot.answer_callback_query(call.id, "✅ دستگاه‌ها پاک شدند.")
-    else:
-        await bot.answer_callback_query(call.id, "سرویسی یافت نشد.")
-        
     await show_user_summary(call.from_user.id, call.message.message_id, target_id)
 
-# ==============================================================================
-# 9. تمدید و نشان‌ها (Renew & Badges)
-# ==============================================================================
-
 async def handle_renew_subscription_menu(call, params):
-    """منوی انتخاب پلن برای تمدید"""
     target_id = params[0]
-    
-    # دریافت پلن‌ها از دیتابیس
     plans = await db.get_all_plans()
     if not plans:
         await bot.answer_callback_query(call.id, "هیچ پلنی تعریف نشده است.", show_alert=True)
         return
-        
     markup = await admin_menu.select_plan_for_renew_menu(target_id, "", plans)
-    await _safe_edit(call.from_user.id, call.message.message_id, "🔄 پلن جدید را برای تمدید انتخاب کنید:", reply_markup=markup)
+    await _safe_edit(call.from_user.id, call.message.message_id, "🔄 پلن جدید را انتخاب کنید:", reply_markup=markup)
 
 async def handle_renew_select_plan_menu(call, params):
-    # این هندلر واسط است، در واقع همان قبلی است
     await handle_renew_subscription_menu(call, params)
 
 async def handle_renew_apply_plan(call, params):
-    """اجرای تمدید"""
-    # params: [plan_id, target_id]
     plan_id, target_id = int(params[0]), int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
     plan = await db.get_plan_by_id(plan_id)
     if not plan: return
-    
     uuids = await db.uuids(target_id)
-    if not uuids:
-        await bot.answer_callback_query(call.id, "سرویسی برای تمدید نیست.")
-        return
-    
-    uuid_str = str(uuids[0]['uuid'])
+    if not uuids: return
     
     await _safe_edit(uid, msg_id, "⏳ در حال تمدید...", reply_markup=None)
-    
-    # تمدید = افزودن حجم و روز پلن انتخاب شده
-    # نکته: اگر می‌خواهید "جایگزین" شود، باید متد modify را با set_gb فراخوانی کنید
-    # اما معمولاً تمدید یعنی افزودن.
-    # در اینجا فرض بر افزودن است.
-    
     success = await combined_handler.modify_user_on_all_panels(
-        identifier=uuid_str,
+        identifier=str(uuids[0]['uuid']),
         add_gb=plan['volume_gb'],
         add_days=plan['days']
     )
     
     if success:
-        # ثبت تراکنش (اختیاری - اگر پول گرفته شده دستی)
         await db.add_payment_record(uuids[0]['id'])
-        await _safe_edit(uid, msg_id, f"✅ سرویس با پلن «{plan['name']}» تمدید شد.", 
+        await _safe_edit(uid, msg_id, f"✅ تمدید شد.", 
                          reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
     else:
-        await _safe_edit(uid, msg_id, "❌ خطا در تمدید سرویس.", 
+        await _safe_edit(uid, msg_id, "❌ خطا در تمدید.", 
                          reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
 
 async def handle_award_badge_menu(call, params):
     target_id = params[0]
     markup = await admin_menu.award_badge_menu(target_id, "")
-    await _safe_edit(call.from_user.id, call.message.message_id, "🏅 نشان مورد نظر را انتخاب کنید:", reply_markup=markup)
+    await _safe_edit(call.from_user.id, call.message.message_id, "🏅 انتخاب نشان:", reply_markup=markup)
 
 async def handle_award_badge(call, params):
     badge_code, target_id = params[0], int(params[1])
-    
     if await db.add_achievement(target_id, badge_code):
-        await bot.answer_callback_query(call.id, "✅ نشان اهدا شد.")
-        # ارسال پیام به کاربر
-        try:
-            await bot.send_message(target_id, f"🎉 تبریک! شما نشان جدیدی دریافت کردید.")
-        except: pass
+        await bot.answer_callback_query(call.id, "✅ اهدا شد.")
     else:
-        await bot.answer_callback_query(call.id, "این کاربر قبلاً این نشان را دارد.")
-        
+        await bot.answer_callback_query(call.id, "قبلاً داشته است.")
     await handle_award_badge_menu(call, [str(target_id)])
 
 async def handle_achievement_request_callback(call, params):
-    """تایید یا رد درخواست نشان"""
-    # params comes from router parsing (action:req_id)
-    # But callback data is admin:ach_approve:req_id
-    action = call.data.split(':')[1] # ach_approve or ach_reject
+    action = call.data.split(':')[1]
     req_id = int(params[0])
-    
     status = 'approved' if 'approve' in action else 'rejected'
     await db.update_achievement_request_status(req_id, status, call.from_user.id)
-    
     req = await db.get_achievement_request(req_id)
     if req and status == 'approved':
         await db.add_achievement(req['user_id'], req['badge_code'])
-        # جایزه امتیاز
-        await db.add_achievement_points(req['user_id'], 50) # امتیاز نمادین
-        
-        try:
-            await bot.send_message(req['user_id'], "✅ درخواست نشان شما تایید شد!")
+        await db.add_achievement_points(req['user_id'], 50)
+        try: await bot.send_message(req['user_id'], "✅ درخواست نشان تایید شد!")
         except: pass
-        
     await bot.edit_message_caption(f"{call.message.caption}\n\nوضعیت: {status}", call.from_user.id, call.message.message_id)
 
 # ==============================================================================
-# 10. ابزارهای سیستمی (System Tools)
+# 8. سیستم تولز و ریست کلی
 # ==============================================================================
 
 async def handle_system_tools_menu(call, params):
-    # این توسط admin_router هندل می‌شود و به admin_menu.system_tools_menu ارجاع می‌دهد
     pass 
 
 async def handle_reset_all_daily_usage_confirm(call, params):
-    await _safe_edit(call.from_user.id, call.message.message_id, 
-                     "⚠️ آیا مطمئن هستید؟ این کار مصرف روزانه تمام کاربران را صفر می‌کند.",
-                     reply_markup=await admin_menu.cancel_action("admin:system_tools_menu"))
-    # دکمه تایید باید جداگانه هندل شود یا در همین جا دکمه inline بسازیم
-    # برای سادگی یک دکمه inline می‌سازیم
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⚠️ بله، انجام بده", callback_data="admin:reset_all_daily_usage_exec"))
+    kb.add(types.InlineKeyboardButton("⚠️ بله", callback_data="admin:reset_all_daily_usage_exec"))
     kb.add(types.InlineKeyboardButton("لغو", callback_data="admin:system_tools_menu"))
-    await bot.edit_message_reply_markup(call.from_user.id, call.message.message_id, reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ ریست مصرف امروز همه؟", reply_markup=kb)
 
 async def handle_reset_all_daily_usage_action(call, params):
-    await _safe_edit(call.from_user.id, call.message.message_id, "⏳ در حال انجام...", reply_markup=None)
-    # از db.usage برای حذف اسنپ‌شات‌های امروز استفاده می‌کنیم
     count = await db.delete_all_daily_snapshots()
-    await _safe_edit(call.from_user.id, call.message.message_id, f"✅ انجام شد. {count} رکورد پاک شد.", 
-                     reply_markup=await admin_menu.system_tools_menu())
+    await bot.answer_callback_query(call.id, f"✅ {count} رکورد پاک شد.")
+    await _safe_edit(call.from_user.id, call.message.message_id, "✅ انجام شد.", reply_markup=await admin_menu.system_tools_menu())
 
 async def handle_force_snapshot(call, params):
-    """اجرای دستی اسنپ‌شات (آپدیت آمار)"""
-    await bot.answer_callback_query(call.id, "دستور اجرا شد. (این قابلیت در نسخه کامل فعال می‌شود)")
-    # در اینجا باید تسک snapshot را صدا بزنید اگر ایمپورت شده باشد
+    await bot.answer_callback_query(call.id, "دستور اجرا شد.")
 
 async def handle_reset_all_points_confirm(call, params):
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⚠️ تایید ریست امتیازها", callback_data="admin:reset_all_points_exec"))
+    kb.add(types.InlineKeyboardButton("⚠️ تایید", callback_data="admin:reset_all_points_exec"))
     kb.add(types.InlineKeyboardButton("لغو", callback_data="admin:system_tools_menu"))
-    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ تمام امتیازات کاربران صفر خواهد شد!", reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ صفر کردن امتیازات همه؟", reply_markup=kb)
 
 async def handle_reset_all_points_execute(call, params):
     count = await db.reset_all_achievement_points()
     await bot.answer_callback_query(call.id, f"✅ امتیاز {count} کاربر صفر شد.")
-    await _safe_edit(call.from_user.id, call.message.message_id, "✅ عملیات موفق.", reply_markup=await admin_menu.system_tools_menu())
+    await _safe_edit(call.from_user.id, call.message.message_id, "✅ انجام شد.", reply_markup=await admin_menu.system_tools_menu())
 
 async def handle_delete_all_devices_confirm(call, params):
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⚠️ تایید حذف دستگاه‌ها", callback_data="admin:delete_all_devices_exec"))
+    kb.add(types.InlineKeyboardButton("⚠️ تایید", callback_data="admin:delete_all_devices_exec"))
     kb.add(types.InlineKeyboardButton("لغو", callback_data="admin:system_tools_menu"))
-    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ لیست دستگاه‌های متصل تمام کاربران پاک می‌شود.", reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ حذف تمام دستگاه‌ها؟", reply_markup=kb)
 
 async def handle_delete_all_devices_execute(call, params):
     count = await db.delete_all_user_agents()
     await bot.answer_callback_query(call.id, f"✅ {count} دستگاه حذف شد.")
-    await _safe_edit(call.from_user.id, call.message.message_id, "✅ عملیات موفق.", reply_markup=await admin_menu.system_tools_menu())
+    await _safe_edit(call.from_user.id, call.message.message_id, "✅ انجام شد.", reply_markup=await admin_menu.system_tools_menu())
 
 async def handle_reset_all_balances_confirm(call, params):
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⚠️ تایید صفر کردن موجودی‌ها", callback_data="admin:reset_all_balances_exec"))
+    kb.add(types.InlineKeyboardButton("⚠️ تایید", callback_data="admin:reset_all_balances_exec"))
     kb.add(types.InlineKeyboardButton("لغو", callback_data="admin:system_tools_menu"))
-    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ موجودی کیف پول همه کاربران صفر و تاریخچه پاک می‌شود!", reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, "⚠️ صفر کردن موجودی کیف پول همه؟", reply_markup=kb)
 
 async def handle_reset_all_balances_execute(call, params):
     count = await db.reset_all_wallet_balances()
     await bot.answer_callback_query(call.id, "✅ انجام شد.")
     await _safe_edit(call.from_user.id, call.message.message_id, f"✅ موجودی {count} کاربر صفر شد.", reply_markup=await admin_menu.system_tools_menu())
 
-# --- اضافه کردن به انتهای فایل bot/admin_handlers/user_management.py ---
+# --- این کدها را به انتهای فایل bot/admin_handlers/user_management.py اضافه کنید ---
 
-# ==============================================================================
-# 11. افزودن کاربر جدید (Add User Flow) - جایگزین فایل‌های قدیمی
-# ==============================================================================
-
-async def handle_add_user_start(call: types.CallbackQuery, params: list):
-    """شروع پروسه افزودن کاربر: انتخاب پنل"""
-    # params[0] = panel_type (hiddify/marzban)
-    panel_type = params[0]
+async def handle_churn_contact_user(call, params):
+    """تماس با کاربر (ارسال پیام دستی)"""
+    target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت پنل‌های فعال این نوع
-    async with db.get_session() as session:
-        stmt = select(Panel).where(and_(Panel.panel_type == panel_type, Panel.is_active == True))
-        result = await session.execute(stmt)
-        panels = result.scalars().all()
-    
-    if not panels:
-        await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی از این نوع یافت نشد.", show_alert=True)
-        return
-
-    # ذخیره استیت
+    # تنظیم استیت برای دریافت متن پیام
     admin_conversations[uid] = {
-        'action': 'add_user',
-        'step': 'select_panel',
-        'panel_type': panel_type,
+        'step': 'send_msg_to_user',
+        'target_id': int(target_id),
         'msg_id': msg_id,
-        'data': {}
+        'next_handler': process_send_msg_to_user
     }
     
-    # ساخت منوی انتخاب پنل
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    for p in panels:
-        kb.add(types.InlineKeyboardButton(f"سرور: {p.name}", callback_data=f"admin:add_user_select_panel:{p.name}"))
-    
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:manage_panel:{panel_type}"))
-    
-    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb)
+    await _safe_edit(uid, msg_id, "📝 لطفاً پیام خود را برای ارسال به کاربر بنویسید:", 
+                     reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
 
-async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
-    """انتخاب پنل و پرسیدن نام"""
-    # params[0] = panel_name
-    panel_name = params[0]
-    uid = call.from_user.id
-    
-    if uid not in admin_conversations: return
-    
-    admin_conversations[uid]['data']['panel_name'] = panel_name
-    admin_conversations[uid]['step'] = 'get_name'
-    msg_id = admin_conversations[uid]['msg_id']
-    
-    await _safe_edit(uid, msg_id, 
-                     f"👤 سرور انتخاب شد: **{panel_name}**\n\nلطفاً **نام کاربر** را وارد کنید:", 
-                     reply_markup=await admin_menu.cancel_action())
-    
-    # تنظیم مرحله بعدی برای دریافت پیام متنی
-    bot.register_next_step_handler(call.message, get_new_user_name)
-
-async def get_new_user_name(message: types.Message):
-    uid, text = message.from_user.id, message.text.strip()
+async def process_send_msg_to_user(message: types.Message):
+    """پردازش و ارسال پیام وارد شده توسط ادمین"""
+    uid, text = message.from_user.id, message.text
     await _delete_user_message(message)
     
     if uid not in admin_conversations: return
-    
-    admin_conversations[uid]['data']['name'] = text
-    msg_id = admin_conversations[uid]['msg_id']
-    
-    await _safe_edit(uid, msg_id, 
-                     "📦 لطفاً **حجم محدودیت (GB)** را وارد کنید (عدد):", 
-                     reply_markup=await admin_menu.cancel_action())
-    bot.register_next_step_handler(message, get_new_user_limit)
-
-async def get_new_user_limit(message: types.Message):
-    uid, text = message.from_user.id, message.text.strip()
-    await _delete_user_message(message)
-    if uid not in admin_conversations: return
+    data = admin_conversations.pop(uid)
+    target_id = data['target_id']
+    msg_id = data['msg_id']
     
     try:
-        limit = float(text)
-        admin_conversations[uid]['data']['limit'] = limit
-        msg_id = admin_conversations[uid]['msg_id']
-        
-        await _safe_edit(uid, msg_id, 
-                         "📅 لطفاً **تعداد روز اعتبار** را وارد کنید (عدد):", 
-                         reply_markup=await admin_menu.cancel_action())
-        bot.register_next_step_handler(message, get_new_user_days)
-    except ValueError:
-        msg_id = admin_conversations[uid]['msg_id']
-        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم (GB):", reply_markup=await admin_menu.cancel_action())
-        bot.register_next_step_handler(message, get_new_user_limit)
-
-async def get_new_user_days(message: types.Message):
-    uid, text = message.from_user.id, message.text.strip()
-    await _delete_user_message(message)
-    if uid not in admin_conversations: return
-    
-    try:
-        days = int(text)
-        data = admin_conversations[uid]['data']
-        msg_id = admin_conversations[uid]['msg_id']
-        
-        # اجرای ساخت کاربر
-        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر در پنل...", reply_markup=None)
-        
-        panel_name = data['panel_name']
-        name = data['name']
-        limit = data['limit']
-        
-        # استفاده از فکتوری برای گرفتن هندلر پنل
-        panel_api = await PanelFactory.get_panel(panel_name)
-        
-        # فراخوانی متد ساخت کاربر
-        new_user = await panel_api.add_user(name, limit, days)
-        
-        if new_user:
-            # ثبت در دیتابیس ربات (اختیاری ولی توصیه شده)
-            # اگر Hiddify باشد UUID دارد، اگر Marzban باشد Username
-            identifier = new_user.get('uuid') or name 
-            
-            # پاک کردن استیت
-            del admin_conversations[uid]
-            
-            res_text = (
-                f"✅ کاربر با موفقیت ساخته شد!\n\n"
-                f"👤 نام: `{name}`\n"
-                f"📦 حجم: `{limit} GB`\n"
-                f"📅 مدت: `{days} روز`\n"
-                f"🔑 شناسه: `{identifier}`"
-            )
-            
-            # نمایش دکمه‌های مدیریت کاربر جدید
-            kb = types.InlineKeyboardMarkup()
-            # اگر شناسه UUID است (هیدیفای) دکمه کپی لینک هم می‌توان گذاشت
-            kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data=f"admin:list:panel_users:{admin_conversations[uid]['panel_type']}:0"))
-            
-            await _safe_edit(uid, msg_id, res_text, reply_markup=kb)
-            
-            # سینک سریع دیتابیس (اختیاری)
-            # await combined_handler.get_combined_user_info(identifier) 
-            
-        else:
-            await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر در پنل. لطفاً لاگ را بررسی کنید.", reply_markup=await admin_menu.main())
-            
-    except ValueError:
-        msg_id = admin_conversations[uid]['msg_id']
-        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد صحیح وارد کنید. روز:", reply_markup=await admin_menu.cancel_action())
-        bot.register_next_step_handler(message, get_new_user_days)
+        await bot.send_message(target_id, f"📩 پیام از پشتیبانی:\n\n{text}")
+        await _safe_edit(uid, msg_id, "✅ پیام شما با موفقیت برای کاربر ارسال شد.", 
+                         reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'hiddify')) # پنل پیش‌فرض
     except Exception as e:
-        logger.error(f"Error creating user: {e}")
-        if uid in admin_conversations:
-            msg_id = admin_conversations[uid]['msg_id']
-            await _safe_edit(uid, msg_id, f"❌ خطای غیرمنتظره: {e}", reply_markup=await admin_menu.main())
+        logger.error(f"Error sending msg to user {target_id}: {e}")
+        await _safe_edit(uid, msg_id, "❌ ارسال ناموفق (ممکن است ربات بلاک شده باشد).", 
+                         reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'hiddify'))
+
+async def handle_churn_send_offer(call, params):
+    """ارسال پیشنهاد ویژه (همان Winback)"""
+    await manual_winback_handler(call, params)
+
+async def manual_winback_handler(call, params):
+    """ارسال پیام دلتنگی آماده"""
+    target_id = int(params[0])
+    msg = "👋 سلام! دلمون برات تنگ شده. 🌹\nخیلی وقته سری به ما نزدی. یه کد تخفیف ویژه برات داریم:\n🎁 Code: `WELCOME_BACK`"
+    
+    try:
+        await bot.send_message(target_id, msg, parse_mode="Markdown")
+        await bot.answer_callback_query(call.id, "✅ پیام ارسال شد.", show_alert=True)
+    except:
+        await bot.answer_callback_query(call.id, "❌ ارسال ناموفق.", show_alert=True)

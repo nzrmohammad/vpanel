@@ -14,7 +14,7 @@ def initialize_panel_management_handlers(b, conv_dict):
     """مقادیر bot و admin_conversations را از فایل اصلی دریافت می‌کند."""
     global bot, admin_conversations
     bot = b
-    # استفاده از دیکشنری مشترک یا داخلی (اگر مشترک نیست، همینجا مدیریت می‌شود)
+    # استفاده از دیکشنری مشترک برای مدیریت استیت‌ها در روتر
     admin_conversations = conv_dict
 
 async def _delete_user_message(msg: types.Message):
@@ -28,7 +28,7 @@ async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
     """منوی اصلی مدیریت پنل‌ها را نمایش می‌دهد."""
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت تمام پنل‌ها (حتی غیرفعال)
+    # دریافت تمام پنل‌ها
     panels = await db.get_all_panels()
     
     prompt = (
@@ -36,27 +36,10 @@ async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
         f"{escape_markdown('در این بخش می‌توانید سرورهای Hiddify و Marzban متصل به ربات را مدیریت کنید.')}"
     )
     
-    kb = types.InlineKeyboardMarkup(row_width=2)
+    # استفاده از متد جدید در admin_menu که لیست را می‌گیرد
+    markup = await admin_menu.panel_list_menu(panels)
     
-    buttons = []
-    for p in panels:
-        # p یک دیکشنری است چون get_all_panels دیکشنری برمی‌گرداند
-        status_emoji = "✅" if p['is_active'] else "❌"
-        panel_type_fa = "Hiddify" if p['panel_type'] == 'hiddify' else "Marzban"
-        btn_text = f"{status_emoji} {p['name']} ({panel_type_fa})"
-        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:panel_details:{p['id']}"))
-    
-    # چینش دکمه‌ها
-    for i in range(0, len(buttons), 2):
-        if i + 1 < len(buttons):
-            kb.add(buttons[i], buttons[i+1])
-        else:
-            kb.add(buttons[i])
-    
-    kb.add(types.InlineKeyboardButton("➕ افزودن پنل جدید", callback_data="admin:panel_add_start"))
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
-    
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
+    await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
 
 # ==============================================================================
 # افزودن پنل جدید (Add Panel Flow)
@@ -91,9 +74,11 @@ async def handle_set_panel_type(call: types.CallbackQuery, params: list):
     admin_conversations[uid]['data']['panel_type'] = panel_type
     admin_conversations[uid]['step'] = 'name'
     
+    # تنظیم هندلر مرحله بعد برای روتر
+    admin_conversations[uid]['next_handler'] = get_panel_name
+    
     prompt = escape_markdown("2️⃣ یک نام منحصر به فرد برای این پنل انتخاب کنید (مثال: سرور آلمان):")
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-    admin_conversations[uid]['next_handler'] = get_panel_url
 
 async def get_panel_name(message: types.Message):
     """مرحله سوم: دریافت نام و پرسیدن آدرس URL."""
@@ -105,9 +90,11 @@ async def get_panel_name(message: types.Message):
     admin_conversations[uid]['step'] = 'url'
     msg_id = admin_conversations[uid]['msg_id']
     
+    # تنظیم هندلر مرحله بعد
+    admin_conversations[uid]['next_handler'] = get_panel_url
+    
     prompt = escape_markdown(f"3️⃣ لطفاً آدرس کامل پنل را وارد کنید:\n\n*مثال:*\n`https://mypanel.domain.com`")
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-    bot.register_next_step_handler(message, get_panel_url)
 
 async def get_panel_url(message: types.Message):
     """مرحله چهارم: دریافت URL و پرسیدن توکن اول."""
@@ -120,6 +107,9 @@ async def get_panel_url(message: types.Message):
     msg_id = admin_conversations[uid]['msg_id']
     panel_type = admin_conversations[uid]['data']['panel_type']
 
+    # تنظیم هندلر مرحله بعد
+    admin_conversations[uid]['next_handler'] = get_panel_token1
+
     prompt_text = "4️⃣ "
     if panel_type == 'hiddify':
         prompt_text += "لطفاً `API Key` (توکن ادمین) هیدیفای را وارد کنید:"
@@ -127,7 +117,6 @@ async def get_panel_url(message: types.Message):
         prompt_text += "لطفاً `Username` (نام کاربری) ادمین مرزبان را وارد کنید:"
         
     await _safe_edit(uid, msg_id, escape_markdown(prompt_text), reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-    bot.register_next_step_handler(message, get_panel_token1)
 
 async def get_panel_token1(message: types.Message):
     """مرحله پنجم: دریافت توکن اول و پرسیدن توکن دوم (در صورت نیاز)."""
@@ -140,14 +129,15 @@ async def get_panel_token1(message: types.Message):
     panel_type = admin_conversations[uid]['data']['panel_type']
 
     admin_conversations[uid]['step'] = 'token2'
+    # تنظیم هندلر مرحله بعد
+    admin_conversations[uid]['next_handler'] = get_panel_token2
+
     if panel_type == 'hiddify':
         prompt = escape_markdown("5️⃣ (اختیاری) لطفاً `Proxy Path` را وارد کنید. اگر ندارید، کلمه `ندارم` را ارسال کنید:")
         await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-        bot.register_next_step_handler(message, get_panel_token2)
     else: # Marzban
         prompt = escape_markdown("5️⃣ لطفاً `Password` (رمز عبور) ادمین مرزبان را وارد کنید:")
         await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-        bot.register_next_step_handler(message, get_panel_token2)
 
 async def get_panel_token2(message: types.Message):
     """مرحله ششم (آخر): دریافت توکن دوم و ذخیره پنل."""
@@ -159,12 +149,11 @@ async def get_panel_token2(message: types.Message):
     panel_data = convo_data['data']
     msg_id = convo_data['msg_id']
 
-    if panel_data['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-']:
+    if panel_data['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-', '.']:
         panel_data['api_token2'] = None
     else:
         panel_data['api_token2'] = token2
 
-    # استفاده از متد PanelDB
     success = await db.add_panel(
         name=panel_data['name'],
         panel_type=panel_data['panel_type'],
@@ -175,7 +164,9 @@ async def get_panel_token2(message: types.Message):
 
     if success:
         success_message = escape_markdown(f"✅ پنل «{panel_data['name']}» با موفقیت اضافه شد.")
-        await _safe_edit(uid, msg_id, success_message, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+        # بازگشت به لیست پنل‌ها
+        all_panels = await db.get_all_panels()
+        await _safe_edit(uid, msg_id, success_message, reply_markup=await admin_menu.panel_list_menu(all_panels))
     else:
         error_message = escape_markdown("❌ خطا: پنلی با این نام از قبل وجود دارد. لطفاً دوباره تلاش کنید.")
         await _safe_edit(uid, msg_id, error_message, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
@@ -195,7 +186,6 @@ async def handle_panel_details(call: types.CallbackQuery, params: list):
         await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.", show_alert=True)
         return
 
-    # ساخت URL برای نمایش (بدون نمایش کامل رمز عبور)
     display_url = panel['api_url']
     status = "فعال ✅" if panel['is_active'] else "غیرفعال ❌"
     
@@ -226,7 +216,6 @@ async def handle_panel_toggle_status(call: types.CallbackQuery, params: list):
     
     if await db.toggle_panel_status(panel_id):
         await bot.answer_callback_query(call.id, "✅ وضعیت پنل تغییر کرد.")
-        # رفرش صفحه جزئیات
         await handle_panel_details(call, params)
     else:
         await bot.answer_callback_query(call.id, "❌ خطا در تغییر وضعیت.", show_alert=True)
@@ -269,7 +258,8 @@ async def handle_panel_edit_start(call: types.CallbackQuery, params: list):
     admin_conversations[uid] = {
         'action': 'edit_panel_name',
         'msg_id': msg_id, 
-        'panel_id': panel_id
+        'panel_id': panel_id,
+        'next_handler': get_new_panel_name  # <--- ست کردن هندلر بعدی
     }
     
     prompt = f"نام فعلی: {escape_markdown(panel['name'])}\nلطفاً نام جدید را وارد کنید:"
@@ -277,7 +267,6 @@ async def handle_panel_edit_start(call: types.CallbackQuery, params: list):
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:panel_details:{panel_id}"))
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
-    bot.register_next_step_handler(call.message, get_new_panel_name)
 
 async def get_new_panel_name(message: types.Message):
     """مرحله دوم ویرایش: دریافت و ذخیره نام جدید."""

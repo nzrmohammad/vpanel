@@ -21,28 +21,29 @@ from .admin_handlers import (
 logger = logging.getLogger(__name__)
 
 # --- State Management ---
-# دیکشنری وضعیت مکالمات + زمان آخرین تعامل
-shared_admin_conversations = {}
-CONVERSATION_TIMEOUT = 300  # 5 دقیقه زمان انقضا برای هر عملیات
+# Initialize context_state on the bot instance if it doesn't exist
+if not hasattr(bot, 'context_state'):
+    bot.context_state = {}
+
+CONVERSATION_TIMEOUT = 300  # 5 minutes
 
 # ===================================================================
 # 1. Custom Filters & Decorators
 # ===================================================================
 
 class IsAdminFilter(SimpleCustomFilter):
-    """فیلتر بررسی ادمین بودن کاربر"""
+    """Filter to check if the user is an admin"""
     key = 'is_admin'
     
     async def check(self, message: types.Message):
         return message.from_user.id in ADMIN_IDS
 
 def safe_handler(func: Callable) -> Callable:
-    """دکوریتور برای مدیریت خطای امن و لاگ کردن"""
+    """Decorator for safe error handling and logging"""
     async def wrapper(call_or_message, *args, **kwargs):
         user_id = call_or_message.from_user.id
         username = call_or_message.from_user.username
         
-        # لاگ کردن فعالیت
         action_name = func.__name__
         if isinstance(call_or_message, types.CallbackQuery):
             logger.info(f"ADMIN ACTION [Callback]: {user_id} ({username}) -> {call_or_message.data}")
@@ -53,12 +54,11 @@ def safe_handler(func: Callable) -> Callable:
             return await func(call_or_message, *args, **kwargs)
         except Exception as e:
             logger.error(f"CRITICAL ERROR in {action_name}: {e}", exc_info=True)
-            # اطلاع به ادمین در صورت بروز خطا
             try:
                 if isinstance(call_or_message, types.CallbackQuery):
-                    await bot.answer_callback_query(call_or_message.id, "❌ خطای پردازش داخلی.", show_alert=True)
+                    await bot.answer_callback_query(call_or_message.id, "❌ Internal processing error.", show_alert=True)
                 elif isinstance(call_or_message, types.Message):
-                    await bot.reply_to(call_or_message, "❌ خطای داخلی سرور رخ داد.")
+                    await bot.reply_to(call_or_message, "❌ Internal server error occurred.")
             except:
                 pass
     return wrapper
@@ -68,25 +68,25 @@ def safe_handler(func: Callable) -> Callable:
 # ===================================================================
 
 def register_admin_handlers(bot_instance, scheduler_instance):
-    """راه‌اندازی اولیه هندلرها و تزریق استیت"""
+    """Initialize handlers and inject state"""
     
     initialize_utils(bot_instance)
     bot.add_custom_filter(IsAdminFilter())
 
-    # ماژول‌هایی که نیاز به دسترسی به استیت دارند
+    # Modules that need access to state
     modules_to_init = [
         user_management, plan_management, panel_management,
         wallet_admin, support
     ]
     
+    # Pass bot.context_state as the shared dictionary
     for module in modules_to_init:
-        # تلاش برای پیدا کردن تابع init با نام‌های استاندارد
         init_func_name = f"initialize_{module.__name__.split('.')[-1]}_handlers"
         if hasattr(module, init_func_name):
-            getattr(module, init_func_name)(bot_instance, shared_admin_conversations)
+            getattr(module, init_func_name)(bot_instance, bot.context_state)
 
     if hasattr(group_actions, 'initialize_group_actions_handlers'):
-        group_actions.initialize_group_actions_handlers(bot_instance, shared_admin_conversations)
+        group_actions.initialize_group_actions_handlers(bot_instance, bot.context_state)
 
     debug.register_debug_handlers(bot_instance, scheduler_instance)
 
@@ -96,11 +96,11 @@ def register_admin_handlers(bot_instance, scheduler_instance):
 
 @safe_handler
 async def route_add_user(call: types.CallbackQuery, params: list):
-    """مسیریاب افزودن کاربر"""
+    """Router for adding a user"""
     if hasattr(user_management, 'handle_add_user_start'):
         await user_management.handle_add_user_start(call, params)
     else:
-        await bot.answer_callback_query(call.id, "⚠️ ماژول مدیریت کاربر آپدیت نشده است.", show_alert=True)
+        await bot.answer_callback_query(call.id, "⚠️ User management module not updated.", show_alert=True)
 
 # ===================================================================
 # 4. Dispatcher Dictionary
@@ -134,6 +134,8 @@ ADMIN_CALLBACK_HANDLERS = {
     "report_by_plan_select": reporting.handle_report_by_plan_selection,
     "list_by_plan": reporting.handle_list_users_by_plan,
     "list_no_plan": reporting.handle_list_users_no_plan,
+    "panel_report_detail": reporting.handle_panel_specific_reports_menu,
+    "manage_single_panel": navigation.handle_panel_management_menu, 
 
     # Plans & Panels
     "plan_manage": plan_management.handle_plan_management_menu,
@@ -186,6 +188,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "renew_apply_plan": user_management.handle_renew_apply_plan,
     "churn_contact_user": user_management.handle_churn_contact_user,
     "churn_send_offer": user_management.handle_churn_send_offer,
+    "add_user_to_panel": user_management.handle_add_user_start,
 
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
@@ -237,33 +240,33 @@ ADMIN_CALLBACK_HANDLERS = {
 
 @bot.message_handler(commands=['cancel'], is_admin=True)
 async def admin_cancel_command(message: types.Message):
-    """لغو عملیات و پاکسازی استیت"""
+    """Cancel operation and reset state"""
     uid = message.from_user.id
-    if uid in shared_admin_conversations:
-        del shared_admin_conversations[uid]
-        await bot.reply_to(message, "✅ عملیات لغو و وضعیت ریست شد.")
+    if uid in bot.context_state:
+        del bot.context_state[uid]
+        await bot.reply_to(message, "✅ Operation cancelled and state reset.")
     else:
-        await bot.reply_to(message, "هیچ عملیاتی فعال نیست.")
+        await bot.reply_to(message, "No active operation.")
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice'], is_admin=True)
 @safe_handler
 async def global_step_handler(message: types.Message):
     """
-    مدیریت مراحل مکالمه با قابلیت بررسی انقضا (Timeout)
+    Manages conversation steps with timeout check
     """
     uid = message.from_user.id
     
-    if uid in shared_admin_conversations:
-        step_data = shared_admin_conversations[uid]
+    if uid in bot.context_state:
+        step_data = bot.context_state[uid]
         
-        # بررسی انقضای زمانی (Timeout Check)
+        # Check timeout
         last_time = step_data.get('timestamp', 0)
         if time.time() - last_time > CONVERSATION_TIMEOUT:
-            del shared_admin_conversations[uid]
-            await bot.reply_to(message, "⏳ زمان عملیات به پایان رسیده است. لطفاً دوباره تلاش کنید.")
+            del bot.context_state[uid]
+            await bot.reply_to(message, "⏳ Operation timed out. Please try again.")
             return
 
-        # آپدیت زمان آخرین تعامل
+        # Update last interaction time
         step_data['timestamp'] = time.time()
         
         next_func = step_data.get('next_handler')
@@ -273,11 +276,11 @@ async def global_step_handler(message: types.Message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin:"), is_admin=True)
 @safe_handler
 async def handle_admin_callbacks(call: types.CallbackQuery):
-    """هندلر مرکزی دکمه‌های ادمین"""
-    # تمدید زمان استیت در صورت کلیک روی دکمه (اگر استیتی باشد)
+    """Central admin button handler"""
     uid = call.from_user.id
-    if uid in shared_admin_conversations:
-        shared_admin_conversations[uid]['timestamp'] = time.time()
+    # Extend state time
+    if uid in bot.context_state:
+        bot.context_state[uid]['timestamp'] = time.time()
 
     parts = call.data.split(':')
     if len(parts) < 2: return
@@ -285,10 +288,16 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
     action = parts[1]
     params = parts[2:]
     
+    # Special handling for single_panel navigation if no specific handler
+    if action == "manage_single_panel":
+        # This callback needs to redirect to the specific menu
+        # Format: manage_single_panel:ID:Type
+        pass 
+
     handler = ADMIN_CALLBACK_HANDLERS.get(action)
     
     if handler:
         await handler(call, params)
     else:
         logger.warning(f"Handler not found for: {action}")
-        await bot.answer_callback_query(call.id, "❌ دستور یافت نشد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ Command not found.", show_alert=True)
