@@ -3,143 +3,109 @@
 import logging
 from telebot import types
 
-# ایمپورت دکوریتورها و بات
-from bot.bot_instance import bot
-from bot.keyboards import admin as admin_menu
-from bot.utils import _safe_edit, initialize_utils  # اضافه کردن initialize_utils
+# 1. Imports
+from .bot_instance import bot
+from .utils import _safe_edit, initialize_utils
 
-# ایمپورت تمام هندلرها
-from bot.admin_handlers import (
-    user_management,
+# 2. Import Handlers
+from .admin_handlers import (
+    user_management, 
+    reporting, 
+    broadcast, 
+    backup, 
+    group_actions, 
+    plan_management, 
     panel_management,
-    plan_management,
-    reporting,
-    group_actions,
-    broadcast,
-    backup,
+    support,
     wallet as wallet_admin,
-    support
+    navigation, # ✅ اضافه شده
+    debug       # ✅ اضافه شده
 )
+
+# 3. Hiddify/Marzban specific imports (اگر هنوز نیاز دارید به صورت جداگانه باشند)
+from .admin_hiddify_handlers import _start_add_hiddify_user_convo, initialize_hiddify_handlers, handle_add_user_back_step
+from .admin_marzban_handlers import _start_add_marzban_user_convo, initialize_marzban_handlers
 
 logger = logging.getLogger(__name__)
 
-# ===================================================================
-# 1. مقداردهی اولیه (Initialization) - بخش جدید و حیاتی
-# ===================================================================
-# این بخش باعث می‌شود متغیر bot در تمام فایل‌ها مقدار بگیرد و دکمه‌ها کار کنند.
-
-# دیکشنری مشترک برای وضعیت مکالمات ادمین
+# دیکشنری مشترک برای مدیریت وضعیت مکالمات ادمین
 shared_admin_conversations = {}
 
-# فعال‌سازی ابزارهای کمکی (مثل _safe_edit)
-initialize_utils(bot)
+def register_admin_handlers(bot_instance, scheduler_instance):
+    """
+    تابع اصلی برای راه‌اندازی تمام هندلرهای ادمین
+    """
+    # فعال‌سازی ابزارهای کمکی
+    initialize_utils(bot_instance)
 
-# فعال‌سازی هندلرهای مدیریت که نیاز به init دارند
-user_management.initialize_user_management_handlers(bot, shared_admin_conversations)
-panel_management.initialize_panel_management_handlers(bot, shared_admin_conversations)
-plan_management.initialize_plan_management_handlers(bot, shared_admin_conversations)
-wallet_admin.initialize_wallet_handlers(bot, shared_admin_conversations)
-support.initialize_support_handlers(bot, shared_admin_conversations)
-
-# ===================================================================
-# توابع منوهای اصلی
-# ===================================================================
-
-async def _handle_show_panel(call, params):
-    """نمایش منوی اصلی پنل مدیریت"""
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        "👑 **پنل مدیریت**\n\nلطفاً یک گزینه را انتخاب کنید:", 
-        reply_markup=await admin_menu.main()
-    )
-
-async def _handle_management_menu(call, params):
-    """منوی مدیریت کاربران"""
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        "👥 **مدیریت کاربران**\nنوع پنل را انتخاب کنید:", 
-        reply_markup=await admin_menu.management_menu()
-    )
-
-async def _handle_search_menu(call, params):
-    """منوی جستجو"""
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        "🔎 **جستجوی کاربر**", 
-        reply_markup=await admin_menu.search_menu()
-    )
-
-async def _handle_group_actions_menu(call, params):
-    """منوی دستورات گروهی"""
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        "⚙️ **دستورات گروهی**", 
-        reply_markup=await admin_menu.group_actions_menu()
-    )
-
-async def _handle_user_analysis_menu(call, params):
-    """منوی گزارش پلن‌ها"""
-    await reporting.handle_select_plan_for_report_menu(call, params)
-
-async def _handle_system_status_menu(call, params):
-    """منوی وضعیت سیستم"""
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        "📊 **وضعیت سیستم**", 
-        reply_markup=await admin_menu.system_status_menu()
-    )
-
-async def _handle_panel_management_menu(call, params):
-    """منوی مدیریت پنل خاص"""
-    # در صورت وجود پارامتر پنل، منو را باز کن
-    if params:
-        panel_type = params[0]
-        panel_name = "Hiddify" if panel_type == "hiddify" else "Marzban"
-        await _safe_edit(
-            call.from_user.id, 
-            call.message.message_id, 
-            f"مدیریت کاربران پنل‌های نوع *{panel_name}*", 
-            reply_markup=await admin_menu.panel_management_menu(panel_type)
-        )
-    else:
-        # اگر پارامتر نبود، منوی اصلی مدیریت پنل‌ها
-        await panel_management.handle_panel_management_menu(call, [])
-
-async def _handle_server_selection(call, params):
-    """منوی انتخاب سرور عمومی"""
-    base_callback = params[0]
-    text = "لطفاً نوع پنل را انتخاب کنید:"
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        text,
-        reply_markup=await admin_menu.server_selection_menu(f"admin:{base_callback}")
-    )
+    # 4. Initialize Sub-Handlers with shared state
+    # پاس دادن bot و دیکشنری وضعیت به ماژول‌های دیگر
+    initialize_hiddify_handlers(bot_instance, shared_admin_conversations)
+    initialize_marzban_handlers(bot_instance, shared_admin_conversations)
+    
+    group_actions.initialize_group_actions_handlers(bot_instance, shared_admin_conversations) if hasattr(group_actions, 'initialize_group_actions_handlers') else None
+    user_management.initialize_user_management_handlers(bot_instance, shared_admin_conversations)
+    plan_management.initialize_plan_management_handlers(bot_instance, shared_admin_conversations)
+    panel_management.initialize_panel_management_handlers(bot_instance, shared_admin_conversations)
+    wallet_admin.initialize_wallet_handlers(bot_instance, shared_admin_conversations)
+    support.initialize_support_handlers(bot_instance, shared_admin_conversations)
+    
+    # Broadcast و Reporting ممکن است نیاز به init خاصی نداشته باشند یا متفاوت باشند
+    # broadcast.initialize_broadcast_handlers(...) 
+    
+    # ثبت دستورات دیباگ (test, addpoints, ...)
+    debug.register_debug_handlers(bot_instance, scheduler_instance)
 
 # ===================================================================
-# دیکشنری مسیریابی (Dispatcher Dictionary)
+# 5. Global Step Handler (حیاتی برای AsyncTeleBot)
 # ===================================================================
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice'])
+async def global_step_handler(message: types.Message):
+    """
+    مدیریت مراحل مکالمه (State Machine) برای ادمین‌ها.
+    جایگزین register_next_step_handler در نسخه Async.
+    """
+    uid = message.from_user.id
+    
+    if uid in shared_admin_conversations:
+        step_data = shared_admin_conversations[uid]
+        next_func = step_data.get('next_handler') # تابعی که باید اجرا شود
+        
+        if next_func:
+            # اجرای تابع مرحله بعد
+            await next_func(message)
+            return
 
+# ===================================================================
+# 6. Dispatcher Dictionary (Routing Map)
+# ===================================================================
 ADMIN_CALLBACK_HANDLERS = {
-    # --- Menus ---
-    "panel": _handle_show_panel,
+    # --- Navigation Menus (Moved to navigation.py) ---
+    "panel": navigation.handle_show_panel,
+    "management_menu": navigation.handle_management_menu,
+    "search_menu": navigation.handle_search_menu,
+    "group_actions_menu": navigation.handle_group_actions_menu,
+    "user_analysis_menu": navigation.handle_user_analysis_menu,
+    "system_status_menu": navigation.handle_system_status_menu,
+    "manage_panel": navigation.handle_panel_management_menu,
+    "select_server": navigation.handle_server_selection,
+    "add_user_back": handle_add_user_back_step,
+
+    # --- Reporting & Dashboard ---
     "quick_dashboard": reporting.handle_quick_dashboard,
     "scheduled_tasks": reporting.handle_show_scheduled_tasks,
-    "management_menu": _handle_management_menu,
-    "manage_panel": _handle_panel_management_menu,
-    "select_server": _handle_server_selection,
-    "search_menu": _handle_search_menu,
-    "group_actions_menu": _handle_group_actions_menu,
     "reports_menu": reporting.handle_reports_menu,
     "panel_reports": reporting.handle_panel_specific_reports_menu,
-    "user_analysis_menu": _handle_user_analysis_menu,
-    "system_status_menu": _handle_system_status_menu,
-    
+    "health_check": reporting.handle_health_check,
+    "marzban_stats": reporting.handle_marzban_system_stats,
+    "list": reporting.handle_paginated_list,
+    "financial_report": reporting.handle_financial_report,
+    "financial_details": reporting.handle_financial_details,
+    "list_devices": reporting.handle_connected_devices_list,
+    "report_by_plan_select": reporting.handle_report_by_plan_selection,
+    "list_by_plan": reporting.handle_list_users_by_plan,
+    "list_no_plan": reporting.handle_list_users_no_plan,
+
     # --- Plan Management ---
     "plan_manage": plan_management.handle_plan_management_menu,
     "plan_show_category": plan_management.handle_show_plans_by_category,
@@ -149,7 +115,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "plan_edit_start": plan_management.handle_plan_edit_start,
     "plan_add_start": plan_management.handle_plan_add_start,
     "plan_add_type": plan_management.get_plan_add_type,
-    
+
     # --- Panel Management ---
     "panel_manage": panel_management.handle_panel_management_menu,
     "panel_details": panel_management.handle_panel_details,
@@ -159,8 +125,9 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_edit_start": panel_management.handle_panel_edit_start,
     "panel_delete_confirm": panel_management.handle_panel_delete_confirm,
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
-    
+
     # --- User Management (Actions) ---
+    "add_user": lambda c, p: (_start_add_hiddify_user_convo if p[0] == 'hiddify' else _start_add_marzban_user_convo)(c.from_user.id, c.message.message_id),
     "sg": user_management.handle_global_search_convo,
     "search_by_tid": user_management.handle_search_by_telegram_id_convo,
     "purge_user": user_management.handle_purge_user_convo,
@@ -177,40 +144,36 @@ ADMIN_CALLBACK_HANDLERS = {
     "us_phist": user_management.handle_payment_history,
     "reset_phist": user_management.handle_reset_payment_history_confirm,
     "do_reset_phist": user_management.handle_reset_payment_history_action,
-    
+
     "us_reset_menu": user_management.handle_user_reset_menu,
     "us_rb": user_management.handle_reset_birthday,
     "us_rusg": user_management.handle_reset_usage_menu,
     "rsa": user_management.handle_reset_usage_action,
     "us_rtr": user_management.handle_reset_transfer_cooldown,
-    
+
     "us_warn_menu": user_management.handle_user_warning_menu,
     "us_spn": user_management.handle_send_payment_reminder,
     "us_sdw": user_management.handle_send_disconnection_warning,
-    
+
     "us_delc": user_management.handle_delete_user_confirm,
     "del_a": user_management.handle_delete_user_action,
-    
-    "us_note": user_management.handle_ask_for_note,
-    
     "us_ddev": user_management.handle_delete_devices_confirm,
     "del_devs_exec": user_management.handle_delete_devices_action,
-    
-    "us_winback": user_management.manual_winback_handler,
-    "churn_contact_user": user_management.handle_churn_contact_user,
-    "churn_send_offer": user_management.handle_churn_send_offer,
-    
+    "us_note": user_management.handle_ask_for_note,
+
     "renew_sub_menu": user_management.handle_renew_subscription_menu,
     "renew_select_plan": user_management.handle_renew_select_plan_menu,
     "renew_apply_plan": user_management.handle_renew_apply_plan,
+
+    "churn_contact_user": user_management.handle_churn_contact_user,
+    "churn_send_offer": user_management.handle_churn_send_offer,
+
+    # --- Wallet & Finance ---
+    "financial_report": reporting.handle_financial_report,
+    "financial_details": reporting.handle_financial_details,
+    "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
+    "do_delete_trans": reporting.handle_do_delete_transaction,
     
-    # --- Badges & Achievements ---
-    "awd_b_menu": user_management.handle_award_badge_menu,
-    "awd_b": user_management.handle_award_badge,
-    "ach_approve": user_management.handle_achievement_request_callback,
-    "ach_reject": user_management.handle_achievement_request_callback,
-    
-    # --- Wallet (Admin) ---
     "us_mchg": wallet_admin.handle_manual_charge_request,
     "manual_charge": wallet_admin.handle_manual_charge_request,
     "manual_charge_exec": wallet_admin.handle_manual_charge_execution,
@@ -218,30 +181,26 @@ ADMIN_CALLBACK_HANDLERS = {
     "us_wdrw": wallet_admin.handle_manual_withdraw_request,
     "manual_withdraw_exec": wallet_admin.handle_manual_withdraw_execution,
     "manual_withdraw_cancel": wallet_admin.handle_manual_withdraw_cancel,
+    
     "charge_confirm": wallet_admin.handle_charge_request_callback,
     "charge_reject": wallet_admin.handle_charge_request_callback,
-    
-    # --- Reporting ---
-    "health_check": reporting.handle_health_check,
-    "marzban_stats": reporting.handle_marzban_system_stats,
-    "list": reporting.handle_paginated_list,
-    "list_devices": reporting.handle_connected_devices_list,
-    "list_by_plan": reporting.handle_list_users_by_plan,
-    "list_no_plan": reporting.handle_list_users_no_plan,
-    
-    "financial_report": reporting.handle_financial_report,
-    "financial_details": reporting.handle_financial_details,
-    "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
-    "do_delete_trans": reporting.handle_do_delete_transaction,
-    
+    "reset_all_balances_confirm": user_management.handle_reset_all_balances_confirm,
+    "reset_all_balances_exec": user_management.handle_reset_all_balances_execute,
+
     # --- Group Actions ---
     "group_action_select_plan": group_actions.handle_select_plan_for_action,
     "ga_select_type": group_actions.handle_select_action_type,
     "ga_ask_value": group_actions.handle_ask_action_value,
     "adv_ga_select_filter": group_actions.handle_select_advanced_filter,
     "adv_ga_select_action": group_actions.handle_select_action_for_filter,
-    "ga_confirm": group_actions.ga_execute,
-    
+
+    # --- Badges & Support ---
+    "awd_b_menu": user_management.handle_award_badge_menu,
+    "awd_b": user_management.handle_award_badge,
+    "ach_req_approve": user_management.handle_achievement_request_callback,
+    "ach_req_reject": user_management.handle_achievement_request_callback,
+    "support_reply": support.prompt_for_reply,
+
     # --- System Tools & Backup ---
     "system_tools_menu": user_management.handle_system_tools_menu,
     "reset_all_daily_usage_confirm": user_management.handle_reset_all_daily_usage_confirm,
@@ -251,43 +210,36 @@ ADMIN_CALLBACK_HANDLERS = {
     "reset_all_points_exec": user_management.handle_reset_all_points_execute,
     "delete_all_devices_confirm": user_management.handle_delete_all_devices_confirm,
     "delete_all_devices_exec": user_management.handle_delete_all_devices_execute,
-    "reset_all_balances_confirm": user_management.handle_reset_all_balances_confirm,
-    "reset_all_balances_exec": user_management.handle_reset_all_balances_execute,
-    
-    "backup_menu": backup.backup_menu_handler,
-    "backup": backup.backup_panel_data,
     
     "broadcast": broadcast.start_broadcast_flow,
     "broadcast_target": broadcast.ask_for_broadcast_message,
-    "broadcast_confirm": broadcast.broadcast_confirm,
-    
-    "support_reply": support.prompt_for_reply,
+    "backup_menu": backup.handle_backup_menu,
+    "backup": backup.handle_backup_action,
 }
 
 # ===================================================================
-# Main Callback Handler (The Glue)
+# 7. Main Callback Handler
 # ===================================================================
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin:"))
 async def handle_admin_callbacks(call: types.CallbackQuery):
     """
-    این تابع مرکزی تمام کال‌بک‌های ادمین را دریافت کرده و به تابع مناسب هدایت می‌کند.
+    هندلر مرکزی تمام دکمه‌های شیشه‌ای ادمین.
+    کالبک را پارس کرده و به تابع مربوطه در دیکشنری هدایت می‌کند.
     """
     try:
-        # 1. جدا کردن بخش‌های کالبک
+        # 1. جدا کردن بخش‌ها
         parts = call.data.split(':')
-        if len(parts) < 2:
-            await bot.answer_callback_query(call.id, "❌ درخواست نامعتبر.")
-            return
+        if len(parts) < 2: 
+            return # فرمت اشتباه است
             
-        action = parts[1] # مثلاً 'panel' یا 'us'
-        params = parts[2:] # پارامترهای اضافی
+        action = parts[1] # مثل 'us', 'panel', 'add_user'
+        params = parts[2:] # پارامترهای اضافی مثل ID کاربر
         
-        # 2. پیدا کردن هندلر مناسب از دیکشنری
+        # 2. پیدا کردن هندلر
         handler = ADMIN_CALLBACK_HANDLERS.get(action)
         
         if handler:
-            # 3. اجرای تابع به صورت Async
+            # 3. اجرای هندلر (Async)
             await handler(call, params)
         else:
             logger.warning(f"No handler found for admin action: '{action}' in callback: {call.data}")
@@ -296,9 +248,3 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error handling admin callback '{call.data}': {e}", exc_info=True)
         await bot.answer_callback_query(call.id, "❌ خطایی در پردازش درخواست رخ داد.", show_alert=True)
-
-def register_admin_handlers():
-    """
-    این تابع فقط برای سازگاری با custom_bot.py است.
-    """
-    pass

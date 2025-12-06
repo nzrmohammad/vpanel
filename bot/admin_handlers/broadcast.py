@@ -18,11 +18,14 @@ broadcast_setup = {}
 
 async def start_broadcast_flow(call: types.CallbackQuery, params: list):
     """شروع فرآیند: نمایش منوی انتخاب هدف"""
+    # ✅ اصلاح شده: افزودن await قبل از admin_menu
+    markup = await admin_menu.broadcast_target_menu()
+    
     await bot.edit_message_text(
         "📣 <b>پیام همگانی (نسخه پایدار)</b>\n\nلطفاً مخاطبین پیام را انتخاب کنید:",
         call.from_user.id,
         call.message.message_id,
-        reply_markup=admin_menu.broadcast_target_menu(),
+        reply_markup=markup,
         parse_mode='HTML'
     )
 

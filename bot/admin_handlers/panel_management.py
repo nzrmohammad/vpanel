@@ -93,7 +93,7 @@ async def handle_set_panel_type(call: types.CallbackQuery, params: list):
     
     prompt = escape_markdown("2️⃣ یک نام منحصر به فرد برای این پنل انتخاب کنید (مثال: سرور آلمان):")
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-    bot.register_next_step_handler(call.message, get_panel_name)
+    admin_conversations[uid]['next_handler'] = get_panel_url
 
 async def get_panel_name(message: types.Message):
     """مرحله سوم: دریافت نام و پرسیدن آدرس URL."""
