@@ -5,7 +5,7 @@ import logging
 from telebot import types
 from sqlalchemy import select, update
 from bot.bot_instance import bot
-from bot.keyboards import admin_menu
+from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, BroadcastTask
 

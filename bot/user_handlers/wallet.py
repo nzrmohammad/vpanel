@@ -1,7 +1,7 @@
 # bot/user_handlers/wallet.py
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user
+from bot.keyboards import user as user_menu
 from bot.formatters import user_formatter
 from bot.database import db
 from bot.language import get_string
@@ -27,7 +27,7 @@ async def wallet_main_handler(call: types.CallbackQuery):
         text,
         user_id,
         call.message.message_id,
-        reply_markup=user.wallet_main_menu(balance, lang),
+        reply_markup=user_menu.wallet_main_menu(balance, lang),
         parse_mode='HTML'
     )
 

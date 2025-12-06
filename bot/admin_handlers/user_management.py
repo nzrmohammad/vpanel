@@ -5,7 +5,7 @@ from sqlalchemy import select, or_, cast, String, func
 from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot
-from bot.keyboards import admin_menu
+from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, Panel, WalletTransaction
 from bot.services.panels import PanelFactory

@@ -1,7 +1,7 @@
 # bot/user_handlers/info.py
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user
+from bot.keyboards import user as user_menu
 from bot.database import db
 from bot.language import get_string
 from bot.config import ADMIN_SUPPORT_CONTACT, TUTORIAL_LINKS
@@ -13,7 +13,7 @@ async def tutorials_menu(call: types.CallbackQuery):
         get_string('prompt_select_os', lang),
         call.from_user.id,
         call.message.message_id,
-        reply_markup=user.tutorial_main_menu(lang)
+        reply_markup=user_menu.tutorial_main_menu(lang)
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("tutorial_os:"))
@@ -25,7 +25,7 @@ async def tutorial_os_handler(call: types.CallbackQuery):
         get_string('prompt_select_app', lang),
         call.from_user.id,
         call.message.message_id,
-        reply_markup=user.tutorial_os_menu(os_type, lang)
+        reply_markup=user_menu.tutorial_os_menu(os_type, lang)
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("tutorial_app:"))
@@ -40,7 +40,7 @@ async def show_tutorial_link(call: types.CallbackQuery):
     if link:
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton(get_string('btn_view_tutorial', lang), url=link))
-        markup.add(user.back_btn(f"tutorial_os:{os_type}", lang))
+        markup.add(user_menu.back_btn(f"tutorial_os:{os_type}", lang))
         
         await bot.edit_message_text(
             get_string('tutorial_ready_header', lang),
@@ -60,5 +60,5 @@ async def support_info(call: types.CallbackQuery):
         text,
         call.from_user.id,
         call.message.message_id,
-        reply_markup=user.back_btn("back", lang)
+        reply_markup=user_menu.back_btn("back", lang)
     )

@@ -5,7 +5,7 @@ from bot.bot_instance import bot
 from bot.database import db
 from bot.db.base import User, UserUUID, ChargeRequest
 from bot.utils import escape_markdown, _safe_edit
-from bot.keyboards import admin
+from bot.keyboards import admin as admin_menu
 
 logger = logging.getLogger(__name__)
 bot, admin_conversations = None, None
@@ -72,7 +72,7 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                     )
                     
                     # اطلاع به کاربر
-                    await _safe_edit(user_id, user_message_id, success_text, reply_markup=admin.post_charge_menu(lang_code))
+                    await _safe_edit(user_id, user_message_id, success_text, reply_markup=admin_menu.post_charge_menu(lang_code))
                     
                     # آپدیت پیام ادمین
                     await bot.edit_message_caption(
@@ -89,7 +89,7 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                 await session.commit()
                 
                 reject_text = "❌ درخواست شارژ حساب شما توسط ادمین رد شد. لطفاً با پشتیبانی تماس بگیرید."
-                await _safe_edit(user_id, user_message_id, escape_markdown(reject_text), reply_markup=admin.user_cancel_action("wallet:main", lang_code))
+                await _safe_edit(user_id, user_message_id, escape_markdown(reject_text), reply_markup=admin_menu.user_cancel_action("wallet:main", lang_code))
 
                 await bot.edit_message_caption(
                     caption=f"{original_caption}\n\n❌ توسط شما رد شد.",
@@ -121,7 +121,7 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     # دکمه بازگشت هوشمند
     back_cb = f"admin:user_details:{identifier}" if identifier.isdigit() else "admin:user_manage"
     
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action(back_cb))
+    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action(back_cb))
     bot.register_next_step_handler(call.message, _get_manual_charge_amount)
 
 async def _get_manual_charge_amount(message: types.Message):
@@ -156,7 +156,7 @@ async def _get_manual_charge_amount(message: types.Message):
                 user = result.scalar_one_or_none()
             
             if not user:
-                await _safe_edit(admin_id, msg_id, "❌ کاربر یافت نشد.", reply_markup=admin.admin_panel())
+                await _safe_edit(admin_id, msg_id, "❌ کاربر یافت نشد.", reply_markup=admin_menu.admin_panel())
                 return
 
             convo['target_user_id'] = user.user_id
@@ -173,10 +173,10 @@ async def _get_manual_charge_amount(message: types.Message):
         await _safe_edit(admin_id, msg_id, confirm_prompt, reply_markup=kb)
 
     except ValueError:
-        await _safe_edit(admin_id, msg_id, "❌ مقدار نامعتبر. فقط عدد وارد کنید.", reply_markup=admin.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ مقدار نامعتبر. فقط عدد وارد کنید.", reply_markup=admin_menu.admin_panel())
     except Exception as e:
         logger.error(f"Manual charge error: {e}")
-        await _safe_edit(admin_id, msg_id, "❌ خطای سیستمی.", reply_markup=admin.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطای سیستمی.", reply_markup=admin_menu.admin_panel())
 
 async def handle_manual_charge_execution(call: types.CallbackQuery, params: list):
     """شارژ دستی را نهایی می‌کند."""
@@ -205,7 +205,7 @@ async def handle_manual_charge_execution(call: types.CallbackQuery, params: list
         except:
             pass
     else:
-        await _safe_edit(admin_id, msg_id, "❌ خطا در ثبت تراکنش.", reply_markup=admin.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطا در ثبت تراکنش.", reply_markup=admin_menu.admin_panel())
 
 async def handle_manual_charge_cancel(call: types.CallbackQuery, params: list):
     """لغو عملیات شارژ دستی."""
@@ -217,7 +217,7 @@ async def handle_manual_charge_cancel(call: types.CallbackQuery, params: list):
     target_user_id = convo.get('target_user_id')
     
     await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", 
-                     reply_markup=admin.admin_back_btn(f"admin:user_details:{target_user_id}" if target_user_id else "admin:user_manage"))
+                     reply_markup=admin_menu.admin_back_btn(f"admin:user_details:{target_user_id}" if target_user_id else "admin:user_manage"))
 
 # --- برداشت دستی / صفر کردن موجودی (Manual Withdraw) ---
 
@@ -288,7 +288,7 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
         except:
             pass
     else:
-        await _safe_edit(admin_id, msg_id, "❌ خطا در عملیات.", reply_markup=admin.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطا در عملیات.", reply_markup=admin_menu.admin_panel())
 
 async def handle_manual_withdraw_cancel(call: types.CallbackQuery, params: list):
     """لغو عملیات برداشت."""
@@ -300,4 +300,4 @@ async def handle_manual_withdraw_cancel(call: types.CallbackQuery, params: list)
     target_user_id = convo.get('target_user_id')
     
     await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", 
-                     reply_markup=admin.admin_back_btn(f"admin:user_details:{target_user_id}"))
+                     reply_markup=admin_menu.admin_back_btn(f"admin:user_details:{target_user_id}"))

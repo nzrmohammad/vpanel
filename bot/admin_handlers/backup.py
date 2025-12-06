@@ -7,7 +7,7 @@ import aiofiles
 from datetime import datetime
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import admin_menu
+from bot.keyboards import admin as admin_menu
 
 logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")

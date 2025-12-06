@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot
-from bot.keyboards import admin_menu
+from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import UserUUID, Panel
 from bot.services.panels import PanelFactory  # فرض بر این است که این کلاس وجود دارد

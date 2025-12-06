@@ -1,12 +1,11 @@
 # bot/user_handlers/account.py
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user
+from bot.keyboards import user as user_menu
 from bot.formatters import user_formatter
-from bot.services.panels import PanelFactory
 from bot.database import db
+from bot import combined_handler
 from bot.language import get_string
-from bot.config import ENABLE_TRAFFIC_TRANSFER
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,25 +14,21 @@ logger = logging.getLogger(__name__)
 async def account_list_handler(call: types.CallbackQuery):
     """نمایش لیست اکانت‌های کاربر"""
     user_id = call.from_user.id
-    lang = db.get_user_lang(user_id)
+    lang = await db.get_user_language(user_id)
     
-    # دریافت اکانت‌های کاربر از دیتابیس لوکال
-    accounts = db.get_users_by_telegram_id(user_id)
+    # دریافت اکانت‌ها (UUIDها) به صورت Async
+    accounts = await db.uuids(user_id)
     
     if not accounts:
         await bot.edit_message_text(
             get_string('fmt_no_account_registered', lang),
             user_id,
             call.message.message_id,
-            reply_markup=user.back_btn("back", lang)
+            reply_markup=user_menu.back_btn("back", lang)
         )
         return
 
-    # بروزرسانی سریع دیتا (اختیاری - اگر کش ندارید)
-    # برای سرعت بیشتر، معمولا فقط لیست دیتابیس را نشان می‌دهیم
-    # و جزئیات دقیق را وقتی کاربر روی اکانت کلیک کرد می‌گیریم
-    
-    markup = user.accounts(accounts, lang)
+    markup = await user_menu.accounts(accounts, lang)
     await bot.edit_message_text(
         get_string('account_list_title', lang),
         user_id,
@@ -45,40 +40,51 @@ async def account_list_handler(call: types.CallbackQuery):
 async def account_detail_handler(call: types.CallbackQuery):
     """جزئیات یک اکانت خاص"""
     user_id = call.from_user.id
-    lang = db.get_user_lang(user_id)
-    acc_id = int(call.data.split('_')[1])
-    
-    account = db.get_account_by_id(acc_id)
-    if not account:
-        await bot.answer_callback_query(call.id, "Not Found")
-        return
-
-    await bot.answer_callback_query(call.id, "🔄 Updating...")
+    lang = await db.get_user_language(user_id)
     
     try:
-        panel = await PanelFactory.get_panel(account['server_type'])
-        identifier = account['uuid'] if account['server_type'] == 'hiddify' else account['username']
-        remote_data = await panel.get_user(identifier)
+        acc_id = int(call.data.split('_')[1])
+        account = await db.uuid_by_id(user_id, acc_id)
         
-        if remote_data:
-            text = user_formatter.profile_info(remote_data, lang)
-            markup = user.account_menu(acc_id, lang)
+        if not account:
+            await bot.answer_callback_query(call.id, "Account Not Found")
+            return
+
+        await bot.answer_callback_query(call.id, "🔄 Updating...")
+        
+        # دریافت اطلاعات ترکیبی از همه پنل‌ها
+        uuid_str = account['uuid']
+        # توجه: در دیتابیس uuid آبجکت است، باید به رشته تبدیل شود
+        info = await combined_handler.get_combined_user_info(str(uuid_str))
+        
+        if info:
+            # اضافه کردن ID دیتابیس برای استفاده در دکمه‌ها
+            info['db_id'] = acc_id 
+            text = await user_formatter.profile_info(info, lang)
+            markup = await user_menu.account_menu(acc_id, lang)
             
             await bot.edit_message_text(
                 text, user_id, call.message.message_id,
-                reply_markup=markup, parse_mode='HTML'
+                reply_markup=markup, parse_mode='Markdown'
             )
         else:
-            await bot.edit_message_text("❌ اکانت در سرور یافت نشد.", user_id, call.message.message_id)
+            await bot.edit_message_text("❌ اطلاعات اکانت یافت نشد.", user_id, call.message.message_id)
             
     except Exception as e:
-        logger.error(f"Account Error: {e}")
-        await bot.answer_callback_query(call.id, "Connection Error")
+        logger.error(f"Account Detail Error: {e}")
+        await bot.answer_callback_query(call.id, "Error fetching details")
 
-# --- دریافت لینک اشتراک ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('getlinks_'))
 async def get_subscription_link(call: types.CallbackQuery):
+    """منوی دریافت لینک"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
     acc_id = int(call.data.split('_')[1])
-    # پیاده‌سازی دریافت لینک از پنل و نمایش آن
-    # ... (مشابه منطق بالا)
-    await bot.answer_callback_query(call.id, "لینک کپی شد (مثال)")
+    
+    markup = await user_menu.get_links_menu(acc_id, lang)
+    await bot.edit_message_text(
+        get_string('prompt_get_links', lang),
+        user_id,
+        call.message.message_id,
+        reply_markup=markup
+    )

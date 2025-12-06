@@ -1,11 +1,15 @@
-# bot/menu/admin.py
+# bot/keyboards/admin.py
 
 from telebot import types
 from typing import Optional, List, Dict, Any
 from .base import BaseMenu
 
 class AdminMenu(BaseMenu):
-    
+    """
+    کلاس مدیریت کیبوردهای پنل ادمین.
+    شامل تمام منوها و دکمه‌های مورد نیاز برای مدیریت ربات.
+    """
+
     async def main(self) -> types.InlineKeyboardMarkup:
         """منوی اصلی مدیریت"""
         kb = self.create_markup(row_width=2)
@@ -23,6 +27,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def system_tools_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی ابزارهای سیستمی"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("🔄 آپدیت آمار (Snapshot)", "admin:force_snapshot"),
@@ -37,6 +42,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def search_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی جستجو"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("🔎 نام کاربر", "admin:sg"),
@@ -47,6 +53,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def group_actions_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی دستورات گروهی"""
         kb = self.create_markup(row_width=1)
         kb.add(
             self.btn("⚙️ دستور گروهی (بر اساس پلن)", "admin:group_action_select_plan"),
@@ -56,7 +63,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def management_menu(self) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب نوع پنل برای مدیریت"""
+        """منوی انتخاب نوع پنل برای مدیریت کاربران"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("مدیریت پنل‌های Hiddify", "admin:manage_panel:hiddify"),
@@ -66,6 +73,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def panel_management_menu(self, panel_type: str) -> types.InlineKeyboardMarkup:
+        """منوی مدیریت یک پنل خاص (افزودن کاربر/لیست)"""
         kb = self.create_markup(row_width=1)
         kb.add(
             self.btn("➕ افزودن کاربر جدید", f"admin:add_user:{panel_type}"),
@@ -75,6 +83,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def user_interactive_menu(self, identifier: str, is_active: bool, panel: str, back_callback: str = None) -> types.InlineKeyboardMarkup:
+        """منوی مدیریت تکی کاربر (عملیات مختلف)"""
         kb = self.create_markup(row_width=2)
         
         context_suffix = ":s" if back_callback and "search_menu" in back_callback else ""
@@ -119,18 +128,18 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def renew_subscription_menu(self, identifier: str, context_suffix: str) -> types.InlineKeyboardMarkup:
+        """منوی تمدید اشتراک"""
         kb = self.create_markup(row_width=1)
-        panel_short = 'h' 
+        # برای بازگشت نیاز به پنل داریم، فرض بر hiddify یا استفاده از context_suffix برای اصلاح مسیر
+        # در اینجا ساده‌سازی شده، بهتر است پنل هم پاس داده شود. اما طبق کد قبلی:
+        panel_short = 'h' # Fallback default
         
         kb.add(self.btn("🔄 اعمال پلن جدید", f"admin:renew_select_plan:{identifier}{context_suffix}"))
         kb.add(self.btn("🔙 بازگشت به کاربر", f"admin:us:{panel_short}:{identifier}{context_suffix}"))
         return kb
 
     async def select_plan_for_renew_menu(self, identifier: str, context_suffix: str, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """
-        انتخاب پلن برای تمدید.
-        plans: لیستی از دیکشنری پلن‌ها (از دیتابیس)
-        """
+        """انتخاب پلن برای تمدید"""
         kb = self.create_markup(row_width=1)
         
         for plan in plans:
@@ -142,6 +151,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def edit_user_menu(self, identifier: str, panel: str) -> types.InlineKeyboardMarkup:
+        """منوی ویرایش کاربر (حجم/زمان)"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("➕ افزودن حجم", f"admin:ae:add_gb:{panel}:{identifier}"),
@@ -151,9 +161,10 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def reset_usage_selection_menu(self, identifier: str, base_callback: str, context: Optional[str] = None) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب پنل برای ریست حجم"""
         kb = self.create_markup(row_width=2)
         suffix = f":{context}" if context else ""
-        panel_short = 'h' 
+        panel_short = 'h' # Default fallback
         
         kb.add(
             self.btn("آلمان 🇩🇪", f"admin:{base_callback}:hiddify:{identifier}{suffix}"),
@@ -164,6 +175,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def reports_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی گزارش‌ها"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("گزارش پنل‌های Hiddify", "admin:panel_reports:hiddify"),
@@ -182,7 +194,7 @@ class AdminMenu(BaseMenu):
             self.btn("📊 گزارش پلن", "admin:user_analysis_menu")
         )
         kb.add(
-            self.btn("📱 دستگاه‌ها", "admin:list_devices:0"),
+            self.btn("📱 دستگاه‌ها", "admin:list:devices:0"),
             self.btn("💸 گزارش مالی", "admin:financial_report")
         )
         kb.add(self.btn("📊 بازخوردها", "admin:list:feedback:0"))
@@ -190,6 +202,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def panel_specific_reports_menu(self, panel: str) -> types.InlineKeyboardMarkup:
+        """گزارش‌های خاص یک پنل"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("✅ فعال (۲۴س)", f"admin:list:active_users:{panel}:0"),
@@ -203,6 +216,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def analytics_menu(self, panel: str) -> types.InlineKeyboardMarkup:
+        """منوی تحلیل و آمار"""
         kb = self.create_markup(row_width=2)
         kb.add(self.btn("🏆 پرمصرف‌ترین‌ها", f"admin:list:top_consumers:{panel}:0"))
         
@@ -218,7 +232,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def select_plan_for_report_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """انتخاب پلن برای گزارش‌گیری."""
+        """انتخاب پلن برای گزارش‌گیری"""
         kb = self.create_markup(row_width=1)
         for plan in plans:
             name = plan['name']
@@ -230,7 +244,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def select_plan_for_action_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """انتخاب پلن برای عملیات گروهی."""
+        """انتخاب پلن برای دستور گروهی"""
         kb = self.create_markup(row_width=1)
         for plan in plans:
             name = plan['name']
@@ -241,6 +255,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def select_action_type_menu(self, context_value: any, context_type: str) -> types.InlineKeyboardMarkup:
+        """انتخاب نوع دستور گروهی (حجم/زمان)"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("➕ افزودن حجم", f"admin:ga_ask_value:add_gb:{context_type}:{context_value}"),
@@ -251,6 +266,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def advanced_group_action_filter_menu(self) -> types.InlineKeyboardMarkup:
+        """فیلترهای پیشرفته برای دستور گروهی"""
         kb = self.create_markup(row_width=1)
         kb.add(self.btn("⏳ در آستانه انقضا (۳ روز)", "admin:adv_ga_select_action:expiring_soon"))
         kb.add(self.btn("🚫 غیرفعال (۳۰ روز)", "admin:adv_ga_select_action:inactive_30_days"))
@@ -258,6 +274,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def broadcast_target_menu(self) -> types.InlineKeyboardMarkup:
+        """انتخاب مخاطبین پیام همگانی"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("📡 آنلاین", "admin:broadcast_target:online"),
@@ -271,7 +288,17 @@ class AdminMenu(BaseMenu):
         kb.add(self.btn("🔙 لغو", "admin:panel"))
         return kb
 
+    async def confirm_broadcast_menu(self) -> types.InlineKeyboardMarkup:
+        """تایید ارسال پیام همگانی"""
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn("✅ بله، ارسال شود", "admin:broadcast_confirm"),
+            self.btn("❌ خیر، لغو", "admin:panel")
+        )
+        return kb
+
     async def backup_selection_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی بکاپ‌گیری"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("📄 Hiddify", "admin:backup:hiddify"),
@@ -282,6 +309,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def server_selection_menu(self, base_callback: str) -> types.InlineKeyboardMarkup:
+        """انتخاب سرور عمومی"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("آلمان 🇩🇪", f"{base_callback}:hiddify"),
@@ -291,11 +319,13 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def cancel_action(self, back_callback="admin:panel") -> types.InlineKeyboardMarkup:
+        """دکمه لغو عمومی"""
         kb = self.create_markup()
         kb.add(self.btn("✖️ لغو عملیات", back_callback))
         return kb
         
     async def confirm_delete(self, identifier: str, panel: str) -> types.InlineKeyboardMarkup:
+        """تایید حذف کاربر"""
         panel_short = 'h' if panel == 'hiddify' else 'm'
         kb = self.create_markup(row_width=2)
         kb.add(
@@ -305,6 +335,7 @@ class AdminMenu(BaseMenu):
         return kb
     
     async def system_status_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی وضعیت سیستم"""
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("آلمان 🇩🇪", "admin:health_check"),
@@ -316,11 +347,10 @@ class AdminMenu(BaseMenu):
     async def award_badge_menu(self, identifier: str, context_suffix: str, badges: List[Dict[str, Any]] = None) -> types.InlineKeyboardMarkup:
         """
         منوی اهدای دستی نشان.
-        badges: لیست نشان‌های قابل اهدا از دیتابیس.
         """
         kb = self.create_markup(row_width=2)
         
-        # اگر لیست بج‌ها خالی بود، چند مورد پیش‌فرض برای تست یا اطمینان
+        # لیست پیش‌فرض برای اطمینان
         if not badges:
             badges = [
                 {'code': 's_coach', 'name': "🏊‍♀️ مربی شنا"}, 
@@ -331,8 +361,20 @@ class AdminMenu(BaseMenu):
         buttons = [self.btn(b['name'], f"admin:awd_b:{b['code']}:{identifier}{context_suffix}") for b in badges]
         
         for i in range(0, len(buttons), 2):
-            kb.add(*buttons[i:i+2])
+            if i+1 < len(buttons):
+                kb.row(buttons[i], buttons[i+1])
+            else:
+                kb.row(buttons[i])
 
-        panel_short = 'h'
+        panel_short = 'h' # Fallback
         kb.add(self.btn("🔙 بازگشت", f"admin:us:{panel_short}:{identifier}{context_suffix}"))
+        return kb
+    
+    async def confirm_group_action_menu(self) -> types.InlineKeyboardMarkup:
+        """تایید دستور گروهی"""
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn("✅ بله، انجام شود", "admin:ga_confirm"),
+            self.btn("❌ لغو", "admin:group_actions_menu")
+        )
         return kb

@@ -4,7 +4,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from bot.database import db
 from bot.db.base import Panel
-from bot.keyboards import admin
+from bot.keyboards import admin as admin_menu
 from bot.utils import _safe_edit, escape_markdown
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ async def handle_set_panel_type(call, params):
     admin_conversations[uid]['step'] = 'name'
     
     prompt = escape_markdown("2️⃣ یک نام منحصر به فرد برای این پنل انتخاب کنید (مثال: سرور آلمان):")
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
     bot.register_next_step_handler(call.message, get_panel_name)
 
 async def get_panel_name(message: types.Message):
@@ -93,7 +93,7 @@ async def get_panel_name(message: types.Message):
     msg_id = admin_conversations[uid]['msg_id']
     
     prompt = escape_markdown(f"3️⃣ لطفاً آدرس کامل پنل را وارد کنید:\n\n*مثال برای Hiddify:*\n`https://mypanel.domain.com`\n\n*مثال برای Marzban:*\n`https://mypanel.domain.com:8000`")
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
     bot.register_next_step_handler(message, get_panel_url)
 
 async def get_panel_url(message: types.Message):
@@ -113,7 +113,7 @@ async def get_panel_url(message: types.Message):
     else: # Marzban
         prompt_text += "لطفاً `Username` ادمین پنل مرزبان را وارد کنید:"
         
-    await _safe_edit(uid, msg_id, escape_markdown(prompt_text), reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+    await _safe_edit(uid, msg_id, escape_markdown(prompt_text), reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
     bot.register_next_step_handler(message, get_panel_token1)
 
 async def get_panel_token1(message: types.Message):
@@ -129,12 +129,12 @@ async def get_panel_token1(message: types.Message):
     if panel_type == 'hiddify':
         admin_conversations[uid]['step'] = 'token2_hiddify'
         prompt = escape_markdown("5️⃣ (اختیاری) لطفاً `Admin Proxy Path` را وارد کنید. اگر ندارید، کلمه `ندارم` را ارسال کنید:")
-        await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+        await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
         bot.register_next_step_handler(message, get_panel_token2)
     else: # Marzban
         admin_conversations[uid]['step'] = 'token2_marzban'
         prompt = escape_markdown("5️⃣ لطفاً `Password` ادمین پنل مرزبان را وارد کنید:")
-        await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+        await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
         bot.register_next_step_handler(message, get_panel_token2)
 
 async def get_panel_token2(message: types.Message):
@@ -163,10 +163,10 @@ async def get_panel_token2(message: types.Message):
 
     if success:
         success_message = escape_markdown("✅ پنل با موفقیت اضافه شد. برای مشاهده لیست جدید، به منوی مدیریت پنل‌ها بازگردید.")
-        await _safe_edit(uid, msg_id, success_message, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+        await _safe_edit(uid, msg_id, success_message, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
     else:
         error_message = escape_markdown("❌ خطا: پنلی با این نام از قبل وجود دارد. لطفاً نام دیگری انتخاب کنید.")
-        await _safe_edit(uid, msg_id, error_message, reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+        await _safe_edit(uid, msg_id, error_message, reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
 
     admin_conversations.pop(uid, None)
 
@@ -260,7 +260,7 @@ async def handle_panel_edit_start(call, params):
     admin_conversations[uid] = {'step': 'panel_rename', 'msg_id': msg_id, 'panel_id': panel_id}
     
     prompt = f"لطفاً نام جدید را برای پنل «{escape_markdown(panel.name)}» وارد کنید:"
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin.admin_cancel_action(f"admin:panel_details:{panel_id}"))
+    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action(f"admin:panel_details:{panel_id}"))
     bot.register_next_step_handler(call.message, get_new_panel_name)
 
 
@@ -278,7 +278,7 @@ async def get_new_panel_name(message: types.Message):
 
     if not all([panel_id, msg_id]):
         logger.error(f"Incomplete conversation data for renaming panel for user {uid}")
-        await bot.send_message(uid, "❌ خطایی در جریان مکالمه رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=admin.admin_cancel_action("admin:panel_manage"))
+        await bot.send_message(uid, "❌ خطایی در جریان مکالمه رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=admin_menu.admin_cancel_action("admin:panel_manage"))
         return
 
     kb = types.InlineKeyboardMarkup()

@@ -3,7 +3,7 @@ from telebot import types
 from sqlalchemy import select
 from bot.database import db
 from bot.db.base import Plan, ServerCategory
-from bot.keyboards import admin
+from bot.keyboards import admin as admin_menu
 from bot.utils import _safe_edit, escape_markdown
 
 logger = logging.getLogger(__name__)

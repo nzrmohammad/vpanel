@@ -8,15 +8,15 @@ import jdatetime
 from datetime import datetime
 from telebot import types
 
-# --- Imports ---
+# --- Imports from your project structure ---
 from bot.bot_instance import bot
 from bot.database import db
 from bot.keyboards import user as user_menu
-from bot.utils import escape_markdown, _safe_edit, to_shamsi
+from bot.utils import escape_markdown, _safe_edit, _UUID_RE
 from bot.language import get_string
 
-# ✅ تغییر مهم: ایمپورت user_formatter به جای توابع قدیمی
-from bot.formatters import user_formatter 
+# --- اصلاح ایمپورت فرمترها ---
+from bot.formatters import user_formatter  # استفاده از اینستنس کلاس
 
 from bot.config import (
     ADMIN_IDS, ADMIN_SUPPORT_CONTACT, TUTORIAL_LINKS, 
@@ -38,6 +38,7 @@ REWARDS_CONFIG = [
     {"name": "۱ گیگابایت حجم 🔥",  "weight": 10, "type": "volume", "value": 1.0},
 ]
 
+# دیکشنری برای نگهداری وضعیت مکالمات (مثل دریافت متن تیکت یا تاریخ تولد)
 user_conversations = {}
 
 # =============================================================================
@@ -46,31 +47,77 @@ user_conversations = {}
 
 @bot.message_handler(commands=['start'])
 async def start_command(message: types.Message):
+    """هندلر دستور /start: ثبت نام کاربر و نمایش منوی اصلی."""
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
     
+    # ثبت نام یا آپدیت اطلاعات کاربر
     await db.add_or_update_user(user_id, username, first_name, last_name)
     
+    # بررسی کد دعوت (Referral System)
     args = message.text.split()
     if len(args) > 1 and ENABLE_REFERRAL_SYSTEM:
         referral_code = args[1]
         referrer_info = await db.get_referrer_info(user_id)
-        if not referrer_info:
+        if not referrer_info: # اگر قبلاً معرفی نشده
             await db.set_referrer(user_id, referral_code)
 
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
     
-    text = get_string('start_prompt', lang)
-    markup = await user_menu.main(is_admin, lang)
+    # بررسی وجود اکانت برای نمایش منو
+    user_uuids = await db.uuids(user_id)
+    
+    # --- تغییر مهم: اگر کاربر ادمین بود (is_admin) یا اکانت داشت، منو باز شود ---
+    if user_uuids or is_admin:
+        text = get_string('main_menu_title', lang)
+        # چون is_admin را True می‌فرستیم، دکمه "پنل مدیریت" در منو ساخته می‌شود
+        markup = await user_menu.main(is_admin, lang)
+    else:
+        # اگر کاربر عادی بود و اکانت نداشت، پیام خوش‌آمدگویی و درخواست UUID
+        text = get_string('start_prompt', lang)
+        markup = types.ReplyKeyboardRemove()
     
     await bot.send_message(message.chat.id, text, reply_markup=markup)
 
 
+@bot.message_handler(regexp=_UUID_RE.pattern)
+async def handle_uuid_login(message: types.Message):
+    """هندلر دریافت UUID برای لاگین."""
+    user_id = message.from_user.id
+    uuid_str = message.text.strip()
+    lang = await db.get_user_language(user_id)
+    
+    msg = await bot.send_message(message.chat.id, "⏳ در حال بررسی UUID...")
+
+    try:
+        info = await combined_handler.get_combined_user_info(uuid_str)
+        if info:
+            name = info.get('name') or message.from_user.first_name or "My Config"
+            result = await db.add_uuid(user_id, uuid_str, name)
+            
+            if result in ["db_msg_uuid_added", "db_msg_uuid_reactivated"]:
+                success_text = get_string(result, lang)
+                is_admin = user_id in ADMIN_IDS
+                markup = await user_menu.main(is_admin, lang)
+                await bot.delete_message(message.chat.id, msg.message_id)
+                await bot.send_message(message.chat.id, f"✅ {success_text}", reply_markup=markup)
+            elif result == "db_err_uuid_already_active_self":
+                await bot.edit_message_text(get_string(result, lang), message.chat.id, msg.message_id)
+            else:
+                await bot.edit_message_text("❌ این UUID قبلا ثبت شده است.", message.chat.id, msg.message_id)
+        else:
+            await bot.edit_message_text(get_string("uuid_not_found", lang), message.chat.id, msg.message_id)
+    except Exception as e:
+        logger.error(f"UUID Login Error: {e}")
+        await bot.edit_message_text("❌ خطایی رخ داد.", message.chat.id, msg.message_id)
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 async def back_to_main_menu_handler(call: types.CallbackQuery):
+    """بازگشت به منوی اصلی."""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
@@ -91,7 +138,9 @@ async def back_to_start_menu(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "daily_checkin")
 async def daily_checkin_handler(call: types.CallbackQuery):
+    """هندلر دریافت جایزه روزانه."""
     user_id = call.from_user.id
+    
     result = await db.claim_daily_checkin(user_id)
     
     if result['status'] == 'success':
@@ -106,6 +155,7 @@ async def daily_checkin_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "lucky_spin_menu")
 async def lucky_spin_menu_handler(call: types.CallbackQuery):
+    """نمایش منوی گردونه شانس."""
     user_id = call.from_user.id
     user_data = await db.user(user_id)
     current_points = user_data.get('achievement_points', 0) if user_data else 0
@@ -134,6 +184,7 @@ async def lucky_spin_menu_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "do_spin")
 async def do_spin_handler(call: types.CallbackQuery):
+    """اجرای منطق چرخش گردونه."""
     user_id = call.from_user.id
     
     if not await db.spend_achievement_points(user_id, SPIN_COST):
@@ -183,11 +234,12 @@ async def do_spin_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "referral:info")
 async def referral_info_handler(call: types.CallbackQuery):
+    """نمایش صفحه دعوت از دوستان."""
     user_id = call.from_user.id
     lang_code = await db.get_user_language(user_id)
     bot_username = (await bot.get_me()).username
     
-    # ✅ اصلاح شده: استفاده از متد async کلاس user_formatter
+    # استفاده از متد کلاس UserFormatter
     text = await user_formatter.referral_page(user_id, bot_username, lang_code)
     
     kb = types.InlineKeyboardMarkup().add(
@@ -201,6 +253,7 @@ async def referral_info_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "support:new")
 async def handle_support_request(call: types.CallbackQuery):
+    """شروع فرآیند ارسال تیکت پشتیبانی."""
     uid, msg_id = call.from_user.id, call.message.message_id
     lang_code = await db.get_user_language(uid)
     
@@ -212,9 +265,11 @@ async def handle_support_request(call: types.CallbackQuery):
     
     kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
+    
     bot.register_next_step_handler(call.message, get_support_ticket_message, original_msg_id=msg_id)
 
 async def get_support_ticket_message(message: types.Message, original_msg_id: int):
+    """دریافت پیام کاربر و ارسال به ادمین."""
     uid = message.from_user.id
     lang_code = await db.get_user_language(uid)
 
@@ -317,6 +372,14 @@ async def send_tutorial_link(call: types.CallbackQuery):
 # 6. Birthday Gift
 # =============================================================================
 
+# تابع کمکی برای فرمت تاریخ تولد
+def _fmt_birthday_info(user_data, lang_code):
+    bday = user_data.get('birthday')
+    if not bday:
+        return "تاریخ تولدی ثبت نشده است."
+    # تبدیل به شمسی اگر لازم است یا فرمت ساده
+    return f"🎂 تاریخ تولد ثبت شده: {bday}"
+
 @bot.callback_query_handler(func=lambda call: call.data == "birthday_gift")
 async def handle_birthday_gift_request(call: types.CallbackQuery):
     uid, msg_id = call.from_user.id, call.message.message_id
@@ -324,13 +387,9 @@ async def handle_birthday_gift_request(call: types.CallbackQuery):
     user_data = await db.user(uid)
     
     if user_data and user_data.get('birthday'):
-        # ✅ اصلاح شده: استفاده از فرمت دستی چون متد در کلاس نیست (یا در صورت وجود، استفاده از آن)
-        bday_date = user_data.get('birthday')
-        bday_str = to_shamsi(bday_date)
-        text = f"🎂 تاریخ تولد شما: {bday_str}\n\n🎁 در روز تولدتان هدیه دریافت خواهید کرد!"
-        
+        text = _fmt_birthday_info(user_data, lang_code=lang_code)
         kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back"))
-        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
+        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
     else:
         raw_text = get_string("prompt_birthday", lang_code)
         prompt = escape_markdown(raw_text).replace("YYYY/MM/DD", "`YYYY/MM/DD`")
@@ -491,6 +550,7 @@ async def shop_confirm_handler(call: types.CallbackQuery):
     info_before = await combined_handler.get_combined_user_info(main_uuid)
     
     info_after = copy.deepcopy(info_before)
+    
     add_gb = item.get('gb', 0)
     add_days = item.get('days', 0)
     
@@ -498,7 +558,7 @@ async def shop_confirm_handler(call: types.CallbackQuery):
     if info_after.get('expire') and add_days:
         info_after['expire'] += add_days
 
-    # ✅ اصلاح شده: استفاده از متد async کلاس
+    # استفاده از متد کلاس UserFormatter
     summary = await user_formatter.purchase_summary(info_before, info_after, {"name": item['name']}, lang)
     
     text = (
@@ -527,6 +587,7 @@ async def shop_execute_handler(call: types.CallbackQuery):
         user_uuids = await db.uuids(uid)
         if user_uuids:
             uuid = user_uuids[0]['uuid']
+            
             target_type = None
             t = item.get('target')
             if t == 'de': target_type = 'hiddify'
@@ -560,6 +621,7 @@ async def shop_execute_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "connection_doctor")
 async def connection_doctor_handler(call: types.CallbackQuery):
+    """پزشک اتصال: بررسی وضعیت اکانت و سرورها."""
     uid = call.from_user.id
     lang = await db.get_user_language(uid)
     
@@ -596,16 +658,11 @@ async def connection_doctor_handler(call: types.CallbackQuery):
         report.append("اکانت شما غیرفعال است. لطفا تمدید کنید.")
         
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
-    
     await _safe_edit(uid, call.message.message_id, "\n".join(report), reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
 async def coming_soon(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 به زودی...", show_alert=True)
-
-# =============================================================================
-# 10. Initial Menus Handlers
-# =============================================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_features_guide")
 async def show_features_guide_handler(call: types.CallbackQuery):
