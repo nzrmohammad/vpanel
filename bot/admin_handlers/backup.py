@@ -18,13 +18,14 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:backup_menu")
-async def backup_menu_handler(call: types.CallbackQuery, params: list = None):
+async def backup_menu_handler(call: types.CallbackQuery):
     """نمایش منوی انتخاب نوع بکاپ"""
+    # ✅ FIX: Added await before admin_menu.backup_selection_menu()
     await bot.edit_message_text(
         "💾 <b>منوی پشتیبان‌گیری</b>\n\nلطفاً نوع داده‌ای که می‌خواهید بکاپ بگیرید را انتخاب کنید:",
         call.from_user.id,
         call.message.message_id,
-        reply_markup=admin_menu.backup_selection_menu(),
+        reply_markup=await admin_menu.backup_selection_menu(),
         parse_mode='HTML'
     )
 
@@ -52,7 +53,6 @@ async def backup_panel_data(call: types.CallbackQuery):
     
     try:
         async with db.get_session() as session:
-            # دریافت کاربرانی که در پنل‌های این نوع هستند
             stmt = (
                 select(UserUUID)
                 .join(UserUUID.allowed_panels)
@@ -75,11 +75,9 @@ async def backup_panel_data(call: types.CallbackQuery):
             await bot.send_message(call.from_user.id, f"⚠️ هیچ کاربری برای پنل‌های {panel_type} یافت نشد.")
             return
 
-        # نوشتن فایل JSON
         async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(export_data, ensure_ascii=False, indent=2))
 
-        # ارسال فایل
         async with aiofiles.open(filename, 'rb') as f:
             file_data = await f.read()
             
@@ -91,7 +89,6 @@ async def backup_panel_data(call: types.CallbackQuery):
             parse_mode='HTML'
         )
         
-        # حذف فایل موقت
         os.remove(filename)
 
     except Exception as e:
@@ -101,11 +98,9 @@ async def backup_panel_data(call: types.CallbackQuery):
 async def _backup_postgres_secure(call: types.CallbackQuery, timestamp: str):
     """اجرای pg_dump به صورت امن و Async"""
     filename = f"pg_backup_{timestamp}.sql"
-    # حذف درایور asyncpg از URL برای استفاده در ابزار CLI
     pg_url_clean = DATABASE_URL.replace("+asyncpg", "")
     
     try:
-        # استفاده از لیست آرگومان‌ها برای امنیت بیشتر
         cmd_args = ["pg_dump", "--dbname", pg_url_clean, "-f", filename]
         
         process = await asyncio.create_subprocess_exec(
@@ -122,7 +117,6 @@ async def _backup_postgres_secure(call: types.CallbackQuery, timestamp: str):
             await bot.send_message(call.from_user.id, f"❌ خطا در اجرای pg_dump:\n{error_msg}")
             return
 
-        # ارسال فایل
         async with aiofiles.open(filename, 'rb') as f:
             file_data = await f.read()
 

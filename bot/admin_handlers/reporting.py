@@ -41,11 +41,12 @@ def write_csv_sync(filepath, users_data):
 @bot.callback_query_handler(func=lambda call: call.data == "admin:reports_menu")
 async def handle_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی اصلی گزارش‌گیری."""
+    # ✅ FIX: Added await before admin_menu.reports_menu()
     await _safe_edit(
         call.from_user.id,
         call.message.message_id,
         "📊 <b>مرکز گزارش‌گیری</b>\nلطفاً نوع گزارش را انتخاب کنید:",
-        reply_markup=admin_menu.reports_menu(),
+        reply_markup=await admin_menu.reports_menu(),
         parse_mode='HTML'
     )
 
@@ -84,6 +85,7 @@ async def handle_quick_dashboard(call: types.CallbackQuery, params: list = None)
 async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: list):
     """منوی گزارش‌های اختصاصی یک پنل."""
     panel_type = params[0] if params else 'hiddify'
+    # ✅ This one already had await, keep it
     await _safe_edit(
         call.from_user.id,
         call.message.message_id,
@@ -181,22 +183,16 @@ async def handle_report_excel(call: types.CallbackQuery):
         await bot.edit_message_text("❌ خطا در ساخت فایل.", uid, msg.message_id)
 
 # ---------------------------------------------------------
-# هندلر تسک‌های زمان‌بندی شده (Missing Function Fixed)
+# هندلر تسک‌های زمان‌بندی شده
 # ---------------------------------------------------------
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:scheduled_tasks")
 async def handle_show_scheduled_tasks(call: types.CallbackQuery, params: list = None):
-    """
-    نمایش وضعیت کارهای زمان‌بندی شده.
-    این تابع قبلاً وجود نداشت و باعث ارور می‌شد.
-    """
+    """نمایش وضعیت کارهای زمان‌بندی شده."""
     uid = call.from_user.id
     
     async with db.get_session() as session:
-        # دریافت تعداد پیام‌های زمان‌بندی شده
         count = await session.scalar(select(func.count(ScheduledMessage.id)))
-        
-        # دریافت آخرین تسک‌ها
         stmt = select(ScheduledMessage).order_by(ScheduledMessage.created_at.desc()).limit(5)
         result = await session.execute(stmt)
         tasks = result.scalars().all()
@@ -255,7 +251,6 @@ async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = 
         try:
             panel = await PanelFactory.get_panel(p['name'])
             stats = await panel.get_system_stats()
-            # مرزبان معمولا دیکشنری با version, user_count و ... برمی‌گرداند
             status = "✅ آنلاین" if stats else "❌ آفلاین"
             version = f"(v{stats.get('version', '?')})" if stats else ""
             report += f"🔹 <b>{p['name']}</b>: {status} {version}\n"
@@ -273,13 +268,9 @@ async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
     هندلر عمومی برای نمایش لیست‌های طولانی.
-    params[0]: نوع لیست (payments, bot_users, active_users, ...)
-    params[1]: پنل (اختیاری) یا شماره صفحه
-    params[2]: شماره صفحه
     """
     list_type = params[0]
     
-    # پارس کردن پارامترها
     if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users', 'top_consumers']:
         target_panel = params[1]
         page = int(params[2])
@@ -335,15 +326,12 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
             for user in result.scalars():
                 items.append(f"💰 {int(user.wallet_balance):,} T | 👤 {user.first_name}")
 
-    # ساخت متن نهایی
     text = f"📋 <b>{title}</b> (صفحه {page + 1})\n\n"
     text += "\n".join(items) if items else "موردی یافت نشد."
     
-    # کیبورد
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
-    # ساخت کالبک دیتای مناسب برای دکمه‌ها
     def make_cb(p):
         if target_panel:
             return f"admin:list:{list_type}:{target_panel}:{p}"
@@ -363,12 +351,10 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
 # ---------------------------------------------------------
-# Placeholder Handlers (برای جلوگیری از ارورهای ایمپورت)
+# Placeholder Handlers
 # ---------------------------------------------------------
 
 async def handle_list_users_by_plan(call, params):
-    """هندلر لیست کاربران بر اساس پلن"""
-    # فراخوانی هندلر جنریک با پارامترهای مناسب
     await handle_paginated_list(call, ["by_plan", params[0], params[1]])
 
 async def handle_list_users_no_plan(call, params):

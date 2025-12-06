@@ -6,7 +6,7 @@ from telebot import types
 # ایمپورت دکوریتورها و بات
 from bot.bot_instance import bot
 from bot.keyboards import admin as admin_menu
-from bot.utils import _safe_edit
+from bot.utils import _safe_edit, initialize_utils  # اضافه کردن initialize_utils
 
 # ایمپورت تمام هندلرها
 from bot.admin_handlers import (
@@ -21,13 +21,28 @@ from bot.admin_handlers import (
     support
 )
 
-# اگر هندلرهای هیدیفای و مرزبان جداگانه دارید، آنها را هم ایمپورت کنید
-# from bot.admin_handlers import admin_hiddify_handlers, admin_marzban_handlers
-
 logger = logging.getLogger(__name__)
 
 # ===================================================================
-# توابع منوهای اصلی (جایگزین توابع داخلی فایل قدیمی)
+# 1. مقداردهی اولیه (Initialization) - بخش جدید و حیاتی
+# ===================================================================
+# این بخش باعث می‌شود متغیر bot در تمام فایل‌ها مقدار بگیرد و دکمه‌ها کار کنند.
+
+# دیکشنری مشترک برای وضعیت مکالمات ادمین
+shared_admin_conversations = {}
+
+# فعال‌سازی ابزارهای کمکی (مثل _safe_edit)
+initialize_utils(bot)
+
+# فعال‌سازی هندلرهای مدیریت که نیاز به init دارند
+user_management.initialize_user_management_handlers(bot, shared_admin_conversations)
+panel_management.initialize_panel_management_handlers(bot, shared_admin_conversations)
+plan_management.initialize_plan_management_handlers(bot, shared_admin_conversations)
+wallet_admin.initialize_wallet_handlers(bot, shared_admin_conversations)
+support.initialize_support_handlers(bot, shared_admin_conversations)
+
+# ===================================================================
+# توابع منوهای اصلی
 # ===================================================================
 
 async def _handle_show_panel(call, params):
@@ -68,7 +83,7 @@ async def _handle_group_actions_menu(call, params):
 
 async def _handle_user_analysis_menu(call, params):
     """منوی گزارش پلن‌ها"""
-    await reporting.handle_report_by_plan_selection(call, params)
+    await reporting.handle_select_plan_for_report_menu(call, params)
 
 async def _handle_system_status_menu(call, params):
     """منوی وضعیت سیستم"""
@@ -81,16 +96,19 @@ async def _handle_system_status_menu(call, params):
 
 async def _handle_panel_management_menu(call, params):
     """منوی مدیریت پنل خاص"""
-    # پاک کردن استیت‌های قبلی اگر لازم باشد
-    # await bot.clear_step_handler_by_chat_id(call.from_user.id)
-    panel_type = params[0]
-    panel_name = "Hiddify" if panel_type == "hiddify" else "Marzban"
-    await _safe_edit(
-        call.from_user.id, 
-        call.message.message_id, 
-        f"مدیریت کاربران پنل‌های نوع *{panel_name}*", 
-        reply_markup=await admin_menu.panel_management_menu(panel_type)
-    )
+    # در صورت وجود پارامتر پنل، منو را باز کن
+    if params:
+        panel_type = params[0]
+        panel_name = "Hiddify" if panel_type == "hiddify" else "Marzban"
+        await _safe_edit(
+            call.from_user.id, 
+            call.message.message_id, 
+            f"مدیریت کاربران پنل‌های نوع *{panel_name}*", 
+            reply_markup=await admin_menu.panel_management_menu(panel_type)
+        )
+    else:
+        # اگر پارامتر نبود، منوی اصلی مدیریت پنل‌ها
+        await panel_management.handle_panel_management_menu(call, [])
 
 async def _handle_server_selection(call, params):
     """منوی انتخاب سرور عمومی"""
@@ -106,7 +124,6 @@ async def _handle_server_selection(call, params):
 # ===================================================================
 # دیکشنری مسیریابی (Dispatcher Dictionary)
 # ===================================================================
-# این دیکشنری کلیدهای کالبک (مثل 'panel') را به توابع Async متصل می‌کند
 
 ADMIN_CALLBACK_HANDLERS = {
     # --- Menus ---
@@ -144,17 +161,14 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
     
     # --- User Management (Actions) ---
-    # نکته: توابع مربوط به افزودن کاربر هیدیفای/مرزبان را اگر دارید اینجا اضافه کنید
-    # "add_user": lambda c, p: (_start_add_hiddify... if p[0] == 'hiddify' else ...),
-    
     "sg": user_management.handle_global_search_convo,
     "search_by_tid": user_management.handle_search_by_telegram_id_convo,
     "purge_user": user_management.handle_purge_user_convo,
     
     "us": user_management.handle_show_user_summary,
     "us_edt": user_management.handle_edit_user_menu,
-    "ep": user_management.handle_select_panel_for_edit, # Edit Panel Select
-    "ae": user_management.handle_ask_edit_value,       # Ask Edit Value
+    "ep": user_management.handle_select_panel_for_edit,
+    "ae": user_management.handle_ask_edit_value,
     
     "us_tgl": user_management.handle_toggle_status,
     "tglA": user_management.handle_toggle_status_action,
@@ -193,8 +207,8 @@ ADMIN_CALLBACK_HANDLERS = {
     # --- Badges & Achievements ---
     "awd_b_menu": user_management.handle_award_badge_menu,
     "awd_b": user_management.handle_award_badge,
-    "ach_req_approve": user_management.handle_achievement_request_callback,
-    "ach_req_reject": user_management.handle_achievement_request_callback,
+    "ach_approve": user_management.handle_achievement_request_callback,
+    "ach_reject": user_management.handle_achievement_request_callback,
     
     # --- Wallet (Admin) ---
     "us_mchg": wallet_admin.handle_manual_charge_request,
@@ -262,6 +276,10 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
     try:
         # 1. جدا کردن بخش‌های کالبک
         parts = call.data.split(':')
+        if len(parts) < 2:
+            await bot.answer_callback_query(call.id, "❌ درخواست نامعتبر.")
+            return
+            
         action = parts[1] # مثلاً 'panel' یا 'us'
         params = parts[2:] # پارامترهای اضافی
         
@@ -270,7 +288,6 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
         
         if handler:
             # 3. اجرای تابع به صورت Async
-            # تمام توابع ما باید async باشند و (call, params) را بپذیرند
             await handler(call, params)
         else:
             logger.warning(f"No handler found for admin action: '{action}' in callback: {call.data}")
@@ -283,6 +300,5 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
 def register_admin_handlers():
     """
     این تابع فقط برای سازگاری با custom_bot.py است.
-    چون دکوریتور @bot... در بالا استفاده شده، نیازی به ثبت دستی نیست.
     """
     pass
