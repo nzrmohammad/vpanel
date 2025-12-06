@@ -1,14 +1,17 @@
+# bot/admin_handlers/wallet.py
+
 import logging
 from telebot import types
-from sqlalchemy import select, update, and_
-from bot.bot_instance import bot
+from sqlalchemy import select
 from bot.database import db
-from bot.db.base import User, UserUUID, ChargeRequest
+from bot.db.base import User, ChargeRequest
 from bot.utils import escape_markdown, _safe_edit
 from bot.keyboards import admin as admin_menu
+from bot.keyboards import user as user_menu
 
 logger = logging.getLogger(__name__)
-bot, admin_conversations = None, None
+bot = None
+admin_conversations = None
 
 def initialize_wallet_handlers(b, conv_dict):
     """مقادیر bot و admin_conversations را از فایل اصلی دریافت می‌کند."""
@@ -16,14 +19,22 @@ def initialize_wallet_handlers(b, conv_dict):
     bot = b
     admin_conversations = conv_dict
 
+# ---------------------------------------------------------
+# 1. مدیریت رسیدهای واریزی (Charge Request)
+# ---------------------------------------------------------
+
 async def handle_charge_request_callback(call: types.CallbackQuery, params: list):
-    """پاسخ ادمین به درخواست شارژ را مدیریت می‌کند."""
+    """پاسخ ادمین به درخواست شارژ (رسید ارسالی کاربر) را مدیریت می‌کند."""
     admin_id = call.from_user.id
     original_caption = call.message.caption or ""
     
-    action_parts = call.data.split(':')
-    decision = action_parts[1] # charge_confirm or charge_reject
-    request_id = int(action_parts[2])
+    try:
+        # params: [action, request_id] -> action handled in router, here params=['confirm'/'reject', request_id]
+        decision = params[0] # charge_confirm or charge_reject
+        request_id = int(params[1])
+    except (IndexError, ValueError):
+        await bot.answer_callback_query(call.id, "خطا در پارامترها.", show_alert=True)
+        return
 
     async with db.get_session() as session:
         # دریافت درخواست شارژ
@@ -34,11 +45,8 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
         if not charge_req or not charge_req.is_pending:
             await bot.answer_callback_query(call.id, "این درخواست قبلاً پردازش شده است.", show_alert=True)
             try:
-                await bot.edit_message_caption(
-                    caption=f"{original_caption}\n\n⚠️ این درخواست قبلا پردازش شده است.",
-                    chat_id=admin_id,
-                    message_id=call.message.message_id
-                )
+                new_caption = f"{original_caption}\n\n⚠️ این درخواست قبلا پردازش شده است."
+                await bot.edit_message_caption(caption=new_caption, chat_id=admin_id, message_id=call.message.message_id)
             except:
                 pass
             return
@@ -47,17 +55,18 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
         amount = charge_req.amount
         user_message_id = charge_req.message_id
         
-        # دریافت زبان کاربر (پیش‌فرض فارسی)
+        # دریافت اطلاعات کاربر برای تشخیص زبان
         user = await session.get(User, user_id)
         lang_code = user.lang_code if user else 'fa'
 
         try:
             if decision == 'charge_confirm':
                 # استفاده از متد WalletDB برای آپدیت موجودی و ثبت تراکنش
+                # پاس دادن session ضروری است تا تغییر وضعیت تیکت و واریز وجه اتمیک باشد
                 success = await db.update_wallet_balance(
                     user_id, amount, 'deposit', 
                     f"شارژ توسط مدیریت (درخواست #{request_id})",
-                    session=session # پاس دادن سشن برای اتمیک بودن
+                    session=session
                 )
                 
                 if success:
@@ -68,11 +77,18 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                     amount_str = f"{amount:,.0f}"
                     success_text = (
                         f"✅ حساب شما به مبلغ *{amount_str} تومان* با موفقیت شارژ شد\\.\n\n"
-                        f"حالا می‌توانید سرویس مورد نظر خود را از بخش «سرویس‌ها» خریداری یا تمدید کنید\\."
+                        f"حالا می‌توانید سرویس مورد نظر خود را خریداری کنید\\."
                     )
                     
-                    # اطلاع به کاربر
-                    await _safe_edit(user_id, user_message_id, success_text, reply_markup=admin_menu.post_charge_menu(lang_code))
+                    # اطلاع به کاربر (اگر پیام هنوز وجود داشته باشد)
+                    try:
+                        post_charge_kb = await user_menu.post_charge_menu(lang_code)
+                        await _safe_edit(user_id, user_message_id, success_text, reply_markup=post_charge_kb)
+                    except Exception:
+                        # اگر پیام کاربر پاک شده بود، پیام جدید می‌فرستیم
+                        try:
+                            await bot.send_message(user_id, success_text, parse_mode="MarkdownV2")
+                        except: pass
                     
                     # آپدیت پیام ادمین
                     await bot.edit_message_caption(
@@ -89,7 +105,13 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                 await session.commit()
                 
                 reject_text = "❌ درخواست شارژ حساب شما توسط ادمین رد شد. لطفاً با پشتیبانی تماس بگیرید."
-                await _safe_edit(user_id, user_message_id, escape_markdown(reject_text), reply_markup=admin_menu.user_cancel_action("wallet:main", lang_code))
+                try:
+                    cancel_kb = await user_menu.user_cancel_action("wallet:main", lang_code)
+                    await _safe_edit(user_id, user_message_id, escape_markdown(reject_text), reply_markup=cancel_kb)
+                except:
+                    try:
+                        await bot.send_message(user_id, reject_text)
+                    except: pass
 
                 await bot.edit_message_caption(
                     caption=f"{original_caption}\n\n❌ توسط شما رد شد.",
@@ -102,7 +124,9 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
             logger.error(f"Error handling charge request {request_id}: {e}")
             await bot.answer_callback_query(call.id, "خطای سیستمی رخ داد.", show_alert=False)
 
-# --- شارژ دستی (Manual Charge) ---
+# ---------------------------------------------------------
+# 2. شارژ دستی (Manual Charge) - مدیریت کامل
+# ---------------------------------------------------------
 
 async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     """شروع فرآیند شارژ دستی کیف پول توسط ادمین."""
@@ -110,7 +134,7 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     identifier = params[0] # UUID یا username یا UserID
     context = "search" if len(params) > 1 and params[1] == 'search' else None
     
-    prompt = "لطفاً مبلغ مورد نظر برای شارژ دستی کیف پول کاربر را به تومان وارد کنید:"
+    prompt = "💰 لطفاً مبلغ مورد نظر برای **شارژ دستی** کیف پول کاربر را به تومان وارد کنید:"
     admin_conversations[uid] = {
         'action_type': 'manual_charge',
         'msg_id': msg_id,
@@ -121,7 +145,7 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     # دکمه بازگشت هوشمند
     back_cb = f"admin:user_details:{identifier}" if identifier.isdigit() else "admin:user_manage"
     
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action(back_cb))
+    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.cancel_action(back_cb))
     bot.register_next_step_handler(call.message, _get_manual_charge_amount)
 
 async def _get_manual_charge_amount(message: types.Message):
@@ -144,11 +168,13 @@ async def _get_manual_charge_amount(message: types.Message):
         # پیدا کردن کاربر از دیتابیس
         async with db.get_session() as session:
             user = None
+            # اگر شناسه عددی است، احتمالاً UserID است
             if identifier.isdigit():
                 user = await session.get(User, int(identifier))
             
+            # اگر پیدا نشد یا عددی نبود، جستجو با یوزرنیم یا UUID
             if not user:
-                # جستجو با یوزرنیم یا UUID
+                from bot.db.base import UserUUID # Local import to avoid circular dep
                 stmt = select(User).outerjoin(UserUUID).where(
                     (User.username == identifier) | (UserUUID.uuid == identifier)
                 ).limit(1)
@@ -156,13 +182,13 @@ async def _get_manual_charge_amount(message: types.Message):
                 user = result.scalar_one_or_none()
             
             if not user:
-                await _safe_edit(admin_id, msg_id, "❌ کاربر یافت نشد.", reply_markup=admin_menu.admin_panel())
+                await _safe_edit(admin_id, msg_id, "❌ کاربر یافت نشد.", reply_markup=await admin_menu.main())
                 return
 
             convo['target_user_id'] = user.user_id
             user_name = user.first_name or user.username or "کاربر"
         
-        confirm_prompt = (f"آیا از شارژ کیف پول کاربر *{escape_markdown(user_name)}* \\(`{user.user_id}`\\) "
+        confirm_prompt = (f"❓ آیا از شارژ کیف پول کاربر *{escape_markdown(user_name)}* \\(`{user.user_id}`\\) "
                           f"به مبلغ *{amount:,.0f} تومان* اطمینان دارید؟")
         
         kb = types.InlineKeyboardMarkup(row_width=2)
@@ -173,10 +199,11 @@ async def _get_manual_charge_amount(message: types.Message):
         await _safe_edit(admin_id, msg_id, confirm_prompt, reply_markup=kb)
 
     except ValueError:
-        await _safe_edit(admin_id, msg_id, "❌ مقدار نامعتبر. فقط عدد وارد کنید.", reply_markup=admin_menu.admin_panel())
+        back_cb = f"admin:user_details:{identifier}" if identifier.isdigit() else "admin:user_manage"
+        await _safe_edit(admin_id, msg_id, "❌ مقدار نامعتبر. فقط عدد وارد کنید.", reply_markup=admin_menu.cancel_action(back_cb))
     except Exception as e:
         logger.error(f"Manual charge error: {e}")
-        await _safe_edit(admin_id, msg_id, "❌ خطای سیستمی.", reply_markup=admin_menu.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطای سیستمی.", reply_markup=await admin_menu.main())
 
 async def handle_manual_charge_execution(call: types.CallbackQuery, params: list):
     """شارژ دستی را نهایی می‌کند."""
@@ -205,7 +232,7 @@ async def handle_manual_charge_execution(call: types.CallbackQuery, params: list
         except:
             pass
     else:
-        await _safe_edit(admin_id, msg_id, "❌ خطا در ثبت تراکنش.", reply_markup=admin_menu.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطا در ثبت تراکنش.", reply_markup=await admin_menu.main())
 
 async def handle_manual_charge_cancel(call: types.CallbackQuery, params: list):
     """لغو عملیات شارژ دستی."""
@@ -216,10 +243,12 @@ async def handle_manual_charge_cancel(call: types.CallbackQuery, params: list):
     msg_id = convo.get('msg_id')
     target_user_id = convo.get('target_user_id')
     
-    await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", 
-                     reply_markup=admin_menu.admin_back_btn(f"admin:user_details:{target_user_id}" if target_user_id else "admin:user_manage"))
+    back_target = f"admin:user_details:{target_user_id}" if target_user_id else "admin:user_manage"
+    await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", reply_markup=admin_menu.cancel_action(back_target))
 
-# --- برداشت دستی / صفر کردن موجودی (Manual Withdraw) ---
+# ---------------------------------------------------------
+# 3. برداشت دستی / صفر کردن موجودی (Manual Withdraw)
+# ---------------------------------------------------------
 
 async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list):
     """شروع فرآیند برداشت وجه / صفر کردن موجودی."""
@@ -275,6 +304,8 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
         return
     
     # برای صفر کردن، به اندازه موجودی فعلی، برداشت می‌زنیم (مقدار منفی)
+    # توجه: db.update_wallet_balance اگر مقدار منفی باشد و موجودی کافی نباشد False می‌دهد
+    # اما اینجا چون دقیقاً موجودی فعلی را کم می‌کنیم، باید اوکی باشد.
     if await db.update_wallet_balance(target_user_id, -amount_to_withdraw, 'withdraw', "برداشت/صفر کردن توسط مدیریت"):
         
         success_msg = escape_markdown(f"✅ موجودی کاربر صفر شد. (برداشت {amount_to_withdraw:,.0f} تومان)")
@@ -288,7 +319,7 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
         except:
             pass
     else:
-        await _safe_edit(admin_id, msg_id, "❌ خطا در عملیات.", reply_markup=admin_menu.admin_panel())
+        await _safe_edit(admin_id, msg_id, "❌ خطا در عملیات (شاید موجودی کاربر تغییر کرده است).", reply_markup=await admin_menu.main())
 
 async def handle_manual_withdraw_cancel(call: types.CallbackQuery, params: list):
     """لغو عملیات برداشت."""
@@ -299,5 +330,5 @@ async def handle_manual_withdraw_cancel(call: types.CallbackQuery, params: list)
     msg_id = convo.get('msg_id')
     target_user_id = convo.get('target_user_id')
     
-    await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", 
-                     reply_markup=admin_menu.admin_back_btn(f"admin:user_details:{target_user_id}"))
+    back_target = f"admin:user_details:{target_user_id}" if target_user_id else "admin:user_manage"
+    await _safe_edit(admin_id, msg_id, "❌ عملیات لغو شد.", reply_markup=admin_menu.cancel_action(back_target))

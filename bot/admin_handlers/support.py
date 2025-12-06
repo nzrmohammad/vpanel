@@ -1,3 +1,5 @@
+# bot/admin_handlers/support.py
+
 import logging
 from telebot import types
 from bot.database import db
@@ -24,7 +26,8 @@ async def prompt_for_reply(call: types.CallbackQuery, params: list):
     
     try:
         # params[0] = ticket_id, params[1] = user_id
-        ticket_id, user_id_to_reply = int(params[0]), int(params[1])
+        ticket_id = int(params[0])
+        user_id_to_reply = int(params[1])
     except (IndexError, ValueError):
         await bot.answer_callback_query(call.id, "خطا: اطلاعات دکمه ناقص است.", show_alert=True)
         return
@@ -114,16 +117,19 @@ async def send_reply_to_user(message: types.Message):
         # ویرایش پیام اصلی تیکت در چت ادمین برای نشان دادن اینکه بسته شده
         try:
             # اضافه کردن برچسب بسته شده به متن ذخیره شده
-            closed_text = f"✅ (بسته شد)\n\n" + original_text
+            closed_prefix = "✅ (بسته شد)\n\n"
             
-            # اگر پیام اصلی فقط متن بود، آن را ادیت می‌کنیم
-            # نکته: اگر پیام عکس/کپشن داشت، باید edit_message_caption استفاده شود.
-            # برای سادگی اینجا فرض بر متن است، اما try/except خطا را هندل می‌کند.
+            # اگر پیام اصلی کپشن داشت
+            if original_text and len(original_text) > 0:
+                 new_text = closed_prefix + original_text
+            else:
+                 new_text = closed_prefix + "تیکت بسته شد"
+
+            # تلاش برای ادیت (بسته به نوع پیام ممکن است text یا caption باشد)
             try:
-                await bot.edit_message_text(closed_text, admin_id, original_msg_id, reply_markup=None)
+                await bot.edit_message_caption(caption=new_text, chat_id=admin_id, message_id=original_msg_id, reply_markup=None)
             except:
-                # اگر متن نبود (مثلا کپشن بود)، کپشن را ادیت می‌کنیم
-                await bot.edit_message_caption(closed_text, admin_id, original_msg_id, reply_markup=None)
+                await bot.edit_message_text(text=new_text, chat_id=admin_id, message_id=original_msg_id, reply_markup=None)
                 
         except Exception as e:
             logger.warning(f"Could not update original ticket message: {e}")
