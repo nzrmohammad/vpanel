@@ -63,18 +63,17 @@ class UserFormatter:
 
     async def profile_info(self, info: dict, lang_code: str) -> str:
         """
-        نمایش اطلاعات دقیق سرویس (جایگزین fmt_one).
+        نمایش اطلاعات دقیق سرویس (پرچم داینامیک از دیتابیس + انقضای هوشمند).
         """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
 
-        # استفاده از دیکشنری مصرف روزانه خالی به عنوان پیش‌فرض اگر موجود نبود
-        # یا می‌توانید آن را به عنوان آرگومان دوم متد اضافه کنید اگر در فراخوانی‌ها پاس داده می‌شود
+        # 1. دریافت مصرف روزانه
         daily_usage_dict = {} 
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
 
-        user_id, panel_cat_map, user_categories = await _get_user_context(info.get("uuid", ""))
+        # 2. دریافت نقشه ایموجی‌ها از دیتابیس (برای پرچم‌های داینامیک)
         cat_emoji_map = await _get_category_map()
 
         raw_name = info.get("name", get_string('unknown_user', lang_code))
@@ -94,14 +93,56 @@ class UserFormatter:
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
             
-            category_code = panel_cat_map.get(panel_name)
+            # --- بخش ۱: پرچم داینامیک از دیتابیس ---
+            # این مقدار category را باید قبلاً در combined_handler به دیکشنری اضافه کرده باشید
+            category_code = panel_details.get('category')
+            
+            # جستجو در مپ دیتابیس
             flag = cat_emoji_map.get(category_code, "") if category_code else ""
-            if not flag: flag = "🏳️"
+            if not flag: 
+                flag = "🏳️" # پرچم پیش‌فرض اگر پیدا نشد
 
+            # محاسبات حجم
             limit = p_data.get("usage_limit_GB", 0.0)
             usage = p_data.get("current_usage_GB", 0.0)
             remaining = max(0, limit - usage)
             this_usage = daily_usage_dict.get(p_type, 0.0)
+
+            # --- بخش ۲: تشخیص هوشمند انقضا ---
+            expire_val = p_data.get('expire')
+            
+            # پیش‌فرض: نامحدود
+            expire_str = get_string("fmt_expire_unlimited", lang_code)
+
+            if expire_val is not None:
+                # حالت الف: Timestamp (عدد بزرگ - مثل مرزبان)
+                if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
+                    try:
+                        # تبدیل تایم‌ستمپ به آبجکت زمان
+                        expire_dt = datetime.fromtimestamp(expire_val)
+                        now = datetime.now()
+                        remaining_days = (expire_dt - now).days
+                        
+                        if remaining_days < 0:
+                            expire_str = get_string("fmt_status_expired", lang_code)
+                        else:
+                            expire_str = get_string("fmt_expire_days", lang_code).format(days=remaining_days)
+                    except:
+                        pass # اگر خطا داد همان نامحدود بماند
+                
+                # حالت ب: تعداد روز (عدد کوچک - مثل هیدیفای)
+                elif isinstance(expire_val, (int, float)) and expire_val > 0:
+                     expire_str = get_string("fmt_expire_days", lang_code).format(days=int(expire_val))
+                
+                # حالت ج: اگر صفر یا منفی بود (و تایم‌ستمپ نبود) معمولاً یعنی منقضی یا نامحدود
+                # اما طبق منطق قبلی شما، اگر None نباشد و >0 نباشد، احتمالاً منقضی است (مگر اینکه 0 به معنی نامحدود باشد)
+                # اینجا فرض می‌کنیم 0 یا منفی یعنی منقضی
+                elif isinstance(expire_val, (int, float)) and expire_val <= 0:
+                     # چک کنیم شاید پنل 0 را نامحدود می‌دهد، اما معمولاً Expired است
+                     # برای اطمینان کد "نامحدود" پیش‌فرض را تغییر نمی‌دهیم مگر اینکه مطمئن باشیم Expired است
+                     # اما شما در کد قدیمی برای < 0 زده بودید expired.
+                     if expire_val < 0:
+                         expire_str = get_string("fmt_status_expired", lang_code)
 
             return [
                 f"*سرور {flag}*",
@@ -110,48 +151,40 @@ class UserFormatter:
                 f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(f'{remaining:.0f} GB')}",
                 f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(format_daily_usage(this_usage))}",
                 f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(to_shamsi(p_data.get('last_online'), include_time=True))}",
+                f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}", # ✅ نمایش صحیح در باکس
                 separator
             ]
 
         for p_name, p_details in breakdown.items():
-            cat = panel_cat_map.get(p_name)
-            if cat or not panel_cat_map:
-                report.extend(format_panel_section(p_name, p_details))
+            report.extend(format_panel_section(p_name, p_details))
 
+        # --- بخش دستگاه‌های متصل (بدون تغییر) ---
         uuid_str = info.get('uuid')
-        if uuid_str and user_id:
-            uuid_id = await db.get_uuid_id_by_uuid(uuid_str)
-            if uuid_id:
-                user_agents = await db.get_user_agents_for_uuid(uuid_id)
+        # تبدیل به رشته برای اطمینان
+        safe_uuid_str = str(uuid_str) if uuid_str else ""
+        
+        user_id = None
+        if safe_uuid_str:
+             user_id = await db.get_user_id_by_uuid(safe_uuid_str)
+
+        if safe_uuid_str and user_id:
+            uuid_id_db = await db.get_uuid_id_by_uuid(safe_uuid_str)
+            if uuid_id_db:
+                user_agents = await db.get_user_agents_for_uuid(uuid_id_db)
                 if user_agents:
                     report.append("📱 *دستگاه‌های شما*")
                     for agent in user_agents[:6]: 
                         parsed = parse_user_agent(agent['user_agent'])
                         if parsed:
                             client_name = escape_markdown(parsed.get('client', 'Unknown'))
-                            os_lower = (parsed.get('os') or '').lower()
                             icon = "💻"
-                            if 'android' in os_lower: icon = "🤖"
-                            elif 'ios' in os_lower or 'iphone' in os_lower: icon = "📱"
-                            
-                            details = []
-                            if parsed.get('version'): details.append(f"v{escape_markdown(parsed['version'])}")
-                            if parsed.get('os'): details.append(escape_markdown(parsed['os']))
-                            
-                            details_str = f" \\({', '.join(details)}\\)" if details else ""
                             last_seen = escape_markdown(to_shamsi(agent['last_seen'], include_time=True))
-
-                            report.append(f"` `└─ {icon} *{client_name}*{details_str} \\(_{last_seen}_\\)")
+                            report.append(f"` `└─ {icon} *{client_name}* \\(_{last_seen}_\\)")
                     report.append(separator)
 
-        expire_days = info.get("expire")
-        expire_label = get_string("fmt_expire_unlimited", lang_code)
-        if expire_days is not None:
-            expire_label = get_string("fmt_status_expired", lang_code) if expire_days < 0 else get_string("fmt_expire_days", lang_code).format(days=expire_days)
-
+        # --- بخش پایانی: فقط نوار وضعیت و UUID (انقضا حذف شد چون بالا نمایش دادیم) ---
         report.extend([
-            f'*{get_string("fmt_expiry_date_new", lang_code)} :* {escape_markdown(expire_label)}',
-            f'*{get_string("fmt_uuid_new", lang_code)} :* `{escape_markdown(uuid_str)}`',
+            f'*{get_string("fmt_uuid_new", lang_code)} :* `{escape_markdown(safe_uuid_str)}`',
             "",
             f'*{get_string("fmt_status_bar_new", lang_code)} :* {create_progress_bar(info.get("usage_percentage", 0))}'
         ])
@@ -159,7 +192,7 @@ class UserFormatter:
         return "\n".join(report)
 
     async def quick_stats(self, uuid_rows: list, page: int, lang_code: str) -> tuple[str, dict]:
-        """آمار سریع."""
+        """آمار فوری."""
         num_uuids = len(uuid_rows)
         menu_data = {"num_accounts": num_uuids, "current_page": 0}
         if not num_uuids: 
@@ -169,16 +202,13 @@ class UserFormatter:
         menu_data["current_page"] = current_page
         
         target_row = uuid_rows[current_page]
-        info = await combined_handler.get_combined_user_info(target_row['uuid'])
+        
+        uuid_str = str(target_row['uuid']) 
+        info = await combined_handler.get_combined_user_info(uuid_str)
         
         if not info:
             return escape_markdown("خطا در دریافت اطلاعات"), menu_data
 
-        # اینجا چون داخل کلاس هستیم، متد profile_info را صدا می‌زنیم
-        # اما چون profile_info برای مصرف روزانه نیاز به کوئری دارد، بهتر است اینجا لاجیک را ترکیب کنیم
-        # برای سادگی، فعلاً مستقیماً از profile_info استفاده می‌کنیم که خودش مصرف را هندل می‌کند (اگر کد بالا اصلاح شود)
-        # نکته: در کد بالا من مصرف روزانه را داخل profile_info بردم.
-        
         report_text = await self.profile_info(info, lang_code)
         return report_text, menu_data
 

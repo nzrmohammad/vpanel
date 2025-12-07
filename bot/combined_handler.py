@@ -210,7 +210,7 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
             
             user_data_map[panel_config['name']] = {
                 "data": {**user_info, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
-                "type": panel_type
+                "type": panel_type,"category": panel_config.get('category')
             }
 
     if not user_data_map:

@@ -88,6 +88,65 @@ async def account_detail_handler(call: types.CallbackQuery):
         logger.error(f"Account Detail Error: {e}")
         await bot.answer_callback_query(call.id, "Error fetching details")
 
+# --- بخش هندلر آمار فوری (Quick Stats) ---
+
+@bot.callback_query_handler(func=lambda call: call.data == "quick_stats")
+async def quick_stats_init(call: types.CallbackQuery):
+    """
+    نمایش آمار فوری برای اولین اکانت (صفحه ۰)
+    """
+    await _show_quick_stats(call, page=0)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("qstats_acc_page_"))
+async def quick_stats_pagination(call: types.CallbackQuery):
+    """
+    مدیریت دکمه‌های بعدی و قبلی در آمار فوری
+    """
+    try:
+        # استخراج شماره صفحه از کال‌بک دیتا (مثلاً qstats_acc_page_1 -> 1)
+        page = int(call.data.split("_")[-1])
+        await _show_quick_stats(call, page)
+    except (IndexError, ValueError):
+        await bot.answer_callback_query(call.id, "خطا در صفحه‌بندی.", show_alert=True)
+
+
+async def _show_quick_stats(call: types.CallbackQuery, page: int):
+    """
+    تابع کمکی برای تولید محتوا و ویرایش پیام
+    """
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # ۱. دریافت لیست تمام اکانت‌های فعال کاربر
+    accounts = await db.uuids(user_id)
+    
+    # ۲. استفاده از متد آماده در user_formatter پروژه برای تولید متن و دیتای منو
+    # این متد خودش به combined_handler وصل می‌شود و اطلاعات لایو را می‌گیرد
+    text, menu_data = await user_formatter.quick_stats(accounts, page, lang)
+    
+    # ۳. ساخت دکمه‌های شیشه‌ای (بعدی/قبلی) با استفاده از user_menu
+    markup = await user_menu.quick_stats_menu(
+        num_accounts=menu_data['num_accounts'], 
+        current_page=menu_data['current_page'], 
+        lang_code=lang
+    )
+    
+    # ۴. نمایش خروجی نهایی به کاربر
+    try:
+        await bot.edit_message_text(
+            text=text,
+            chat_id=user_id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+            parse_mode='MarkdownV2'  # فرمتر شما خروجی MarkdownV2 می‌دهد
+        )
+    except Exception as e:
+        # هندل کردن خطای "پیام تغییر نکرده است"
+        if "message is not modified" not in str(e).lower():
+            logger.error(f"Error in quick stats: {e}")
+            await bot.answer_callback_query(call.id, "خطا در به‌روزرسانی آمار.")
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('getlinks_'))
 async def get_subscription_link(call: types.CallbackQuery):
     """منوی دریافت لینک"""
