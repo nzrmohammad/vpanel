@@ -192,9 +192,13 @@ ADMIN_CALLBACK_HANDLERS = {
     "add_user_to_panel": user_management.handle_add_user_start,
 
     # Marzban Mapping
-    "mapping_menu": user_management.handle_mapping_menu,
-    "add_mapping": user_management.handle_add_mapping_start,
-    "del_mapping": user_management.handle_delete_mapping,
+    "mapping_menu": user_management.handle_mapping_menu,      # منوی اصلی (دو دکمه)
+    "mapping_list": user_management.handle_mapping_list,      # لیست اتصالات
+    "add_mapping": user_management.handle_add_mapping_start,  # شروع افزودن
+    
+    # حذف
+    "del_map_conf": user_management.handle_delete_mapping_confirm, # تاییدیه
+    "del_map_exec": user_management.handle_delete_mapping_execute, # اجرا
 
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,

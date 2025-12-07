@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import time
 from datetime import datetime, timedelta
 from telebot import types
 from sqlalchemy import select, or_, and_
@@ -859,72 +860,97 @@ async def manual_winback_handler(call, params):
     except:
         await bot.answer_callback_query(call.id, "❌ ارسال ناموفق.", show_alert=True)
 
-# --- Marzban Mapping Handlers ---
-
 async def handle_mapping_menu(call: types.CallbackQuery, params: list):
-    """نمایش لیست مپ‌های مرزبان (با صفحه‌بندی و رفع باگ متن)"""
+    """منوی اصلی مدیریت اتصال (دارای دو دکمه)"""
     uid = call.from_user.id
     msg_id = call.message.message_id
     
-    # مدیریت صفحه
-    page = int(params[0]) if params else 0
-    PAGE_SIZE = 10  # تعداد آیتم در هر صفحه
+    text = (
+        f"🔗 *{escape_markdown('مدیریت اتصال‌های مرزبان')}*\n\n"
+        f"{escape_markdown('در این بخش می‌توانید مشخص کنید کدام UUID در ربات به کدام Username در مرزبان متصل است.')}\n"
+        f"{escape_markdown('لطفاً یک گزینه را انتخاب کنید:')}"
+    )
     
-    # دریافت کل لیست
+    markup = await admin_menu.mapping_main_menu()
+    await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
+
+async def handle_mapping_list(call: types.CallbackQuery, params: list):
+    """نمایش لیست اتصالات موجود"""
+    uid = call.from_user.id
+    msg_id = call.message.message_id
+    page = int(params[0]) if params else 0
+    PAGE_SIZE = 10 
+    
     all_mappings = await db.get_all_marzban_mappings()
     total_count = len(all_mappings)
     
-    # برش لیست برای صفحه جاری
+    # محاسبه تعداد صفحات
+    if total_count == 0:
+        total_pages = 1
+    else:
+        total_pages = ((total_count - 1) // PAGE_SIZE) + 1
+    
     start_idx = page * PAGE_SIZE
     end_idx = start_idx + PAGE_SIZE
     current_mappings = all_mappings[start_idx:end_idx]
     
-    # ساخت کیبورد
     markup = await admin_menu.mapping_list_menu(current_mappings, page, total_count, PAGE_SIZE)
     
-    # ✅ متن اصلاح شده با Escape صحیح برای جلوگیری از ارور 400
-    text = (
-        f"🔗 *{escape_markdown('مدیریت اتصال‌های مرزبان')}*\n\n"
-        f"{escape_markdown('در این بخش می‌توانید مشخص کنید کدام UUID در ربات به کدام Username در مرزبان متصل است.')}\n"
-        f"{escape_markdown('برای حذف هر اتصال، روی دکمه آن کلیک کنید.')}\n\n"
-        f"📄 *{escape_markdown(f'صفحه {page + 1} از {((total_count - 1) // PAGE_SIZE) + 1}')}*"
-    )
+    text = f"📋 *{escape_markdown('لیست اتصال‌های موجود')}*\n\n"
     
+    if not current_mappings:
+        text += escape_markdown("⚠️ هیچ اتصالی یافت نشد.")
+    
+    # ✅ شرط نمایش شماره صفحه: فقط اگر لیست طولانی باشد (بیشتر از ۱ صفحه)
+    if total_pages > 1:
+        text += f"\n📄 *{escape_markdown(f'صفحه {page + 1} از {total_pages}')}*"
+        
     await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
 
 async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     """شروع پروسه افزودن مپ جدید"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
+    # ✅ رفع باگ Timeout: اضافه کردن timestamp
     admin_conversations[uid] = {
         'step': 'get_map_uuid',
         'msg_id': msg_id,
+        'timestamp': time.time(), 
         'next_handler': get_mapping_uuid_step
     }
     
-    await _safe_edit(uid, msg_id, 
-                     "1️⃣ لطفاً **UUID** کاربر (شناسه هیدیفای) را ارسال کنید:", 
-                     reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
+    prompt = f"1️⃣ {escape_markdown('لطفاً UUID کاربر (شناسه هیدیفای) را ارسال کنید:')}"
+    
+    # دکمه انصراف به منوی اصلی برمی‌گردد
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_uuid_step(message: types.Message):
+    """مرحله دوم: دریافت UUID"""
     uid, text = message.from_user.id, message.text.strip()
-    await _delete_user_message(message)
+    await _delete_user_message(message) # حذف پیام کاربر
     
     if uid not in admin_conversations: return
     
+    # آپدیت زمان برای جلوگیری از تایم‌اوت در مرحله بعد
+    admin_conversations[uid]['timestamp'] = time.time()
+    
     if len(text) < 20: 
-        await bot.send_message(uid, "❌ فرمت UUID به نظر صحیح نمی‌رسد. دوباره تلاش کنید.")
+        # پیام خطا روی همان پیام قبلی ویرایش می‌شود
+        msg_id = admin_conversations[uid]['msg_id']
+        error_msg = escape_markdown("❌ فرمت UUID صحیح نیست. مجدد ارسال کنید:")
+        await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
         return
 
     admin_conversations[uid]['uuid'] = text
     admin_conversations[uid]['next_handler'] = get_mapping_username_step
     msg_id = admin_conversations[uid]['msg_id']
     
-    await _safe_edit(uid, msg_id, 
-                     "2️⃣ حالا **نام کاربری (Username)** متناظر در مرزبان را ارسال کنید:", 
-                     reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
+    prompt = f"2️⃣ {escape_markdown('حالا نام کاربری (Username) متناظر در مرزبان را ارسال کنید:')}"
+    
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_username_step(message: types.Message):
+    """مرحله سوم افزودن: دریافت نام کاربری و ذخیره"""
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
@@ -939,25 +965,51 @@ async def get_mapping_username_step(message: types.Message):
     success = await db.add_marzban_mapping(uuid_str, username)
     
     if success:
-        await _safe_edit(uid, msg_id, f"✅ اتصال با موفقیت ایجاد شد.\n\nUUID: `{uuid_str}`\nMarzban: `{username}`", 
-                         reply_markup=None)
-        await asyncio.sleep(1.5)
-        await handle_mapping_menu(message, [])
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:mapping_menu"))
-        await bot.send_message(uid, "لیست به‌روزرسانی شد.", reply_markup=kb)
+        success_msg = f"✅ {escape_markdown('اتصال با موفقیت ایجاد شد.')}\n\nUUID: `{escape_markdown(uuid_str)}`\nMarzban: `{escape_markdown(username)}`"
+        
+        # ✅ ایجاد دکمه بازگشت (رفع باگ و درخواست شما)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:mapping_list:0"))
+        
+        # ✅ ویرایش پیام قبلی همراه با دکمه (بدون ارسال پیام جدید)
+        await _safe_edit(uid, msg_id, success_msg, reply_markup=kb, parse_mode="MarkdownV2")
+        
+        # ❌ خط زیر حذف شد چون باعث ارور می‌شد:
+        # await handle_mapping_list(message, [0]) 
     else:
-        await _safe_edit(uid, msg_id, "❌ خطا: این اتصال ممکن است تکراری باشد یا UUID نامعتبر است.", 
-                         reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
+        error_msg = escape_markdown("خطا: این اتصال ممکن است تکراری باشد یا UUID نامعتبر است.")
+        
+        # دکمه بازگشت در صورت خطا
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:mapping_menu"))
+        
+        await _safe_edit(uid, msg_id, f"❌ {error_msg}", reply_markup=kb, parse_mode="MarkdownV2")
 
-async def handle_delete_mapping(call: types.CallbackQuery, params: list):
-    """حذف یک مپ و بازگشت به همان صفحه"""
+async def handle_delete_mapping_confirm(call: types.CallbackQuery, params: list):
+    """مرحله اول حذف: نمایش تاییدیه"""
     uuid_str = params[0]
-    # دریافت شماره صفحه برای بازگشت
+    page = int(params[1]) if len(params) > 1 else 0
+    
+    marzban_user = await db.get_marzban_username_by_uuid(uuid_str) or "ناشناس"
+    
+    prompt = (
+        f"⚠️ *{escape_markdown('حذف اتصال')}*\n\n"
+        f"{escape_markdown('آیا مطمئن هستید می‌خواهید اتصال زیر را حذف کنید؟')}\n"
+        f"UUID: `{escape_markdown(uuid_str)}`\n"
+        f"Marzban: `{escape_markdown(marzban_user)}`"
+    )
+    
+    markup = await admin_menu.confirm_delete_mapping_menu(uuid_str, page)
+    await _safe_edit(call.from_user.id, call.message.message_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
+
+async def handle_delete_mapping_execute(call: types.CallbackQuery, params: list):
+    """اجرای حذف"""
+    uuid_str = params[0]
     page = int(params[1]) if len(params) > 1 else 0
     
     if await db.delete_marzban_mapping(uuid_str):
-        await bot.answer_callback_query(call.id, "✅ حذف شد.")
-        # رفرش لیست در همان صفحه
-        await handle_mapping_menu(call, [page])
+        await bot.answer_callback_query(call.id, "✅ اتصال حذف شد.")
+        await handle_mapping_list(call, [page])
     else:
         await bot.answer_callback_query(call.id, "❌ خطا در حذف.", show_alert=True)
+        await handle_mapping_list(call, [page])

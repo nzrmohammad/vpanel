@@ -52,18 +52,16 @@ async def _get_user_context(uuid_str: str):
         
         return user_id, panel_cat_map, user_categories
 
-
-# --- کلاس اصلی فرمتر (Main Class) ---
-
 class UserFormatter:
     """
     مسئول تولید متن‌ها و پیام‌های نمایشی برای کاربران.
     تمام متدها به صورت یکپارچه در این کلاس قرار دارند.
     """
+# bot/formatters/user.py
 
     async def profile_info(self, info: dict, lang_code: str) -> str:
         """
-        نمایش اطلاعات دقیق سرویس (با محاسبه دقیق روزهای باقی‌مانده).
+        نمایش اطلاعات دقیق سرویس با اصلاح ساعت و چیدمان.
         """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
@@ -101,43 +99,34 @@ class UserFormatter:
             remaining_gb = max(0, limit - usage)
             this_usage = daily_usage_dict.get(p_type, 0.0)
 
-            # --- بخش محاسبه انقضا (اصلاح‌شده برای کسر روزهای مصرف‌شده) ---
+            # --- بخش محاسبه انقضا ---
             expire_val = p_data.get('expire')
             package_days = p_data.get('package_days')
-            start_date = p_data.get('start_date')  # تاریخ اولین اتصال
+            start_date = p_data.get('start_date')
             
             expire_str = get_string("fmt_expire_unlimited", lang_code)
 
-            # حالت ۱: اگر تایم‌ستمپ دقیق انقضا داریم (مثل مرزبان)
             if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
                 try:
+                    # تبدیل تایم‌ستمپ
                     expire_dt = datetime.fromtimestamp(expire_val)
                     now = datetime.now()
                     rem_days = (expire_dt - now).days
-                    
                     if rem_days < 0:
                         expire_str = get_string("fmt_status_expired", lang_code)
                     else:
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=rem_days)
-                except:
-                    pass
+                except: pass
             
-            # حالت ۲: اگر پکیج روزانه است (مثل هیدیفای) -> محاسبه باقیمانده
             elif package_days is not None and isinstance(package_days, (int, float)):
                 try:
                     if start_date:
-                        # تاریخ شروع را می‌خوانیم (معمولاً YYYY-MM-DD است)
                         if isinstance(start_date, str):
-                            # فقط بخش تاریخ را جدا می‌کنیم که اگر ساعت داشت مشکلی پیش نیاید
                             start_date_clean = start_date.split(' ')[0]
                             start_dt = datetime.strptime(start_date_clean, "%Y-%m-%d")
                         else:
-                            start_dt = datetime.now() # محض احتیاط
-
-                        # محاسبه: تعداد روزهای گذشته از استارت
+                            start_dt = datetime.now()
                         days_passed = (datetime.now() - start_dt).days
-                        
-                        # محاسبه: کل روزها منهای روزهای گذشته
                         remaining_days = int(package_days) - days_passed
                         
                         if remaining_days < 0:
@@ -145,22 +134,35 @@ class UserFormatter:
                         else:
                             expire_str = get_string("fmt_expire_days", lang_code).format(days=remaining_days)
                     else:
-                        # هنوز استارت نخورده -> کل روزها را نشان بده
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
-                except Exception as e:
-                    # در صورت خطا در محاسبه، همان کل را نشان بده
+                except:
                     expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
 
             elif isinstance(expire_val, (int, float)) and expire_val < 0:
                  expire_str = get_string("fmt_status_expired", lang_code)
 
+            # --- اصلاح زمان اتصال ---
+            # دریافت زمان از هر دو نوع پنل (هیدیفای یا مرزبان)
+            raw_last_online = p_data.get('last_online') or p_data.get('online_at')
+            
+            # تبدیل به شمسی
+            last_online_str = to_shamsi(raw_last_online, include_time=True)
+
+            # --- اصلاح چیدمان عدد و واحد (30 GB) ---
+            limit_str = f"{limit:.0f} GB"
+            usage_str = f"{usage:.0f} GB"
+            remaining_str = f"{remaining_gb:.0f} GB"
+            
+            # اصلاح مصرف روزانه (MB 500 -> 500 MB)
+            daily_str = format_daily_usage(this_usage) # پیش‌فرض درست است (500 MB)
+
             return [
                 f"*سرور {flag}*",
-                f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(f'{limit:.0f} GB')}",
-                f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(f'{usage:.0f} GB')}",
-                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(f'{remaining_gb:.0f} GB')}",
-                f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(format_daily_usage(this_usage))}",
-                f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(to_shamsi(p_data.get('last_online'), include_time=True))}",
+                f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(limit_str)}",
+                f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(usage_str)}",
+                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_str)}",
+                f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(daily_str)}",
+                f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(last_online_str)}",
                 f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}",
                 separator
             ]

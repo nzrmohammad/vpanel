@@ -364,33 +364,55 @@ class AdminMenu(BaseMenu):
         )
         return kb
     
+    async def confirm_delete_mapping_menu(self, uuid_str: str, page: int) -> types.InlineKeyboardMarkup:
+        """منوی تایید حذف اتصال مرزبان"""
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn("✅ بله، حذف کن", f"admin:del_map_exec:{uuid_str}:{page}"),
+            self.btn("❌ انصراف", f"admin:mapping_list:{page}") # برگشت به لیست، نه پنل اصلی
+        )
+        return kb
+
+
+    async def mapping_main_menu(self) -> types.InlineKeyboardMarkup:
+        """منوی اصلی انتخاب عملیات مپینگ (دکمه‌ها کنار هم)"""
+        kb = self.create_markup(row_width=2)
+        
+        kb.add(
+            self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"),
+            self.btn("📋 لیست اتصالات موجود", "admin:mapping_list:0")
+        )
+        
+        # دکمه بازگشت در ردیف جداگانه
+        kb.add(self.btn("🔙 بازگشت به پنل", "admin:panel"))
+        return kb
 
     async def mapping_list_menu(self, mappings: list, page: int, total_count: int, page_size: int) -> types.InlineKeyboardMarkup:
-        """منوی لیست اتصال‌های مرزبان (با صفحه‌بندی و چیدمان دو ستونه)"""
+        """منوی لیست اتصالات (با دکمه ایجاد در بالا)"""
         kb = self.create_markup(row_width=2)  
         
-        kb.add(self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"))
-        
         if not mappings:
-            kb.add(self.btn("⚠️ موردی یافت نشد", "noop"))
+            kb.add(self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"))
         
         map_buttons = []
         for m in mappings:
             uuid_short = str(m['hiddify_uuid'])[:5]
             btn_text = f"🗑 {m['marzban_username']} ({uuid_short})"
-            map_buttons.append(self.btn(btn_text, f"admin:del_mapping:{m['hiddify_uuid']}:{page}"))
+            map_buttons.append(self.btn(btn_text, f"admin:del_map_conf:{m['hiddify_uuid']}:{page}"))
         
+        # افزودن دکمه‌ها
         kb.add(*map_buttons)
             
         nav_buttons = []
         if page > 0:
-            nav_buttons.append(self.btn("⬅️ قبلی", f"admin:mapping_menu:{page - 1}"))
+            nav_buttons.append(self.btn("⬅️ قبلی", f"admin:mapping_list:{page - 1}"))
         
         if (page + 1) * page_size < total_count:
-            nav_buttons.append(self.btn("بعدی ➡️", f"admin:mapping_menu:{page + 1}"))
+            nav_buttons.append(self.btn("بعدی ➡️", f"admin:mapping_list:{page + 1}"))
             
         if nav_buttons:
             kb.row(*nav_buttons)
             
-        kb.add(self.btn("🔙 بازگشت", "admin:panel"))
+        # بازگشت به منوی مپینگ (نه پنل اصلی)
+        kb.add(self.btn("🔙 بازگشت", "admin:mapping_menu"))
         return kb
