@@ -57,16 +57,14 @@ class UserFormatter:
     مسئول تولید متن‌ها و پیام‌های نمایشی برای کاربران.
     تمام متدها به صورت یکپارچه در این کلاس قرار دارند.
     """
-# bot/formatters/user.py
-
     async def profile_info(self, info: dict, lang_code: str) -> str:
         """
-        نمایش اطلاعات دقیق سرویس با اصلاح ساعت و چیدمان.
+        نمایش اطلاعات دقیق سرویس با فیکس ساعت هیدیفای و چیدمان فارسی.
         """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
 
-        # 1. دریافت مصرف روزانه
+        # دریافت مصرف روزانه
         daily_usage_dict = {} 
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
@@ -86,6 +84,9 @@ class UserFormatter:
         
         breakdown = info.get('breakdown', {})
         
+        # کاراکتر اصلاح جهت متن (برای قرارگیری عدد سمت چپ)
+        LTR = "\u200e"
+
         def format_panel_section(panel_name, panel_details):
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
@@ -108,7 +109,6 @@ class UserFormatter:
 
             if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
                 try:
-                    # تبدیل تایم‌ستمپ
                     expire_dt = datetime.fromtimestamp(expire_val)
                     now = datetime.now()
                     rem_days = (expire_dt - now).days
@@ -117,51 +117,50 @@ class UserFormatter:
                     else:
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=rem_days)
                 except: pass
-            
-            elif package_days is not None and isinstance(package_days, (int, float)):
+            elif package_days is not None:
                 try:
                     if start_date:
                         if isinstance(start_date, str):
-                            start_date_clean = start_date.split(' ')[0]
-                            start_dt = datetime.strptime(start_date_clean, "%Y-%m-%d")
+                            start_dt = datetime.strptime(start_date.split(' ')[0], "%Y-%m-%d")
                         else:
                             start_dt = datetime.now()
                         days_passed = (datetime.now() - start_dt).days
                         remaining_days = int(package_days) - days_passed
-                        
-                        if remaining_days < 0:
-                            expire_str = get_string("fmt_status_expired", lang_code)
-                        else:
-                            expire_str = get_string("fmt_expire_days", lang_code).format(days=remaining_days)
+                        expire_str = get_string("fmt_expire_days", lang_code).format(days=max(0, remaining_days))
                     else:
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
-                except:
-                    expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
+                except: pass
 
-            elif isinstance(expire_val, (int, float)) and expire_val < 0:
-                 expire_str = get_string("fmt_status_expired", lang_code)
-
-            # --- اصلاح زمان اتصال ---
-            # دریافت زمان از هر دو نوع پنل (هیدیفای یا مرزبان)
+            # --- فیکس ساعت هیدیفای ---
             raw_last_online = p_data.get('last_online') or p_data.get('online_at')
-            
-            # تبدیل به شمسی
-            last_online_str = to_shamsi(raw_last_online, include_time=True)
+            fixed_last_online = raw_last_online
 
-            # --- اصلاح چیدمان عدد و واحد (30 GB) ---
-            limit_str = f"{limit:.0f} GB"
-            usage_str = f"{usage:.0f} GB"
-            remaining_str = f"{remaining_gb:.0f} GB"
-            
-            # اصلاح مصرف روزانه (MB 500 -> 500 MB)
-            daily_str = format_daily_usage(this_usage) # پیش‌فرض درست است (500 MB)
+            # اگر پنل هیدیفای است و فرمت رشته‌ای دارد، دستی تایم‌زون تهران را ست می‌کنیم
+            # تا تابع to_shamsi دوباره ۳.۵ ساعت به آن اضافه نکند.
+            if p_type == 'hiddify' and raw_last_online and isinstance(raw_last_online, str):
+                try:
+                    clean_time = raw_last_online.split('.')[0] # حذف میلی‌ثانیه
+                    dt_obj = datetime.strptime(clean_time, '%Y-%m-%d %H:%M:%S')
+                    tehran_tz = pytz.timezone("Asia/Tehran")
+                    # با این کار به سیستم می‌فهمانیم که این زمان خودش زمان تهران است
+                    fixed_last_online = tehran_tz.localize(dt_obj)
+                except ValueError:
+                    pass
+
+            last_online_str = to_shamsi(fixed_last_online, include_time=True)
+
+            # --- فرمت‌دهی اعداد ---
+            limit_fmt = f"{LTR}{limit:.0f} GB"
+            usage_fmt = f"{LTR}{usage:.2f} GB"
+            remaining_fmt = f"{LTR}{remaining_gb:.2f} GB"
+            daily_fmt = f"{LTR}{format_daily_usage(this_usage)}"
 
             return [
                 f"*سرور {flag}*",
-                f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(limit_str)}",
-                f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(usage_str)}",
-                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_str)}",
-                f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(daily_str)}",
+                f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(limit_fmt)}",
+                f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(usage_fmt)}",
+                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_fmt)}",
+                f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(daily_fmt)}",
                 f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(last_online_str)}",
                 f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}",
                 separator
@@ -187,9 +186,8 @@ class UserFormatter:
                         parsed = parse_user_agent(agent['user_agent'])
                         if parsed:
                             client_name = escape_markdown(parsed.get('client', 'Unknown'))
-                            icon = "💻"
                             last_seen = escape_markdown(to_shamsi(agent['last_seen'], include_time=True))
-                            report.append(f"` `└─ {icon} *{client_name}* \\(_{last_seen}_\\)")
+                            report.append(f"` `└─ 💻 *{client_name}* \\(_{last_seen}_\\)")
                     report.append(separator)
 
         report.extend([

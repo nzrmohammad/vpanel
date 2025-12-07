@@ -6,6 +6,7 @@ from bot.formatters import user_formatter
 from bot.database import db
 from bot import combined_handler
 from bot.language import get_string
+from bot.utils import escape_markdown, _safe_edit
 import logging
 
 logger = logging.getLogger(__name__)
@@ -63,23 +64,18 @@ async def account_detail_handler(call: types.CallbackQuery):
         if not account:
             await bot.answer_callback_query(call.id, "Account Not Found")
             return
-
-        await bot.answer_callback_query(call.id, "🔄 Updating...")
         
-        # دریافت اطلاعات ترکیبی از همه پنل‌ها
         uuid_str = account['uuid']
-        # توجه: در دیتابیس uuid آبجکت است، باید به رشته تبدیل شود
         info = await combined_handler.get_combined_user_info(str(uuid_str))
         
         if info:
-            # اضافه کردن ID دیتابیس برای استفاده در دکمه‌ها
             info['db_id'] = acc_id 
             text = await user_formatter.profile_info(info, lang)
             markup = await user_menu.account_menu(acc_id, lang)
             
             await bot.edit_message_text(
                 text, user_id, call.message.message_id,
-                reply_markup=markup, parse_mode='Markdown'
+                reply_markup=markup, parse_mode='MarkdownV2'
             )
         else:
             await bot.edit_message_text("❌ اطلاعات اکانت یافت نشد.", user_id, call.message.message_id)
@@ -104,12 +100,10 @@ async def quick_stats_pagination(call: types.CallbackQuery):
     مدیریت دکمه‌های بعدی و قبلی در آمار فوری
     """
     try:
-        # استخراج شماره صفحه از کال‌بک دیتا (مثلاً qstats_acc_page_1 -> 1)
         page = int(call.data.split("_")[-1])
         await _show_quick_stats(call, page)
     except (IndexError, ValueError):
         await bot.answer_callback_query(call.id, "خطا در صفحه‌بندی.", show_alert=True)
-
 
 async def _show_quick_stats(call: types.CallbackQuery, page: int):
     """
@@ -117,15 +111,10 @@ async def _show_quick_stats(call: types.CallbackQuery, page: int):
     """
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
-    
-    # ۱. دریافت لیست تمام اکانت‌های فعال کاربر
     accounts = await db.uuids(user_id)
     
-    # ۲. استفاده از متد آماده در user_formatter پروژه برای تولید متن و دیتای منو
-    # این متد خودش به combined_handler وصل می‌شود و اطلاعات لایو را می‌گیرد
     text, menu_data = await user_formatter.quick_stats(accounts, page, lang)
     
-    # ۳. ساخت دکمه‌های شیشه‌ای (بعدی/قبلی) با استفاده از user_menu
     markup = await user_menu.quick_stats_menu(
         num_accounts=menu_data['num_accounts'], 
         current_page=menu_data['current_page'], 
@@ -139,25 +128,203 @@ async def _show_quick_stats(call: types.CallbackQuery, page: int):
             chat_id=user_id,
             message_id=call.message.message_id,
             reply_markup=markup,
-            parse_mode='MarkdownV2'  # فرمتر شما خروجی MarkdownV2 می‌دهد
+            parse_mode='MarkdownV2'
         )
     except Exception as e:
-        # هندل کردن خطای "پیام تغییر نکرده است"
         if "message is not modified" not in str(e).lower():
             logger.error(f"Error in quick stats: {e}")
             await bot.answer_callback_query(call.id, "خطا در به‌روزرسانی آمار.")
 
+# --- 2. جزئیات اکانت (Menu) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('acc_'))
+async def account_detail_handler(call: types.CallbackQuery):
+    """جزئیات یک اکانت خاص + حل مشکل باز نشدن منو"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    try:
+        acc_id = int(call.data.split('_')[1])
+        account = await db.uuid_by_id(user_id, acc_id)
+        
+        if not account:
+            await bot.answer_callback_query(call.id, "Account Not Found")
+            return
+                
+        uuid_str = str(account['uuid'])
+        
+        info = await combined_handler.get_combined_user_info(uuid_str)
+        
+        if not info:
+            info = {
+                'name': account.get('name', 'Unknown'),
+                'uuid': uuid_str,
+                'is_active': account.get('is_active', False),
+                'usage_limit_GB': 0,
+                'current_usage_GB': 0,
+                'expire': None,
+                'breakdown': {}
+            }
+        
+        info['db_id'] = acc_id 
+        
+        text = await user_formatter.profile_info(info, lang)
+        markup = await user_menu.account_menu(acc_id, lang)
+        
+        await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Account Detail Error: {e}", exc_info=True)
+        await bot.answer_callback_query(call.id, "Error fetching details")
+
+# --- 3. دریافت لینک (Get Link) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('getlinks_'))
 async def get_subscription_link(call: types.CallbackQuery):
-    """منوی دریافت لینک"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[1])
+    markup = await user_menu.get_links_menu(acc_id, lang)
+    raw_text = get_string('prompt_get_links', lang)
+    
+    safe_text = escape_markdown(raw_text)
+    
+    await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=markup, parse_mode='MarkdownV2')
+    
+# --- 4. تغییر نام (Change Name) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('changename_'))
+async def change_name_prompt(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     acc_id = int(call.data.split('_')[1])
     
-    markup = await user_menu.get_links_menu(acc_id, lang)
-    await bot.edit_message_text(
-        get_string('prompt_get_links', lang),
-        user_id,
-        call.message.message_id,
-        reply_markup=markup
+    msg = await bot.send_message(
+        user_id, 
+        get_string('prompt_enter_new_name', lang), 
+        reply_markup=types.ForceReply()
     )
+    # ثبت مرحله بعدی برای دریافت نام
+    bot.register_next_step_handler(msg, process_change_name, acc_id, call.message.message_id)
+
+async def process_change_name(message: types.Message, acc_id: int, original_msg_id: int):
+    user_id = message.from_user.id
+    lang = await db.get_user_language(user_id)
+    new_name = message.text.strip()
+    
+    if len(new_name) < 3:
+        await bot.send_message(user_id, get_string('err_name_too_short', lang))
+        return
+
+    # آپدیت در دیتابیس
+    await db.update_config_name(acc_id, new_name)
+    
+    # بازگشت به منوی اکانت
+    try:
+        # شبیه‌سازی کلیک روی دکمه اکانت برای رفرش صفحه
+        dummy_call = types.CallbackQuery(id='0', from_user=message.from_user, data=f'acc_{acc_id}', chat_instance='0', json_string='')
+        dummy_call.message = message # ست کردن پیام برای ادیت
+        await account_detail_handler(dummy_call)
+        
+        await bot.send_message(user_id, get_string('msg_name_changed_success', lang))
+    except Exception as e:
+        logger.error(f"Change Name Error: {e}")
+
+# --- 5. حذف اکانت (Delete) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
+async def delete_account_confirm(call: types.CallbackQuery):
+    """تایید حذف"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[1])
+    
+    # منوی تایید ساده
+    kb = types.InlineKeyboardMarkup()
+    kb.add(
+        types.InlineKeyboardButton("✅ Yes", callback_data=f"confirm_del_{acc_id}"),
+        types.InlineKeyboardButton("❌ No", callback_data=f"acc_{acc_id}")
+    )
+    
+    await _safe_edit(user_id, call.message.message_id, "Are you sure you want to delete this account from your list?", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_del_'))
+async def delete_account_execute(call: types.CallbackQuery):
+    """اجرای حذف"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[2])
+    
+    # حذف از دیتابیس (فقط غیرفعال کردن)
+    await db.deactivate_uuid(acc_id)
+    
+    await bot.answer_callback_query(call.id, get_string('msg_account_deleted', lang))
+    # بازگشت به لیست
+    await account_list_handler(call)
+
+# --- 6. تاریخچه پرداخت (Payment History) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('payment_history_'))
+async def payment_history_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    parts = call.data.split('_')
+    acc_id = int(parts[2])
+    
+    history = await db.get_user_payment_history(acc_id)
+    
+    if not history:
+        text = get_string('fmt_payment_history_no_info', lang)
+    else:
+        text = "📜 Payment History:\n\n"
+        for h in history:
+            # فرمت تاریخ
+            dt_str = h['payment_date'].strftime("%Y-%m-%d %H:%M")
+            text += f"📅 {dt_str}\n"
+            
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    
+    # ✅ اصلاح مهم: متن باید escape شود
+    safe_text = escape_markdown(text)
+    await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
+
+
+# --- 7. تاریخچه مصرف (Usage History) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('usage_history_'))
+async def usage_history_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[2])
+    
+    stats = await db.get_user_daily_usage_history_by_panel(acc_id, days=7)
+    
+    if not stats:
+        text = get_string('usage_history_no_data', lang)
+    else:
+        # پرانتزهای موجود در خط زیر باعث خطا می‌شدند
+        text = "📊 Usage History (Last 7 Days):\n\n"
+        for day in stats:
+            d_str = day['date'].strftime("%Y-%m-%d")
+            text += f"📅 {d_str}: {day['total_usage']} GB\n"
+            
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    
+    # ✅ اصلاح مهم: متن باید escape شود تا پرانتزها درست ارسال شوند
+    safe_text = escape_markdown(text)
+    await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
+
+# --- 8. افزودن اکانت (Add) ---
+@bot.callback_query_handler(func=lambda call: call.data == "add")
+async def add_account_prompt(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(user_menu.back_btn("manage", lang))
+    
+    await _safe_edit(user_id, call.message.message_id, get_string('prompt_add_uuid', lang), reply_markup=markup)
+
+# --- 9. انتقال ترافیک (Transfer) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_start_'))
+async def transfer_traffic_start(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    acc_id = int(call.data.split('_')[2])
+    # لاجیک انتقال ترافیک را اینجا اضافه کنید یا به هندلر مربوطه ارجاع دهید
+    await bot.answer_callback_query(call.id, "این قابلیت به زودی فعال می‌شود.")

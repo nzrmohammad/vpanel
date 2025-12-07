@@ -33,6 +33,18 @@ class UsageDB:
             session.add(snapshot)
             await session.commit()
 
+    async def get_usage_since_midnight(self, uuid_id: int) -> Dict[str, float]:
+        """
+        دریافت مصرف روزانه با استفاده از شناسه عددی (ID)
+        (این متد برای رفع خطای Account Detail اضافه شده است)
+        """
+        result_map = await self.get_bulk_usage_since_midnight([uuid_id])
+        
+        if result_map:
+            return list(result_map.values())[0]
+            
+        return {'hiddify': 0.0, 'marzban': 0.0}
+
     async def get_all_daily_usage_since_midnight(self) -> Dict[str, Dict[str, float]]:
         """
         دریافت مصرف روزانه همه کاربران (نسخه بهینه شده).
