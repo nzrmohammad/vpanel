@@ -139,36 +139,64 @@ async def get_panel_token1(message: types.Message):
         prompt = escape_markdown("5️⃣ لطفاً `Password` (رمز عبور) ادمین مرزبان را وارد کنید:")
         await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
+# در فایل bot/admin_handlers/panel_management.py
+
 async def get_panel_token2(message: types.Message):
-    """مرحله ششم (آخر): دریافت توکن دوم و ذخیره پنل."""
+    """مرحله ششم: دریافت توکن دوم و نمایش منوی انتخاب کشور."""
     uid, token2 = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
-    if uid not in admin_conversations: return
+    
+    if uid not in admin_conversations:
+        await bot.send_message(uid, "❌ نشست منقضی شد.")
+        return
 
-    convo_data = admin_conversations.pop(uid) # پایان مکالمه
+    # ذخیره توکن دوم در حافظه موقت
+    if admin_conversations[uid]['data']['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-', '.']:
+        admin_conversations[uid]['data']['api_token2'] = None
+    else:
+        admin_conversations[uid]['data']['api_token2'] = token2
+
+    # تغییر وضعیت به انتخاب دسته‌بندی
+    admin_conversations[uid]['step'] = 'select_category'
+    msg_id = admin_conversations[uid]['msg_id']
+
+    # دریافت لیست کشورها از دیتابیس
+    categories = await db.get_server_categories()
+    
+    prompt = escape_markdown("6️⃣ لطفاً **موقعیت (کشور)** این سرور را انتخاب کنید:")
+    markup = await admin_menu.panel_category_selection_menu(categories)
+    
+    await _safe_edit(uid, msg_id, prompt, reply_markup=markup)
+
+async def handle_set_panel_category(call: types.CallbackQuery, params: list):
+    """مرحله هفتم (نهایی): دریافت کشور و ذخیره پنل در دیتابیس."""
+    uid = call.from_user.id
+    category_code = params[0] # کدی که از دکمه آمد (مثلاً de)
+    
+    if uid not in admin_conversations:
+        await bot.answer_callback_query(call.id, "❌ نشست منقضی شد.", show_alert=True)
+        return
+
+    convo_data = admin_conversations.pop(uid) # پایان مکالمه و پاک کردن حافظه
     panel_data = convo_data['data']
     msg_id = convo_data['msg_id']
 
-    if panel_data['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-', '.']:
-        panel_data['api_token2'] = None
-    else:
-        panel_data['api_token2'] = token2
-
+    # ذخیره نهایی در دیتابیس
     success = await db.add_panel(
         name=panel_data['name'],
         panel_type=panel_data['panel_type'],
         api_url=panel_data['api_url'],
         token1=panel_data['api_token1'],
-        token2=panel_data['api_token2']
+        token2=panel_data['api_token2'],
+        category=category_code
     )
 
     if success:
-        success_message = escape_markdown(f"✅ پنل «{panel_data['name']}» با موفقیت اضافه شد.")
-        # بازگشت به لیست پنل‌ها
+        success_message = escape_markdown(f"✅ پنل «{panel_data['name']}» با موفقیت در دسته {category_code} ثبت شد.")
         all_panels = await db.get_all_panels()
         await _safe_edit(uid, msg_id, success_message, reply_markup=await admin_menu.panel_list_menu(all_panels))
     else:
-        error_message = escape_markdown("❌ خطا: پنلی با این نام از قبل وجود دارد. لطفاً دوباره تلاش کنید.")
+        error_message = escape_markdown("❌ خطا: نام پنل تکراری است.")
         await _safe_edit(uid, msg_id, error_message, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
 # ==============================================================================
@@ -223,7 +251,8 @@ async def handle_panel_toggle_status(call: types.CallbackQuery, params: list):
 async def handle_panel_delete_confirm(call: types.CallbackQuery, params: list):
     """نمایش پیام تایید برای حذف پنل."""
     panel_id = int(params[0])
-    prompt = "⚠️ *آیا از حذف این پنل اطمینان دارید؟*\nاین کار باعث حذف دسترسی ربات به سرور می‌شود (کاربران در سرور باقی می‌مانند)."
+    
+    prompt = "⚠️ *آیا از حذف این پنل اطمینان دارید؟*\nاین کار باعث حذف دسترسی ربات به سرور می‌شود \(کاربران در سرور باقی می‌مانند\)\."
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(

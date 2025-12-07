@@ -10,30 +10,44 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+@bot.callback_query_handler(func=lambda call: call.data == "add")
+async def add_account_prompt(call: types.CallbackQuery):
+    """درخواست ارسال UUID از کاربر"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(user_menu.back_btn("manage", lang))
+    
+    await bot.edit_message_text(
+        get_string('prompt_add_uuid', lang),
+        user_id,
+        call.message.message_id,
+        reply_markup=markup
+    )
+
 @bot.callback_query_handler(func=lambda call: call.data == "manage")
 async def account_list_handler(call: types.CallbackQuery):
     """نمایش لیست اکانت‌های کاربر"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # دریافت اکانت‌ها (UUIDها) به صورت Async
+    # دریافت اکانت‌ها
     accounts = await db.uuids(user_id)
     
-    if not accounts:
-        await bot.edit_message_text(
-            get_string('fmt_no_account_registered', lang),
-            user_id,
-            call.message.message_id,
-            reply_markup=user_menu.back_btn("back", lang)
-        )
-        return
-
     markup = await user_menu.accounts(accounts, lang)
+    
+    if not accounts:
+        text = get_string('fmt_no_account_registered', lang)
+    else:
+        text = get_string('account_list_title', lang)
+
     await bot.edit_message_text(
-        get_string('account_list_title', lang),
+        text,
         user_id,
         call.message.message_id,
-        reply_markup=markup
+        reply_markup=markup,
+        parse_mode='Markdown'
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('acc_'))

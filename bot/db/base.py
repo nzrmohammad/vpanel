@@ -468,9 +468,9 @@ class DatabaseManager:
                         ServerCategory(code='tr', name='ترکیه', emoji='🇹🇷', display_order=3),
                         ServerCategory(code='us', name='آمریکا', emoji='🇺🇸', display_order=4),
                         ServerCategory(code='ro', name='رومانی', emoji='🇷🇴', display_order=5),
-                        ServerCategory(code='fi', name='فنلاند', emoji='🇫🇮', display_order=6),
-                        ServerCategory(code='ir', name='ایران', emoji='🇮🇷', display_order=7),
-                        ServerCategory(code='supp', name='پشتیبانی', emoji='🆘', display_order=99),
+                        ServerCategory(code='nl', name='هلند', emoji='🇳🇱', display_order=6),
+                        ServerCategory(code='fi', name='فنلاند', emoji='🇫🇮', display_order=7),
+                        ServerCategory(code='al', name='آلبانیا', emoji='🇦🇱', display_order=8),
                     ]
                     session.add_all(default_cats)
                     await session.commit()

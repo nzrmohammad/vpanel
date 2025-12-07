@@ -9,8 +9,8 @@ load_dotenv()
 
 from bot.bot_instance import bot
 from bot.database import db
-from bot.user_router import register_user_handlers
 from bot.admin_router import register_admin_handlers
+from bot.user_router import register_user_handlers
 
 # تنظیمات لاگینگ برای دیدن خطاها
 logging.basicConfig(level=logging.DEBUG)

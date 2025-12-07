@@ -155,6 +155,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_edit_start": panel_management.handle_panel_edit_start,
     "panel_delete_confirm": panel_management.handle_panel_delete_confirm,
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
+    "panel_set_cat": panel_management.handle_set_panel_category,
 
     # User Management Actions
     "sg": user_management.handle_global_search_convo,
@@ -248,7 +249,7 @@ async def admin_cancel_command(message: types.Message):
     else:
         await bot.reply_to(message, "No active operation.")
 
-@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice'], is_admin=True)
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice'], is_admin=True, func=lambda m: m.from_user.id in bot.context_state)
 @safe_handler
 async def global_step_handler(message: types.Message):
     """

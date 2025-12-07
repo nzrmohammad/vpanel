@@ -142,6 +142,17 @@ class AdminMenu(BaseMenu):
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb
 
+
+    async def panel_category_selection_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
+        kb = self.create_markup(row_width=3) 
+        
+        for cat in categories:
+            button_text = f"{cat['emoji']} {cat['name']}"
+            kb.add(self.btn(button_text, f"admin:panel_set_cat:{cat['code']}"))
+        
+        kb.row(self.btn("🔙 انصراف", "admin:panel_manage"))
+        return kb
+
     # ---------------------------------------------------------
     # سایر منوها (جستجو، ابزارها، بکاپ و ...)
     # ---------------------------------------------------------

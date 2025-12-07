@@ -55,13 +55,19 @@ class PanelDB:
         async with self.get_session() as session:
             stmt = select(Panel).order_by(Panel.name.asc())
             result = await session.execute(stmt)
-            return [dict(row._mapping) for row in result.scalars().all()]
+            return [
+                {c.name: getattr(p, c.name) for c in p.__table__.columns} 
+                for p in result.scalars().all()
+            ]
 
     async def get_active_panels(self) -> List[Dict[str, Any]]:
         async with self.get_session() as session:
             stmt = select(Panel).where(Panel.is_active == True).order_by(Panel.name.asc())
             result = await session.execute(stmt)
-            return [dict(row._mapping) for row in result.scalars().all()]
+            return [
+                {c.name: getattr(p, c.name) for c in p.__table__.columns} 
+                for p in result.scalars().all()
+            ]
 
     async def delete_panel(self, panel_id: int) -> bool:
         async with self.get_session() as session:
@@ -273,13 +279,19 @@ class PanelDB:
         async with self.get_session() as session:
             stmt = select(ConfigTemplate).order_by(ConfigTemplate.id.asc())
             result = await session.execute(stmt)
-            return [dict(r._mapping) for r in result.scalars().all()]
+            return [
+                {c.name: getattr(r, c.name) for c in r.__table__.columns} 
+                for r in result.scalars().all()
+            ]
 
     async def get_active_config_templates(self) -> list[dict]:
         async with self.get_session() as session:
             stmt = select(ConfigTemplate).where(ConfigTemplate.is_active == True).order_by(ConfigTemplate.id.asc())
             result = await session.execute(stmt)
-            return [dict(r._mapping) for r in result.scalars().all()]
+            return [
+                {c.name: getattr(r, c.name) for c in r.__table__.columns} 
+                for r in result.scalars().all()
+            ]
 
     async def toggle_template_status(self, template_id: int):
         async with self.get_session() as session:
