@@ -63,7 +63,7 @@ class UserFormatter:
 
     async def profile_info(self, info: dict, lang_code: str) -> str:
         """
-        نمایش اطلاعات دقیق سرویس (پرچم داینامیک از دیتابیس + انقضای هوشمند).
+        نمایش اطلاعات دقیق سرویس (با محاسبه دقیق روزهای باقی‌مانده).
         """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
@@ -73,7 +73,6 @@ class UserFormatter:
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
 
-        # 2. دریافت نقشه ایموجی‌ها از دیتابیس (برای پرچم‌های داینامیک)
         cat_emoji_map = await _get_category_map()
 
         raw_name = info.get("name", get_string('unknown_user', lang_code))
@@ -92,75 +91,84 @@ class UserFormatter:
         def format_panel_section(panel_name, panel_details):
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
-            
-            # --- بخش ۱: پرچم داینامیک از دیتابیس ---
-            # این مقدار category را باید قبلاً در combined_handler به دیکشنری اضافه کرده باشید
             category_code = panel_details.get('category')
             
-            # جستجو در مپ دیتابیس
             flag = cat_emoji_map.get(category_code, "") if category_code else ""
-            if not flag: 
-                flag = "🏳️" # پرچم پیش‌فرض اگر پیدا نشد
+            if not flag: flag = "🏳️"
 
-            # محاسبات حجم
             limit = p_data.get("usage_limit_GB", 0.0)
             usage = p_data.get("current_usage_GB", 0.0)
-            remaining = max(0, limit - usage)
+            remaining_gb = max(0, limit - usage)
             this_usage = daily_usage_dict.get(p_type, 0.0)
 
-            # --- بخش ۲: تشخیص هوشمند انقضا ---
+            # --- بخش محاسبه انقضا (اصلاح‌شده برای کسر روزهای مصرف‌شده) ---
             expire_val = p_data.get('expire')
+            package_days = p_data.get('package_days')
+            start_date = p_data.get('start_date')  # تاریخ اولین اتصال
             
-            # پیش‌فرض: نامحدود
             expire_str = get_string("fmt_expire_unlimited", lang_code)
 
-            if expire_val is not None:
-                # حالت الف: Timestamp (عدد بزرگ - مثل مرزبان)
-                if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
-                    try:
-                        # تبدیل تایم‌ستمپ به آبجکت زمان
-                        expire_dt = datetime.fromtimestamp(expire_val)
-                        now = datetime.now()
-                        remaining_days = (expire_dt - now).days
+            # حالت ۱: اگر تایم‌ستمپ دقیق انقضا داریم (مثل مرزبان)
+            if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
+                try:
+                    expire_dt = datetime.fromtimestamp(expire_val)
+                    now = datetime.now()
+                    rem_days = (expire_dt - now).days
+                    
+                    if rem_days < 0:
+                        expire_str = get_string("fmt_status_expired", lang_code)
+                    else:
+                        expire_str = get_string("fmt_expire_days", lang_code).format(days=rem_days)
+                except:
+                    pass
+            
+            # حالت ۲: اگر پکیج روزانه است (مثل هیدیفای) -> محاسبه باقیمانده
+            elif package_days is not None and isinstance(package_days, (int, float)):
+                try:
+                    if start_date:
+                        # تاریخ شروع را می‌خوانیم (معمولاً YYYY-MM-DD است)
+                        if isinstance(start_date, str):
+                            # فقط بخش تاریخ را جدا می‌کنیم که اگر ساعت داشت مشکلی پیش نیاید
+                            start_date_clean = start_date.split(' ')[0]
+                            start_dt = datetime.strptime(start_date_clean, "%Y-%m-%d")
+                        else:
+                            start_dt = datetime.now() # محض احتیاط
+
+                        # محاسبه: تعداد روزهای گذشته از استارت
+                        days_passed = (datetime.now() - start_dt).days
+                        
+                        # محاسبه: کل روزها منهای روزهای گذشته
+                        remaining_days = int(package_days) - days_passed
                         
                         if remaining_days < 0:
                             expire_str = get_string("fmt_status_expired", lang_code)
                         else:
                             expire_str = get_string("fmt_expire_days", lang_code).format(days=remaining_days)
-                    except:
-                        pass # اگر خطا داد همان نامحدود بماند
-                
-                # حالت ب: تعداد روز (عدد کوچک - مثل هیدیفای)
-                elif isinstance(expire_val, (int, float)) and expire_val > 0:
-                     expire_str = get_string("fmt_expire_days", lang_code).format(days=int(expire_val))
-                
-                # حالت ج: اگر صفر یا منفی بود (و تایم‌ستمپ نبود) معمولاً یعنی منقضی یا نامحدود
-                # اما طبق منطق قبلی شما، اگر None نباشد و >0 نباشد، احتمالاً منقضی است (مگر اینکه 0 به معنی نامحدود باشد)
-                # اینجا فرض می‌کنیم 0 یا منفی یعنی منقضی
-                elif isinstance(expire_val, (int, float)) and expire_val <= 0:
-                     # چک کنیم شاید پنل 0 را نامحدود می‌دهد، اما معمولاً Expired است
-                     # برای اطمینان کد "نامحدود" پیش‌فرض را تغییر نمی‌دهیم مگر اینکه مطمئن باشیم Expired است
-                     # اما شما در کد قدیمی برای < 0 زده بودید expired.
-                     if expire_val < 0:
-                         expire_str = get_string("fmt_status_expired", lang_code)
+                    else:
+                        # هنوز استارت نخورده -> کل روزها را نشان بده
+                        expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
+                except Exception as e:
+                    # در صورت خطا در محاسبه، همان کل را نشان بده
+                    expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
+
+            elif isinstance(expire_val, (int, float)) and expire_val < 0:
+                 expire_str = get_string("fmt_status_expired", lang_code)
 
             return [
                 f"*سرور {flag}*",
                 f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(f'{limit:.0f} GB')}",
                 f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(f'{usage:.0f} GB')}",
-                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(f'{remaining:.0f} GB')}",
+                f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(f'{remaining_gb:.0f} GB')}",
                 f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(format_daily_usage(this_usage))}",
                 f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(to_shamsi(p_data.get('last_online'), include_time=True))}",
-                f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}", # ✅ نمایش صحیح در باکس
+                f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}",
                 separator
             ]
 
         for p_name, p_details in breakdown.items():
             report.extend(format_panel_section(p_name, p_details))
 
-        # --- بخش دستگاه‌های متصل (بدون تغییر) ---
         uuid_str = info.get('uuid')
-        # تبدیل به رشته برای اطمینان
         safe_uuid_str = str(uuid_str) if uuid_str else ""
         
         user_id = None
@@ -182,7 +190,6 @@ class UserFormatter:
                             report.append(f"` `└─ {icon} *{client_name}* \\(_{last_seen}_\\)")
                     report.append(separator)
 
-        # --- بخش پایانی: فقط نوار وضعیت و UUID (انقضا حذف شد چون بالا نمایش دادیم) ---
         report.extend([
             f'*{get_string("fmt_uuid_new", lang_code)} :* `{escape_markdown(safe_uuid_str)}`',
             "",

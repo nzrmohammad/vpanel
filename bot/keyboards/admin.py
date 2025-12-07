@@ -20,6 +20,7 @@ class AdminMenu(BaseMenu):
             [("💾 پشتیبان‌گیری", "admin:backup_menu"), ("📣 پیام همگانی", "admin:broadcast")],
             [("⏰ کارهای زمان‌بندی", "admin:scheduled_tasks"), ("🗂️ مدیریت پلن‌ها", "admin:plan_manage")],
             [("⚙️ تنظیمات پنل‌ها", "admin:panel_manage"), ("🛠️ ابزارهای سیستمی", "admin:system_tools_menu")],
+            [("🔗 مدیریت اتصال مرزبان", "admin:mapping_menu")],
             [("🔙 بازگشت به منوی اصلی", "back")]
         ]
         for row in layout:
@@ -331,8 +332,6 @@ class AdminMenu(BaseMenu):
 
     async def server_selection_menu(self, base_callback: str, panels: List[Dict[str, Any]] = None) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
-        # اگر لیست پنل‌ها پاس داده نشود، منو خالی می‌ماند یا ارور می‌دهد، 
-        # اما فعلاً برای سازگاری دکمه بازگشت می‌گذاریم.
         if panels:
             for p in panels:
                 kb.add(self.btn(p['name'], f"{base_callback}:{p['id']}"))
@@ -347,7 +346,6 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def reset_usage_selection_menu(self, identifier: str, base_callback: str) -> types.InlineKeyboardMarkup:
-        # اینجا چون می‌خواهیم روی یک پنل خاص ریست کنیم یا همه، می‌توانیم ساده کنیم
         kb = self.create_markup(row_width=1)
         kb.add(self.btn("تمام پنل‌ها", f"admin:{base_callback}:both:{identifier}"))
         kb.add(self.btn("🔙 لغو", f"admin:us:{identifier}"))
@@ -364,4 +362,35 @@ class AdminMenu(BaseMenu):
             self.btn("❌ بله، حذف کن", f"admin:del_a:confirm:{panel}:{identifier}"),
             self.btn("✅ نه، لغو کن", f"admin:del_a:cancel:{panel}:{identifier}")
         )
+        return kb
+    
+
+    async def mapping_list_menu(self, mappings: list, page: int, total_count: int, page_size: int) -> types.InlineKeyboardMarkup:
+        """منوی لیست اتصال‌های مرزبان (با صفحه‌بندی و چیدمان دو ستونه)"""
+        kb = self.create_markup(row_width=2)  
+        
+        kb.add(self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"))
+        
+        if not mappings:
+            kb.add(self.btn("⚠️ موردی یافت نشد", "noop"))
+        
+        map_buttons = []
+        for m in mappings:
+            uuid_short = str(m['hiddify_uuid'])[:5]
+            btn_text = f"🗑 {m['marzban_username']} ({uuid_short})"
+            map_buttons.append(self.btn(btn_text, f"admin:del_mapping:{m['hiddify_uuid']}:{page}"))
+        
+        kb.add(*map_buttons)
+            
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(self.btn("⬅️ قبلی", f"admin:mapping_menu:{page - 1}"))
+        
+        if (page + 1) * page_size < total_count:
+            nav_buttons.append(self.btn("بعدی ➡️", f"admin:mapping_menu:{page + 1}"))
+            
+        if nav_buttons:
+            kb.row(*nav_buttons)
+            
+        kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb

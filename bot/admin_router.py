@@ -191,6 +191,11 @@ ADMIN_CALLBACK_HANDLERS = {
     "churn_send_offer": user_management.handle_churn_send_offer,
     "add_user_to_panel": user_management.handle_add_user_start,
 
+    # Marzban Mapping
+    "mapping_menu": user_management.handle_mapping_menu,
+    "add_mapping": user_management.handle_add_mapping_start,
+    "del_mapping": user_management.handle_delete_mapping,
+
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
     "do_delete_trans": reporting.handle_do_delete_transaction,
