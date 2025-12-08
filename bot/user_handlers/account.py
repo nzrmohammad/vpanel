@@ -8,8 +8,11 @@ from bot import combined_handler
 from bot.language import get_string
 from bot.utils import escape_markdown, _safe_edit
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+user_steps = {}
 
 @bot.callback_query_handler(func=lambda call: call.data == "add")
 async def add_account_prompt(call: types.CallbackQuery):
@@ -29,12 +32,26 @@ async def add_account_prompt(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage")
 async def account_list_handler(call: types.CallbackQuery):
-    """نمایش لیست اکانت‌های کاربر"""
+    """نمایش لیست اکانت‌های کاربر با محاسبه درصد مصرف"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # دریافت اکانت‌ها
     accounts = await db.uuids(user_id)
+    
+    if accounts:
+        
+        for acc in accounts:
+            try:
+                uuid_str = str(acc['uuid'])
+                info = await combined_handler.get_combined_user_info(uuid_str)
+                if info:
+                    acc['usage_percentage'] = info.get('usage_percentage', 0)
+                    acc['expire'] = info.get('expire')
+                else:
+                    acc['usage_percentage'] = 0
+            except Exception as e:
+                logger.error(f"Error fetching stats for list: {e}")
+                acc['usage_percentage'] = 0
     
     markup = await user_menu.accounts(accounts, lang)
     
@@ -188,7 +205,7 @@ async def get_subscription_link(call: types.CallbackQuery):
     safe_text = escape_markdown(raw_text)
     
     await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=markup, parse_mode='MarkdownV2')
-    
+
 # --- 4. تغییر نام (Change Name) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('changename_'))
 async def change_name_prompt(call: types.CallbackQuery):
@@ -196,13 +213,95 @@ async def change_name_prompt(call: types.CallbackQuery):
     lang = await db.get_user_language(user_id)
     acc_id = int(call.data.split('_')[1])
     
-    msg = await bot.send_message(
+    # ارسال پیام درخواست نام
+    prompt_msg = await bot.send_message(
         user_id, 
         get_string('prompt_enter_new_name', lang), 
         reply_markup=types.ForceReply()
     )
-    # ثبت مرحله بعدی برای دریافت نام
-    bot.register_next_step_handler(msg, process_change_name, acc_id, call.message.message_id)
+    
+    # ذخیره شناسه پیام‌ها برای حذف و ویرایش بعدی
+    user_steps[user_id] = {
+        'action': 'change_name',
+        'acc_id': acc_id,
+        'menu_msg_id': call.message.message_id,
+        'prompt_msg_id': prompt_msg.message_id
+    }
+
+# این تابع جدید را برای مدیریت دریافت نام جدید اضافه کنید
+@bot.message_handler(func=lambda m: m.from_user.id in user_steps and user_steps[m.from_user.id]['action'] == 'change_name')
+async def process_change_name_step(message: types.Message):
+    user_id = message.from_user.id
+    step_data = user_steps.pop(user_id, None)
+    
+    if not step_data: return
+
+    acc_id = step_data['acc_id']
+    menu_msg_id = step_data.get('menu_msg_id')
+    prompt_msg_id = step_data.get('prompt_msg_id')
+    
+    lang = await db.get_user_language(user_id)
+    new_name = message.text.strip()
+    
+    # 1. حذف پیام ورودی کاربر (نامی که فرستاده)
+    try:
+        await bot.delete_message(user_id, message.message_id)
+    except:
+        pass
+
+    # 2. حذف پیام درخواست (Prompt)
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(user_id, prompt_msg_id)
+        except:
+            pass
+
+    # اعتبارسنجی نام
+    if len(new_name) < 3:
+        err = await bot.send_message(user_id, get_string('err_name_too_short', lang))
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(user_id, err.message_id)
+        except:
+            pass
+        return
+
+    # 3. آپدیت در دیتابیس
+    await db.update_config_name(acc_id, new_name)
+    
+    # 4. ویرایش همان پیام قبلی (منوی اکانت) با اطلاعات جدید
+    try:
+        account = await db.uuid_by_id(user_id, acc_id)
+        if account:
+            uuid_str = str(account['uuid'])
+            # دریافت اطلاعات تازه
+            info = await combined_handler.get_combined_user_info(uuid_str)
+            if info:
+                info['db_id'] = acc_id
+                info['name'] = new_name
+                
+                text = await user_formatter.profile_info(info, lang)
+                markup = await user_menu.account_menu(acc_id, lang)
+                
+                # ویرایش پیام اصلی به جای ارسال پیام جدید
+                await bot.edit_message_text(
+                    text=text,
+                    chat_id=user_id,
+                    message_id=menu_msg_id,
+                    reply_markup=markup,
+                    parse_mode='MarkdownV2'
+                )
+                
+                # نمایش تاییدیه کوتاه (Toast)
+                await bot.answer_callback_query(callback_query_id=step_data.get('cb_id', '0'), text=get_string('msg_name_changed_success', lang))
+                success_msg = await bot.send_message(user_id, get_string('msg_name_changed_success', lang), disable_notification=True)
+                await asyncio.sleep(3)
+                try:
+                    await bot.delete_message(user_id, success_msg.message_id)
+                except:
+                    pass
+    except Exception as e:
+        logger.error(f"Change Name Refresh Error: {e}")
 
 async def process_change_name(message: types.Message, acc_id: int, original_msg_id: int):
     user_id = message.from_user.id
@@ -238,11 +337,14 @@ async def delete_account_confirm(call: types.CallbackQuery):
     # منوی تایید ساده
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton("✅ Yes", callback_data=f"confirm_del_{acc_id}"),
-        types.InlineKeyboardButton("❌ No", callback_data=f"acc_{acc_id}")
+        types.InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"confirm_del_{acc_id}"),
+        types.InlineKeyboardButton("❌ خیر، پشیمون شدم", callback_data=f"acc_{acc_id}")
     )
     
-    await _safe_edit(user_id, call.message.message_id, "Are you sure you want to delete this account from your list?", reply_markup=kb)
+    # متن فارسی شده
+    warning_text = "⚠️ **آیا مطمئن هستید که می‌خواهید این اکانت را از لیست خود حذف کنید؟**\n\n(توجه: اکانت فقط از ربات حذف می‌شود و در سرور باقی می‌ماند)"
+    
+    await _safe_edit(user_id, call.message.message_id, warning_text, reply_markup=kb, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_del_'))
 async def delete_account_execute(call: types.CallbackQuery):
@@ -328,3 +430,77 @@ async def transfer_traffic_start(call: types.CallbackQuery):
     acc_id = int(call.data.split('_')[2])
     # لاجیک انتقال ترافیک را اینجا اضافه کنید یا به هندلر مربوطه ارجاع دهید
     await bot.answer_callback_query(call.id, "این قابلیت به زودی فعال می‌شود.")
+
+# --- 10. صفحه حساب کاربری (User Account) ---
+@bot.callback_query_handler(func=lambda call: call.data == "user_account")
+async def user_account_page_handler(call: types.CallbackQuery):
+    """نمایش صفحه اطلاعات کاربری"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # دریافت متن فرمت شده از formatter
+    text = await user_formatter.user_account_page(user_id, lang)
+    
+    # دکمه بازگشت
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn("back", lang))
+    
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2')
+
+# این تابع را اضافه کنید چون در کد شما وجود نداشت
+@bot.callback_query_handler(func=lambda call: call.data.startswith('win_select_'))
+async def periodic_usage_handler(call: types.CallbackQuery):
+    """نمایش آمار مصرف بازه‌ای (هفتگی/ماهانه)"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[2])
+    
+    # دریافت آمار مصرف
+    stats = await db.get_user_daily_usage_history_by_panel(acc_id, days=30)
+    
+    if not stats:
+        text = get_string('usage_history_no_data', lang)
+    else:
+        total_month = sum(s['total_usage'] for s in stats)
+        total_week = sum(s['total_usage'] for s in stats[:7])
+        
+        text = (
+            f"📊 **آمار مصرف بازه‌ای**\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"📅 مصرف ۷ روز گذشته: `{total_week:.2f} GB`\n"
+            f"📆 مصرف ۳۰ روز گذشته: `{total_month:.2f} GB`\n"
+        )
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
+
+# این تابع را اضافه کنید چون در کد شما وجود نداشت
+@bot.callback_query_handler(func=lambda call: call.data.startswith('win_select_'))
+async def periodic_usage_handler(call: types.CallbackQuery):
+    """نمایش آمار مصرف بازه‌ای (هفتگی/ماهانه)"""
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    acc_id = int(call.data.split('_')[2])
+    
+    # دریافت آمار مصرف
+    stats = await db.get_user_daily_usage_history_by_panel(acc_id, days=30)
+    
+    if not stats:
+        text = get_string('usage_history_no_data', lang)
+    else:
+        total_month = sum(s['total_usage'] for s in stats)
+        total_week = sum(s['total_usage'] for s in stats[:7])
+        
+        text = (
+            f"📊 **آمار مصرف بازه‌ای**\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"📅 مصرف ۷ روز گذشته: `{total_week:.2f} GB`\n"
+            f"📆 مصرف ۳۰ روز گذشته: `{total_month:.2f} GB`\n"
+        )
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")

@@ -213,7 +213,7 @@ async def do_spin_handler(call: types.CallbackQuery):
     kb.add(types.InlineKeyboardButton("🎲 Spin Again", callback_data="lucky_spin_menu"))
     kb.add(types.InlineKeyboardButton("🔙 Back to Shop", callback_data="shop:main"))
     
-    await _safe_edit(user_id, call.message.message_id, result_msg, reply_markup=kb, parse_mode="Markdown")
+    await _safe_edit(user_id, call.message.message_id, result_msg, reply_markup=kb, parse_mode="MarkdownV2")
 
 # =============================================================================
 # 3. Referral System
@@ -230,7 +230,7 @@ async def referral_info_handler(call: types.CallbackQuery):
     kb = types.InlineKeyboardMarkup().add(
         types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back")
     )
-    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 # =============================================================================
 # 4. Support System
@@ -243,32 +243,34 @@ async def handle_support_request(call: types.CallbackQuery):
     lang_code = await db.get_user_language(uid)
     
     prompt = (
-        f"*{escape_markdown('📝 New Support Ticket')}*\n\n"
-        f"{escape_markdown('Please send your message (text, photo, etc.).')}\n\n"
-        f"{escape_markdown('⚠️ Your message will be sent directly to the admin.')}"
+        f"*{escape_markdown('📝 تیکت پشتیبانی جدید')}*\n\n"
+        f"{escape_markdown('لطفاً پیام خود را (متن، عکس، ویدیو و...) در همین چت ارسال کنید.')}\n\n"
+        f"{escape_markdown('⚠️ پیام شما مستقیماً برای مدیریت ارسال خواهد شد.')}"
     )
     
     kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
+    await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
     
+    # ثبت مرحله بعدی برای دریافت پیام کاربر
     bot.register_next_step_handler(call.message, get_support_ticket_message, original_msg_id=msg_id)
 
 async def get_support_ticket_message(message: types.Message, original_msg_id: int):
     uid = message.from_user.id
     lang_code = await db.get_user_language(uid)
 
-    await _safe_edit(uid, original_msg_id, "⏳ Sending...", reply_markup=None)
+    await _safe_edit(uid, original_msg_id, "⏳ در حال ارسال...", reply_markup=None)
 
     try:
         user_info = message.from_user
         user_data = await db.user(uid)
         wallet_balance = user_data.get('wallet_balance', 0.0) if user_data else 0.0
         
+        # متن پیام برای ادمین
         caption_lines = [
-            f"💬 *New Ticket*",
+            f"💬 *تیکت جدید*",
             f"👤 {escape_markdown(user_info.first_name)}",
             f"🆔 `{uid}`",
-            f"💰 Balance: {wallet_balance:,.0f}"
+            f"💰 موجودی: {wallet_balance:,.0f}"
         ]
         if user_info.username:
             caption_lines.insert(2, f"🔗 @{escape_markdown(user_info.username)}")
@@ -278,7 +280,9 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
         admin_message_ids = {}
         for admin_id in ADMIN_IDS:
             try:
+                # فروارد پیام کاربر به ادمین
                 fwd = await bot.forward_message(admin_id, uid, message.message_id)
+                # ارسال اطلاعات کاربر به عنوان ریپلای روی پیام فروارد شده
                 adm_msg = await bot.send_message(admin_id, admin_caption, parse_mode="MarkdownV2", reply_to_message_id=fwd.message_id)
                 admin_message_ids[admin_id] = adm_msg.message_id
             except Exception as e:
@@ -286,22 +290,23 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
 
         if admin_message_ids:
             first_msg_id = list(admin_message_ids.values())[0]
+            # ثبت تیکت در دیتابیس
             ticket_id = await db.create_support_ticket(uid, first_msg_id)
             
             kb_admin = types.InlineKeyboardMarkup()
             kb_admin.add(types.InlineKeyboardButton(
-                "✍️ Reply to Ticket", 
+                "✍️ پاسخ به این تیکت", 
                 callback_data=f"admin:support_reply:{ticket_id}:{uid}"
             ))
             
-            final_caption = f"🎫 *Ticket #:* `{ticket_id}`\n" + admin_caption
+            final_caption = f"🎫 *شماره تیکت:* `{ticket_id}`\n" + admin_caption
             
             for admin_id, msg_id in admin_message_ids.items():
                 try:
                     await bot.edit_message_text(final_caption, admin_id, msg_id, parse_mode="MarkdownV2", reply_markup=kb_admin)
                 except: pass
 
-        success_text = escape_markdown("✅ Message sent. Please wait for a response.")
+        success_text = escape_markdown("✅ پیام شما با موفقیت ارسال شد. لطفاً منتظر پاسخ بمانید.")
         kb_back = types.InlineKeyboardMarkup().add(
             types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back")
         )
@@ -309,8 +314,7 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
 
     except Exception as e:
         logger.error(f"Support Error: {e}")
-        await _safe_edit(uid, original_msg_id, "❌ Error sending message.", reply_markup=None)
-
+        await _safe_edit(uid, original_msg_id, "❌ خطا در ارسال پیام.", reply_markup=None)
 # =============================================================================
 # 5. Tutorials
 # =============================================================================
@@ -411,21 +415,23 @@ async def show_achievements_page(call: types.CallbackQuery):
     
     total_points = sum(ACHIEVEMENTS.get(ach, {}).get('points', 0) for ach in user_achievements)
     
-    level = "Novice"
-    if total_points >= 1000: level = "Myth"
-    elif total_points >= 500: level = "Legend"
-    elif total_points >= 250: level = "Pro"
-    elif total_points >= 100: level = "Experienced"
+    # محاسبه سطح کاربر
+    level = "تازه‌کار"
+    if total_points >= 1000: level = "افسانه"
+    elif total_points >= 500: level = "اسطوره"
+    elif total_points >= 250: level = "حرفه‌ای"
+    elif total_points >= 100: level = "باتجربه"
 
+    # دسته‌بندی فارسی
     categories = {
-        "Sports": ["bodybuilder", "water_athlete", "aerialist", "swimming_champion"],
-        "Social": ["media_partner", "ambassador", "support_contributor"],
-        "Loyalty": ["veteran", "loyal_supporter"],
-        "Performance": ["pro_consumer", "weekly_champion", "night_owl", "early_bird"],
-        "Special": ["legend", "vip_friend", "lucky_one"]
+        "🏅 ورزشی": ["bodybuilder", "water_athlete", "aerialist", "swimming_champion"],
+        "🗣 اجتماعی": ["media_partner", "ambassador", "support_contributor"],
+        "💎 وفاداری": ["veteran", "loyal_supporter"],
+        "📊 عملکرد": ["pro_consumer", "weekly_champion", "night_owl", "early_bird"],
+        "🌟 ویژه": ["legend", "vip_friend", "lucky_one"]
     }
     
-    text = f"🏅 *Achievements*\n🏆 Level: *{level}*\n⭐ Points: *{total_points}*\n───────────────\n\n"
+    text = f"🏅 *دستاوردها و نشان‌ها*\n🏆 سطح: *{level}*\n⭐ امتیاز کل: *{total_points}*\n───────────────\n\n"
     
     has_any = False
     for cat_name, codes in categories.items():
@@ -439,28 +445,28 @@ async def show_achievements_page(call: types.CallbackQuery):
             text += "\n"
             
     if not has_any:
-        text += escape_markdown("You haven't earned any badges yet. Keep active to discover them!")
+        text += escape_markdown("شما هنوز نشانی دریافت نکرده‌اید. به فعالیت خود ادامه دهید تا نشان‌ها را کشف کنید!")
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("🏅 Request Sports Badge", callback_data="achievements:req_menu"),
-        types.InlineKeyboardButton("ℹ️ Guide", callback_data="achievements:info")
+        types.InlineKeyboardButton("🏅 درخواست نشان ورزشی", callback_data="achievements:req_menu"),
+        types.InlineKeyboardButton("ℹ️ راهنما", callback_data="achievements:info")
     )
-    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="back"))
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
     
     await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "achievements:info")
 async def show_achievements_info(call: types.CallbackQuery):
     uid = call.from_user.id
-    text = "ℹ️ *Badges Guide*\n\n"
+    text = "ℹ️ *راهنمای نشان‌ها*\n\n"
     
     for code, info in ACHIEVEMENTS.items():
-        text += f"{info['icon']} *{escape_markdown(info['name'])}* ({info['points']} pts):\n"
+        text += f"{info['icon']} *{escape_markdown(info['name'])}* ({info['points']} امتیاز):\n"
         text += f"{escape_markdown(info['description'])}\n\n"
         
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 Back", callback_data="achievements"))
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="achievements"))
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "achievements:req_menu")

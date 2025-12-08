@@ -321,22 +321,23 @@ class UserMenu(BaseMenu):
         return kb
     
     async def payment_options_menu(self, lang_code: str, online_link: str = None, card_info: dict = None) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب روش پرداخت"""
+        """منوی انتخاب روش پرداخت (اصلاح چیدمان و دکمه بازگشت)"""
         kb = self.create_markup(row_width=2)
+        buttons = []
         
-        # لینک پرداخت آنلاین (از ورودی یا کانفیگ گلوبال)
         link = online_link or ONLINE_PAYMENT_LINK
         if link:
-            kb.add(self.btn("💳 پرداخت آنلاین (درگاه)", "noop", url=link))
+            buttons.append(self.btn("💳 پرداخت آنلاین", "noop", url=link))
             
-        # کارت به کارت
         card = card_info or CARD_PAYMENT_INFO
         if card and card.get("card_number"):
             bank_name = card.get("bank_name", "کارت به کارت")
-            kb.add(self.btn(f"📄 {bank_name}", "show_card_details"))
+            buttons.append(self.btn(f"📄 {bank_name}", "show_card_details"))
             
-        kb.add(self.btn(get_string('btn_crypto_payment', lang_code), "coming_soon"))
-        kb.add(self.back_btn("view_plans", lang_code))
+        buttons.append(self.btn(get_string('btn_crypto_payment', lang_code), "coming_soon"))
+        kb.add(*buttons)
+        
+        kb.add(self.back_btn("wallet:main", lang_code))
         return kb
 
     async def tutorial_main_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:

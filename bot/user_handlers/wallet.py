@@ -169,3 +169,163 @@ async def execute_purchase(call: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Purchase Error: {e}")
         await bot.send_message(user_id, "❌ خطای غیرمنتظره.")
+
+# --- 1. تاریخچه تراکنش‌ها ---
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:history")
+async def wallet_history_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # دریافت لیست تراکنش‌ها (مثلاً 10 تای آخر)
+    transactions = await db.get_wallet_history(user_id, limit=10)
+    
+    if not transactions:
+        text = "📜 **تاریخچه تراکنش‌ها**\n\nهنوز هیچ تراکنشی ثبت نشده است."
+    else:
+        text = "📜 **تاریخچه ۱۰ تراکنش آخر:**\n\n"
+        for t in transactions:
+            amount = t.get('amount', 0)
+            desc = t.get('description', t.get('type', 'Unknown'))
+            date_str = user_formatter.format_date(t.get('transaction_date'))
+            
+            icon = "🟢" if amount > 0 else "🔴"
+            amount_str = f"{int(abs(amount)):,} تومان"
+            
+            text += f"{icon} **{amount_str}**\n📅 {date_str}\n📝 {desc}\n──────────────────\n"
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn("wallet:main", lang))
+    
+    await bot.edit_message_text(
+        text,
+        user_id,
+        call.message.message_id,
+        reply_markup=kb,
+        parse_mode='Markdown'
+    )
+
+# --- 2. تنظیمات تمدید خودکار ---
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:settings")
+async def wallet_settings_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    user_data = await db.user(user_id)
+    auto_renew = user_data.get('auto_renew', False)
+    
+    markup = await user_menu.wallet_settings_menu(auto_renew, lang)
+    
+    text = (
+        "⚙️ **تنظیمات تمدید خودکار**\n\n"
+        "با فعال‌سازی این گزینه، سرویس‌های شما در صورت داشتن موجودی کافی، به صورت خودکار تمدید خواهند شد."
+    )
+    
+    await bot.edit_message_text(
+        text,
+        user_id,
+        call.message.message_id,
+        reply_markup=markup,
+        parse_mode='Markdown'
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:toggle_auto_renew")
+async def toggle_auto_renew_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    
+    # تغییر وضعیت در دیتابیس
+    user_data = await db.user(user_id)
+    current_status = user_data.get('auto_renew', False)
+    new_status = not current_status
+    
+    await db.update_auto_renew_setting(user_id, new_status)
+    
+    # رفرش منو
+    await wallet_settings_handler(call)
+    
+    status_msg = "✅ فعال شد" if new_status else "❌ غیرفعال شد"
+    await bot.answer_callback_query(call.id, f"تمدید خودکار {status_msg}")
+
+# --- 3. انتقال موجودی ---
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:transfer_start")
+async def transfer_balance_start(call: types.CallbackQuery):
+    # فعلاً پیام "به زودی" یا لاجیک ساده
+    await bot.answer_callback_query(call.id, "🔜 قابلیت انتقال موجودی به زودی فعال می‌شود.", show_alert=True)
+
+# --- 4. خرید هدیه ---
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:gift_start")
+async def gift_purchase_start(call: types.CallbackQuery):
+    # فعلاً پیام "به زودی"
+    await bot.answer_callback_query(call.id, "🔜 قابلیت خرید هدیه به زودی فعال می‌شود.", show_alert=True)
+
+# --- 5. مشاهده سرویس‌ها (انتخاب دسته) ---
+@bot.callback_query_handler(func=lambda call: call.data == "view_plans")
+async def view_plans_categories(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # نمایش منوی دسته‌بندی‌ها
+    markup = await user_menu.plan_categories_menu(lang)
+    
+    await bot.edit_message_text(
+        get_string('prompt_select_plan_category', lang),
+        user_id,
+        call.message.message_id,
+        reply_markup=markup
+    )
+
+# --- 6. نمایش پلن‌های یک دسته ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("show_plans:"))
+async def show_plans_list(call: types.CallbackQuery):
+    category = call.data.split(":")[1]
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # دریافت موجودی کاربر
+    user_data = await db.user(user_id)
+    balance = user_data.get('wallet_balance', 0) if user_data else 0
+    
+    # دریافت پلن‌های فعال
+    all_plans = await db.get_all_plans(active_only=True)
+    
+    # فیلتر کردن پلن‌ها بر اساس دسته انتخاب شده
+    filtered_plans = []
+    for plan in all_plans:
+        cats = plan.get('allowed_categories') or []
+        
+        # منطق فیلتر:
+        # اگر دسته 'combined' انتخاب شده، پلن‌هایی که بیش از ۱ کشور دارند یا دسته‌بندی ندارند
+        # اگر دسته خاص (مثلا 'de') انتخاب شده، پلن‌هایی که فقط آن دسته را دارند
+        if category == 'combined':
+            if len(cats) > 1 or not cats:
+                filtered_plans.append(plan)
+        else:
+            if category in cats and len(cats) == 1:
+                filtered_plans.append(plan)
+    
+    if not filtered_plans:
+        await bot.answer_callback_query(call.id, get_string('fmt_plans_none_in_category', lang), show_alert=True)
+        return
+
+    # نمایش لیست پلن‌ها
+    markup = await user_menu.plan_category_menu(lang, balance, filtered_plans)
+    
+    # تعیین عنوان مناسب
+    cat_title = category.upper() if category != 'combined' else get_string('btn_cat_combined', lang)
+    text = get_string('fmt_plans_title', lang).format(type_title=cat_title)
+    
+    await bot.edit_message_text(
+        text,
+        user_id,
+        call.message.message_id,
+        reply_markup=markup
+    )
+
+# --- 7. دکمه‌های جانبی (حجم اضافه و روش پرداخت از منوی پلن) ---
+@bot.callback_query_handler(func=lambda call: call.data == "show_addons")
+async def show_addons_handler(call: types.CallbackQuery):
+    await bot.answer_callback_query(call.id, "🔜 بسته‌های حجم و زمان اضافه به زودی فعال می‌شوند.", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "show_payment_options")
+async def redirect_to_payment(call: types.CallbackQuery):
+    # هدایت به صفحه شارژ
+    await wallet_charge_methods(call)

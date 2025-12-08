@@ -21,7 +21,6 @@ from .admin_handlers import (
 logger = logging.getLogger(__name__)
 
 # --- State Management ---
-# Initialize context_state on the bot instance if it doesn't exist
 if not hasattr(bot, 'context_state'):
     bot.context_state = {}
 
@@ -192,13 +191,13 @@ ADMIN_CALLBACK_HANDLERS = {
     "add_user_to_panel": user_management.handle_add_user_start,
 
     # Marzban Mapping
-    "mapping_menu": user_management.handle_mapping_menu,      # منوی اصلی (دو دکمه)
-    "mapping_list": user_management.handle_mapping_list,      # لیست اتصالات
-    "add_mapping": user_management.handle_add_mapping_start,  # شروع افزودن
+    "mapping_menu": user_management.handle_mapping_menu,
+    "mapping_list": user_management.handle_mapping_list,
+    "add_mapping": user_management.handle_add_mapping_start,
     
     # حذف
-    "del_map_conf": user_management.handle_delete_mapping_confirm, # تاییدیه
-    "del_map_exec": user_management.handle_delete_mapping_execute, # اجرا
+    "del_map_conf": user_management.handle_delete_mapping_confirm,
+    "del_map_exec": user_management.handle_delete_mapping_execute,
 
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
