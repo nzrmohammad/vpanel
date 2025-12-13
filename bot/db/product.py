@@ -144,11 +144,16 @@ class ProductDB:
             stmt = select(ServerCategory).where(ServerCategory.is_active == True).order_by(ServerCategory.display_order)
             result = await session.execute(stmt)
             return [
-                {"code": c.code, "name": c.name, "emoji": c.emoji}
+                {
+                    "code": c.code, 
+                    "name": c.name, 
+                    "emoji": c.emoji, 
+                    "description": c.description
+                }
                 for c in result.scalars().all()
             ]
 
-    async def add_server_category(self, code: str, name: str, emoji: str, display_order: int = 0) -> bool:
+    async def add_server_category(self, code: str, name: str, emoji: str, description: str = None, display_order: int = 0) -> bool:
         """
         یک دسته‌بندی جدید (مثلاً هلند nl) اضافه می‌کند.
         """
@@ -156,6 +161,7 @@ class ProductDB:
             try:
                 new_cat = ServerCategory(
                     code=code, name=name, emoji=emoji, 
+                    description=description,
                     display_order=display_order, is_active=True
                 )
                 session.add(new_cat)

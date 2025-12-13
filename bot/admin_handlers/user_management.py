@@ -44,7 +44,8 @@ async def handle_global_search_convo(call, params):
     admin_conversations[uid] = {
         'step': 'global_search', 
         'msg_id': msg_id,
-        'next_handler': process_search_input  # <--- ست کردن هندلر بعدی برای روتر
+        'timestamp': time.time(),
+        'next_handler': process_search_input
     }
     
     text = "🔎 لطفاً **نام**، **نام کاربری** یا بخشی از **UUID** کاربر را ارسال کنید:"
@@ -56,7 +57,8 @@ async def handle_search_by_telegram_id_convo(call, params):
     admin_conversations[uid] = {
         'step': 'tid_search', 
         'msg_id': msg_id,
-        'next_handler': process_search_input  # <--- ست کردن هندلر بعدی
+        'timestamp': time.time(),
+        'next_handler': process_search_input
     }
     
     text = "🆔 لطفاً **آیدی عددی تلگرام** (User ID) کاربر را ارسال کنید:"
@@ -119,7 +121,8 @@ async def handle_purge_user_convo(call, params):
     admin_conversations[uid] = {
         'step': 'purge_user', 
         'msg_id': msg_id,
-        'next_handler': process_purge_user  # <--- ست کردن هندلر بعدی
+        'timestamp': time.time(),
+        'next_handler': process_purge_user
     }
     await _safe_edit(uid, msg_id, "🔥 برای **پاکسازی کامل** (حذف از دیتابیس)، آیدی عددی کاربر را بفرستید:", 
                      reply_markup=await admin_menu.cancel_action("admin:search_menu"))
@@ -246,7 +249,6 @@ async def handle_add_user_start(call: types.CallbackQuery, params: list):
 
 async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
     """انتخاب پنل و پرسیدن نام"""
-    # params[0] = panel_name
     panel_name = params[0]
     uid = call.from_user.id
     msg_id = call.message.message_id
@@ -256,7 +258,8 @@ async def handle_add_user_select_panel_callback(call: types.CallbackQuery, param
         'step': 'get_name',
         'data': {'panel_name': panel_name},
         'msg_id': msg_id,
-        'next_handler': get_new_user_name # <--- ست کردن هندلر بعدی
+        'timestamp': time.time(),  # ✅ اضافه شد
+        'next_handler': get_new_user_name
     }
     
     await _safe_edit(uid, msg_id, 
@@ -360,7 +363,6 @@ async def handle_edit_user_menu(call, params):
 
 async def handle_ask_edit_value(call, params):
     """پرسیدن مقدار عددی برای افزایش حجم یا روز"""
-    # params: [action_type, panel_scope, target_id]
     action, scope, target_id = params[0], params[1], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -372,7 +374,8 @@ async def handle_ask_edit_value(call, params):
         'action': action,
         'scope': scope,
         'target_id': target_id,
-        'next_handler': process_edit_value # <--- ست کردن هندلر بعدی
+        'timestamp': time.time(),  # ✅ اضافه شد
+        'next_handler': process_edit_value
     }
     
     text = f"🔢 لطفاً مقدار **{action_name}** را که می‌خواهید **اضافه** کنید وارد نمایید (عدد مثبت برای افزودن، منفی برای کسر):"
@@ -633,7 +636,8 @@ async def handle_ask_for_note(call, params):
         'step': 'save_note', 
         'msg_id': msg_id, 
         'target_id': int(target_id),
-        'next_handler': process_save_note # <--- Next handler
+        'timestamp': time.time(),
+        'next_handler': process_save_note
     }
     await _safe_edit(uid, msg_id, "📝 یادداشت خود را بنویسید (برای حذف، 'پاک' بفرستید):",
                      reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
@@ -808,18 +812,16 @@ async def handle_reset_all_balances_execute(call, params):
     await bot.answer_callback_query(call.id, "✅ انجام شد.")
     await _safe_edit(call.from_user.id, call.message.message_id, f"✅ موجودی {count} کاربر صفر شد.", reply_markup=await admin_menu.system_tools_menu())
 
-# --- این کدها را به انتهای فایل bot/admin_handlers/user_management.py اضافه کنید ---
-
 async def handle_churn_contact_user(call, params):
     """تماس با کاربر (ارسال پیام دستی)"""
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # تنظیم استیت برای دریافت متن پیام
     admin_conversations[uid] = {
         'step': 'send_msg_to_user',
         'target_id': int(target_id),
         'msg_id': msg_id,
+        'timestamp': time.time(),
         'next_handler': process_send_msg_to_user
     }
     
@@ -884,7 +886,6 @@ async def handle_mapping_list(call: types.CallbackQuery, params: list):
     all_mappings = await db.get_all_marzban_mappings()
     total_count = len(all_mappings)
     
-    # محاسبه تعداد صفحات
     if total_count == 0:
         total_pages = 1
     else:
@@ -901,7 +902,6 @@ async def handle_mapping_list(call: types.CallbackQuery, params: list):
     if not current_mappings:
         text += escape_markdown("⚠️ هیچ اتصالی یافت نشد.")
     
-    # ✅ شرط نمایش شماره صفحه: فقط اگر لیست طولانی باشد (بیشتر از ۱ صفحه)
     if total_pages > 1:
         text += f"\n📄 *{escape_markdown(f'صفحه {page + 1} از {total_pages}')}*"
         
@@ -911,7 +911,6 @@ async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     """شروع پروسه افزودن مپ جدید"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # ✅ رفع باگ Timeout: اضافه کردن timestamp
     admin_conversations[uid] = {
         'step': 'get_map_uuid',
         'msg_id': msg_id,
@@ -921,7 +920,6 @@ async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     
     prompt = f"1️⃣ {escape_markdown('لطفاً UUID کاربر (شناسه هیدیفای) را ارسال کنید:')}"
     
-    # دکمه انصراف به منوی اصلی برمی‌گردد
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_uuid_step(message: types.Message):
@@ -931,11 +929,9 @@ async def get_mapping_uuid_step(message: types.Message):
     
     if uid not in admin_conversations: return
     
-    # آپدیت زمان برای جلوگیری از تایم‌اوت در مرحله بعد
     admin_conversations[uid]['timestamp'] = time.time()
     
     if len(text) < 20: 
-        # پیام خطا روی همان پیام قبلی ویرایش می‌شود
         msg_id = admin_conversations[uid]['msg_id']
         error_msg = escape_markdown("❌ فرمت UUID صحیح نیست. مجدد ارسال کنید:")
         await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
@@ -961,25 +957,19 @@ async def get_mapping_username_step(message: types.Message):
     username = text
     msg_id = data['msg_id']
     
-    # ذخیره در دیتابیس
     success = await db.add_marzban_mapping(uuid_str, username)
     
     if success:
         success_msg = f"✅ {escape_markdown('اتصال با موفقیت ایجاد شد.')}\n\nUUID: `{escape_markdown(uuid_str)}`\nMarzban: `{escape_markdown(username)}`"
         
-        # ✅ ایجاد دکمه بازگشت (رفع باگ و درخواست شما)
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:mapping_list:0"))
         
-        # ✅ ویرایش پیام قبلی همراه با دکمه (بدون ارسال پیام جدید)
         await _safe_edit(uid, msg_id, success_msg, reply_markup=kb, parse_mode="MarkdownV2")
         
-        # ❌ خط زیر حذف شد چون باعث ارور می‌شد:
-        # await handle_mapping_list(message, [0]) 
     else:
         error_msg = escape_markdown("خطا: این اتصال ممکن است تکراری باشد یا UUID نامعتبر است.")
         
-        # دکمه بازگشت در صورت خطا
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:mapping_menu"))
         

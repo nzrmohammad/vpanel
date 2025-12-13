@@ -147,7 +147,8 @@ ADMIN_CALLBACK_HANDLERS = {
     "plan_add_type": plan_management.get_plan_add_type,
 
     "cat_manage": plan_management.handle_category_management_menu,
-    "cat_delete": plan_management.handle_category_delete,
+    "cat_delete": plan_management.handle_category_delete,         # تغییر کرده به منوی تایید
+    "cat_del_exec": plan_management.handle_category_delete_execute, # <--- جدید اضافه شود
     "cat_add_start": plan_management.handle_category_add_start,
     
     "panel_manage": panel_management.handle_panel_management_menu,

@@ -272,28 +272,33 @@ async def view_plans_categories(call: types.CallbackQuery):
         reply_markup=markup
     )
 
-# --- 6. نمایش پلن‌های یک دسته ---
+# تابع show_plans_list را به این صورت آپدیت کنید:
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_plans:"))
 async def show_plans_list(call: types.CallbackQuery):
     category = call.data.split(":")[1]
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # دریافت موجودی کاربر
+    # 1. چک کردن توضیحات (Alert)
+    # ابتدا لیست کتگوری‌ها را می‌گیریم تا توضیحات این یکی را پیدا کنیم
+    categories = await db.get_server_categories()
+    selected_cat = next((c for c in categories if c['code'] == category), None)
+    
+    if selected_cat and selected_cat.get('description'):
+        # نمایش هشدار به کاربر
+        await bot.answer_callback_query(call.id, selected_cat['description'], show_alert=True)
+        # مکث کوتاه برای اینکه کاربر پیام را ببیند (اختیاری است، تلگرام خودش هندل می‌کند)
+    
+    # 2. ادامه فرآیند دریافت موجودی و پلن‌ها...
     user_data = await db.user(user_id)
     balance = user_data.get('wallet_balance', 0) if user_data else 0
     
-    # دریافت پلن‌های فعال
     all_plans = await db.get_all_plans(active_only=True)
     
-    # فیلتر کردن پلن‌ها بر اساس دسته انتخاب شده
     filtered_plans = []
     for plan in all_plans:
         cats = plan.get('allowed_categories') or []
-        
-        # منطق فیلتر:
-        # اگر دسته 'combined' انتخاب شده، پلن‌هایی که بیش از ۱ کشور دارند یا دسته‌بندی ندارند
-        # اگر دسته خاص (مثلا 'de') انتخاب شده، پلن‌هایی که فقط آن دسته را دارند
         if category == 'combined':
             if len(cats) > 1 or not cats:
                 filtered_plans.append(plan)
@@ -302,13 +307,17 @@ async def show_plans_list(call: types.CallbackQuery):
                 filtered_plans.append(plan)
     
     if not filtered_plans:
-        await bot.answer_callback_query(call.id, get_string('fmt_plans_none_in_category', lang), show_alert=True)
+        # اگر پلنی نبود فقط یک پیام ساده بده، آلرت توضیحات قبلا نمایش داده شده
+        # اگر آلرت بالا اجرا شده باشد، این یکی اجرا نمی‌شود چون هر کالبک یک answer دارد
+        # پس اینجا شرط می‌گذاریم
+        try:
+            await bot.answer_callback_query(call.id, get_string('fmt_plans_none_in_category', lang), show_alert=True)
+        except:
+            pass # قبلا answer شده
         return
 
-    # نمایش لیست پلن‌ها
     markup = await user_menu.plan_category_menu(lang, balance, filtered_plans)
     
-    # تعیین عنوان مناسب
     cat_title = category.upper() if category != 'combined' else get_string('btn_cat_combined', lang)
     text = get_string('fmt_plans_title', lang).format(type_title=cat_title)
     
