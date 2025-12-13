@@ -163,3 +163,12 @@ class ProductDB:
                 return True
             except IntegrityError:
                 return False
+            
+    async def delete_server_category(self, code: str) -> bool:
+        """حذف یک دسته‌بندی سرور"""
+        async with self.get_session() as session:
+            from .base import ServerCategory
+            stmt = delete(ServerCategory).where(ServerCategory.code == code)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0

@@ -458,24 +458,8 @@ class DatabaseManager:
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
                 
-            # Seed Data (داده‌های اولیه)
             async with self.get_session() as session:
-                # 1. دسته‌بندی‌های پیش‌فرض
-                if not (await session.execute(expression.select(ServerCategory))).first():
-                    default_cats = [
-                        ServerCategory(code='de', name='آلمان', emoji='🇩🇪', display_order=1),
-                        ServerCategory(code='fr', name='فرانسه', emoji='🇫🇷', display_order=2),
-                        ServerCategory(code='tr', name='ترکیه', emoji='🇹🇷', display_order=3),
-                        ServerCategory(code='us', name='آمریکا', emoji='🇺🇸', display_order=4),
-                        ServerCategory(code='ro', name='رومانی', emoji='🇷🇴', display_order=5),
-                        ServerCategory(code='nl', name='هلند', emoji='🇳🇱', display_order=6),
-                        ServerCategory(code='fi', name='فنلاند', emoji='🇫🇮', display_order=7),
-                        ServerCategory(code='al', name='آلبانیا', emoji='🇦🇱', display_order=8),
-                    ]
-                    session.add_all(default_cats)
-                    await session.commit()
-                    logger.info("✅ Default server categories seeded.")
-
+                pass
             logger.info("✅ Database tables created successfully (Dynamic Schema).")
         except Exception as e:
             logger.error(f"❌ Error initializing database: {e}")

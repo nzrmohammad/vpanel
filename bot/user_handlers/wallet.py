@@ -43,10 +43,9 @@ async def wallet_main_handler(call: types.CallbackQuery):
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:charge")
 async def wallet_charge_methods(call: types.CallbackQuery):
     user_id = call.from_user.id
-    lang = await db.get_user_language(user_id) # ✅ await
+    lang = await db.get_user_language(user_id)
     
-    # ✅ افزودن await
-    markup = await user_menu.payment_options_menu(lang)
+    markup = await user_menu.payment_options_menu(lang, back_callback="wallet:main")
     
     await bot.edit_message_text(
         get_string('prompt_select_payment_method', lang),
@@ -327,5 +326,14 @@ async def show_addons_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_payment_options")
 async def redirect_to_payment(call: types.CallbackQuery):
-    # هدایت به صفحه شارژ
-    await wallet_charge_methods(call)
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    markup = await user_menu.payment_options_menu(lang, back_callback="view_plans")
+    
+    await bot.edit_message_text(
+        get_string('prompt_select_payment_method', lang),
+        user_id,
+        call.message.message_id,
+        reply_markup=markup
+    )

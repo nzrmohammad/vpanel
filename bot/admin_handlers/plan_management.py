@@ -23,62 +23,76 @@ async def _delete_user_message(msg: types.Message):
         pass
 
 async def handle_plan_management_menu(call, params):
-    """منوی اصلی مدیریت پلن‌ها."""
+    """منوی اصلی مدیریت پلن‌ها"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    prompt = f"🗂️ *{escape_markdown('مدیریت پلن‌های فروش')}*\n\n{escape_markdown('لطفاً دسته‌بندی مورد نظر را انتخاب کنید:')}"
+    
+    prompt = f"🗂️ *{escape_markdown('مدیریت پلن‌های فروش')}*\n\n{escape_markdown('جهت مشاهده یا افزودن پلن، ابتدا کشور مورد نظر را انتخاب کنید:')}"
     
     kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("🇺🇸 پلن‌های آمریکا", callback_data="admin:plan_show_category:usa"),
-        types.InlineKeyboardButton("🇩🇪 پلن‌های آلمان", callback_data="admin:plan_show_category:germany")
-    )
-    kb.add(
-        types.InlineKeyboardButton("🇫🇷 پلن‌های فرانسه", callback_data="admin:plan_show_category:france"),
-        types.InlineKeyboardButton("🇹🇷 پلن‌های ترکیه", callback_data="admin:plan_show_category:turkey")
-    )
-    kb.add(
-        types.InlineKeyboardButton("🚀 پلن‌های ترکیبی (همه)", callback_data="admin:plan_show_category:combined"),
-        types.InlineKeyboardButton("➕ افزودن پلن جدید", callback_data="admin:plan_add_start")
-    )
+    
+    # دریافت کشورها
+    categories = await db.get_server_categories()
+    
+    # دکمه‌های کشورها (دو ردیفه)
+    buttons = []
+    for cat in categories:
+        buttons.append(
+            types.InlineKeyboardButton(f"{cat['emoji']} {cat['name']}", callback_data=f"admin:plan_show_category:{cat['code']}")
+        )
+    
+    # افزودن دکمه‌ها به کیبورد
+    if buttons:
+        kb.add(*buttons)
+    
+    # دکمه مدیریت کشورها (جداگانه)
+    kb.add(types.InlineKeyboardButton("🌍 مدیریت لیست کشورها (افزودن/حذف)", callback_data="admin:cat_manage"))
     kb.add(types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="admin:panel"))
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_show_plans_by_category(call, params):
-    """نمایش لیست پلن‌ها بر اساس دسته‌بندی."""
-    plan_category_filter = params[0]
+    """نمایش لیست پلن‌های یک کشور خاص + دکمه افزودن پلن"""
+    # params[0] = cat_code (مثل de)
+    target_code = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # نگاشت‌ها
-    type_map = {"combined": "ترکیبی", "germany": "آلمان", "france": "فرانسه", "turkey": "ترکیه", "usa": "آمریکا"}
-    db_code_map = {"germany": "de", "france": "fr", "turkey": "tr", "usa": "us"}
-    
-    category_name = type_map.get(plan_category_filter, plan_category_filter)
-    
+    # دریافت نام کشور برای نمایش
+    all_cats = await db.get_server_categories()
+    cat_name = target_code
+    cat_emoji = ""
+    for c in all_cats:
+        if c['code'] == target_code:
+            cat_name = c['name']
+            cat_emoji = c['emoji']
+            break
+            
     async with db.get_session() as session:
+        # دریافت پلن‌های این دسته
+        # نکته: در دیتابیس allowed_categories یک لیست JSON است
+        # اینجا باید تمام پلن‌ها را بگیریم و فیلتر کنیم (یا کوئری پیچیده بزنیم)
         result = await session.execute(select(Plan).order_by(Plan.price))
         all_plans = result.scalars().all()
 
     filtered_plans = []
     for plan in all_plans:
         cats = plan.allowed_categories or []
-        if plan_category_filter == "combined":
-            if len(cats) > 1 or not cats: # ترکیبی یا عمومی
-                filtered_plans.append(plan)
-        else:
-            target_code = db_code_map.get(plan_category_filter)
-            if target_code and target_code in cats and len(cats) == 1:
-                filtered_plans.append(plan)
+        # شرط: اگر این کشور در لیست مجاز پلن باشد
+        if target_code in cats:
+            filtered_plans.append(plan)
 
-    prompt = f"🗂️ *{escape_markdown(f'لیست پلن‌های {category_name}')}*"
+    prompt = f"📂 *پلن‌های کشور {cat_emoji} {escape_markdown(cat_name)}*"
     kb = types.InlineKeyboardMarkup(row_width=2)
     
-    buttons = [types.InlineKeyboardButton(f"🔸 {p.name}", callback_data=f"admin:plan_details:{p.id}") for p in filtered_plans]
+    # ✅ دکمه افزودن پلن جدید مخصوص همین کشور
+    # ما کد کشور را هم می‌فرستیم تا کاربر مجبور نباشد دوباره انتخاب کند
+    kb.add(types.InlineKeyboardButton(f"➕ افزودن پلن جدید برای {cat_name}", callback_data=f"admin:plan_add_start:{target_code}"))
     
-    for i in range(0, len(buttons), 2):
-        kb.add(*buttons[i:i+2])
+    # لیست پلن‌های موجود
+    plan_buttons = [types.InlineKeyboardButton(f"🔸 {p.name}", callback_data=f"admin:plan_details:{p.id}") for p in filtered_plans]
+    if plan_buttons:
+        kb.add(*plan_buttons)
             
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage"))
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست کشورها", callback_data="admin:plan_manage"))
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
@@ -148,18 +162,30 @@ async def handle_delete_plan_execute(call, params):
 # --- Add Plan Flow ---
 
 async def handle_plan_add_start(call, params):
+    """شروع افزودن پلن (اگر پارامتر باشد، مرحله انتخاب نوع را رد می‌کند)"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {'step': 'plan_add_type', 'msg_id': msg_id, 'new_plan_data': {}}
+    pre_selected_cat = params[0] if params else None
     
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("ترکیبی", callback_data="admin:plan_add_type:combined"),
-        types.InlineKeyboardButton("آلمان", callback_data="admin:plan_add_type:germany"),
-        types.InlineKeyboardButton("فرانسه", callback_data="admin:plan_add_type:france"),
-        types.InlineKeyboardButton("ترکیه", callback_data="admin:plan_add_type:turkey")
-    )
-    kb.add(types.InlineKeyboardButton("🔙 لغو", callback_data="admin:plan_manage"))
-    await _safe_edit(uid, msg_id, "1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
+    admin_conversations[uid] = {
+        'step': 'plan_add_name', 
+        'msg_id': msg_id, 
+        'new_plan_data': {}
+    }
+    
+    if pre_selected_cat:
+        admin_conversations[uid]['new_plan_data']['allowed_categories'] = [pre_selected_cat]
+        
+        back_btn = types.InlineKeyboardMarkup().add(
+            types.InlineKeyboardButton("✖️ لغو", callback_data=f"admin:plan_show_category:{pre_selected_cat}")
+        )
+        
+        await _safe_edit(uid, msg_id, "2️⃣ *نام پلن* را وارد کنید:", reply_markup=back_btn)
+        bot.register_next_step_handler(call.message, get_plan_add_name)
+        
+    else:
+        admin_conversations[uid]['step'] = 'plan_add_type'
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        await _safe_edit(uid, msg_id, "1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
 
 async def get_plan_add_type(call, params):
     uid = call.from_user.id
@@ -351,3 +377,99 @@ async def get_plan_edit_finish(message: types.Message):
         await session.commit()
     
     await _safe_edit(uid, msg_id, "✅ پلن با موفقیت ویرایش شد.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
+
+
+# ==========================================
+# مدیریت دسته‌بندی‌ها (کشورها)
+# ==========================================
+
+async def handle_category_management_menu(call, params):
+    """منوی لیست کشورها برای حذف یا افزودن (دو ردیفه)"""
+    categories = await db.get_server_categories()
+    
+    text = "🌍 **مدیریت کشورها (دسته‌بندی‌ها)**\n\nجهت حذف روی نام کشور کلیک کنید:"
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    
+    buttons = []
+    for cat in categories:
+        btn_text = f"🗑 {cat['emoji']} {cat['name']}"
+        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:cat_delete:{cat['code']}"))
+    
+    if buttons:
+        kb.add(*buttons)
+        
+    kb.add(types.InlineKeyboardButton("➕ افزودن کشور جدید", callback_data="admin:cat_add_start"))
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage"))
+    
+    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
+
+async def handle_category_delete(call, params):
+    """حذف کشور"""
+    code = params[0]
+    await db.delete_server_category(code)
+    await bot.answer_callback_query(call.id, "✅ حذف شد.")
+    await handle_category_management_menu(call, [])
+
+# --- پروسه افزودن کشور ---
+
+async def handle_category_add_start(call, params):
+    """شروع پروسه افزودن کشور"""
+    uid = call.from_user.id
+    admin_conversations[uid] = {'step': 'cat_code', 'msg_id': call.message.message_id, 'cat_data': {}}
+    
+    # ✅ کد اصلاح شده: استفاده از await و نام صحیح تابع cancel_action
+    back_kb = await admin_menu.cancel_action("admin:cat_manage")
+    
+    await _safe_edit(uid, call.message.message_id, 
+                     "1️⃣ لطفاً یک **کد کوتاه انگلیسی** برای کشور بفرستید (مثلا `nl` برای هلند):", 
+                     reply_markup=back_kb)
+    bot.register_next_step_handler(call.message, get_cat_code)
+
+async def get_cat_code(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
+    code = message.text.strip().lower()
+    admin_conversations[uid]['cat_data']['code'] = code
+    admin_conversations[uid]['step'] = 'cat_name'
+    
+    back_kb = await admin_menu.cancel_action("admin:cat_manage")
+    
+    await _safe_edit(uid, admin_conversations[uid]['msg_id'], 
+                     "2️⃣ حالا **نام فارسی** کشور را بفرستید (مثلا `هلند`):", 
+                     reply_markup=back_kb)
+    bot.register_next_step_handler(message, get_cat_name)
+
+async def get_cat_name(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
+    name = message.text.strip()
+    admin_conversations[uid]['cat_data']['name'] = name
+    admin_conversations[uid]['step'] = 'cat_emoji'
+    
+    back_kb = await admin_menu.cancel_action("admin:cat_manage")
+    
+    await _safe_edit(uid, admin_conversations[uid]['msg_id'], 
+                     "3️⃣ در آخر، یک **ایموجی پرچم** بفرستید (مثلا 🇳🇱):", 
+                     reply_markup=back_kb)
+    bot.register_next_step_handler(message, get_cat_emoji)
+
+async def get_cat_emoji(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
+    emoji = message.text.strip()
+    data = admin_conversations.pop(uid)
+    cat = data['cat_data']
+    
+    # ذخیره در دیتابیس
+    await db.add_server_category(cat['code'], cat['name'], emoji)
+    
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:cat_manage"))
+
+    await _safe_edit(uid, data['msg_id'], "✅ کشور جدید با موفقیت اضافه شد.", reply_markup=kb)

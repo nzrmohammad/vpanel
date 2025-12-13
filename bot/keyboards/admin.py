@@ -120,6 +120,7 @@ class AdminMenu(BaseMenu):
             btn_text = f"{plan['name']} ({int(plan['price']):,} T)"
             kb.add(self.btn(btn_text, f"admin:plan_details:{plan['id']}"))
 
+        kb.add(self.btn("🌍 مدیریت کشورها", "admin:cat_manage"))
         kb.add(self.btn("➕ افزودن پلن جدید", "admin:plan_add_start"))
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb

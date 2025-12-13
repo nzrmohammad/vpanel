@@ -4,6 +4,7 @@ from telebot import types
 from typing import List, Dict, Any, Optional
 from .base import BaseMenu, CATEGORY_META
 from ..language import get_string
+from bot.database import db
 from ..config import (
     EMOJIS, 
     CARD_PAYMENT_INFO, 
@@ -138,37 +139,31 @@ class UserMenu(BaseMenu):
         kb.add(self.btn(f"🔙 {get_string('back', lang_code)}", f"acc_{uuid_id}"))
         return kb
 
-    async def plan_categories_menu(self, lang_code: str, available_categories: List[str] = None) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب دسته‌بندی برای خرید سرویس"""
+
+    async def plan_categories_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب دسته‌بندی (کاملاً داینامیک از دیتابیس)"""
         kb = self.create_markup(row_width=2)
         
-        # لیست پیش‌فرض دسته‌ها (می‌تواند از ورودی هم بیاید)
-        categories = available_categories or ['usa', 'france', 'turkey', 'romania', 'finland', 'germany', 'combined']
+        # 1. دریافت لیست فعال کشورها از دیتابیس
+        categories = await db.get_server_categories()
         
-        category_buttons = []
+        # 2. ساخت دکمه‌ها
+        cat_buttons = []
         for cat in categories:
-            if cat == 'combined':
-                text = f"🚀 {get_string('btn_cat_combined', lang_code)}"
-            else:
-                meta = CATEGORY_META.get(cat, {'emoji': '🌍', 'name': cat.upper()})
-                key = f"btn_cat_{cat}"
-                # تلاش برای ترجمه، اگر نبود از نام پیش‌فرض استفاده کن
-                trans = get_string(key, lang_code)
-                final_name = trans if trans != key else meta['name']
-                text = f"{meta['emoji']} {final_name}"
-            
-            category_buttons.append(self.btn(text, f"show_plans:{cat}"))
+            # cat شامل: code, name, emoji
+            text = f"{cat['emoji']} {cat['name']}"
+            cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
 
-        # چینش دکمه‌ها
-        kb.add(*category_buttons)
+        kb.add(*cat_buttons)
         
-        # دکمه‌های پایین صفحه
+        # 3. دکمه‌های ثابت پایین
         kb.add(
             self.btn("➕ حجم یا زمان", "show_addons"),
             self.btn(get_string('btn_payment_methods', lang_code), "show_payment_options")
         )
         kb.add(self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
         kb.add(self.back_btn("back", lang_code))
+        
         return kb
 
     async def plan_category_menu(self, lang_code: str, user_balance: float, plans: list) -> types.InlineKeyboardMarkup:
@@ -320,7 +315,7 @@ class UserMenu(BaseMenu):
         kb.add(self.back_btn("wallet:main", lang_code))
         return kb
     
-    async def payment_options_menu(self, lang_code: str, online_link: str = None, card_info: dict = None) -> types.InlineKeyboardMarkup:
+    async def payment_options_menu(self, lang_code: str, online_link: str = None, card_info: dict = None, back_callback: str = "wallet:main") -> types.InlineKeyboardMarkup:
         """منوی انتخاب روش پرداخت (اصلاح چیدمان و دکمه بازگشت)"""
         kb = self.create_markup(row_width=2)
         buttons = []
@@ -337,7 +332,7 @@ class UserMenu(BaseMenu):
         buttons.append(self.btn(get_string('btn_crypto_payment', lang_code), "coming_soon"))
         kb.add(*buttons)
         
-        kb.add(self.back_btn("wallet:main", lang_code))
+        kb.add(self.back_btn(back_callback, lang_code))
         return kb
 
     async def tutorial_main_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:
