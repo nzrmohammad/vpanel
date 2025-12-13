@@ -20,8 +20,7 @@ from bot.config import (
     ACHIEVEMENTS, ACHIEVEMENT_SHOP_ITEMS, ENABLE_REFERRAL_SYSTEM, REFERRAL_REWARD_GB
 )
 from bot import combined_handler
-from bot.services.panels.hiddify import HiddifyPanel
-from bot.services.panels.marzban import MarzbanPanel
+from bot.services.panels import PanelFactory
 
 logger = logging.getLogger(__name__)
 
@@ -346,13 +345,18 @@ async def send_tutorial_link(call: types.CallbackQuery):
     link = TUTORIAL_LINKS.get(os_type, {}).get(app_name)
     if link:
         app_display = f"{os_type.capitalize()} - {app_name.capitalize()}"
-        text = f"✅ Tutorial for {app_display} is ready.\n\n👇 Click the button below:"
+        
+        header_raw = get_string('tutorial_ready_header', lang).format(app_display_name=app_display)
+        body_raw = get_string('tutorial_ready_body', lang) if get_string('tutorial_ready_body', lang) else "Click below:"
+
+        full_text = f"{header_raw}\n\n👇 {body_raw}"
+        safe_text = escape_markdown(full_text)
         
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton(get_string("btn_view_tutorial", lang), url=link))
         kb.add(types.InlineKeyboardButton(get_string("btn_back_to_apps", lang), callback_data=f"tutorial_os:{os_type}"))
         
-        await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb)
+        await _safe_edit(call.from_user.id, call.message.message_id, safe_text, reply_markup=kb)
     else:
         await bot.answer_callback_query(call.id, "Link not found.", show_alert=True)
 
@@ -610,42 +614,128 @@ async def shop_execute_handler(call: types.CallbackQuery):
 @bot.callback_query_handler(func=lambda call: call.data == "connection_doctor")
 async def connection_doctor_handler(call: types.CallbackQuery):
     uid = call.from_user.id
-    lang = await db.get_user_language(uid)
     
-    await _safe_edit(uid, call.message.message_id, "🩺 Checking...", reply_markup=None)
+    # 0. نمایش پیام انتظار (بدون مارک‌داون برای جلوگیری از خطا در شروع)
+    await _safe_edit(uid, call.message.message_id, "🩺 ...", reply_markup=None)
     
-    report = [f"*{escape_markdown(get_string('doctor_report_title', lang))}*", "`──────────────────`"]
-    
+    # 1. بررسی وضعیت اکانت کاربر
     user_uuids = await db.uuids(uid)
-    is_user_ok = False
+    is_user_active = False
     if user_uuids:
-        info = await combined_handler.get_combined_user_info(user_uuids[0]['uuid'])
-        if info and info.get('is_active'):
-            is_user_ok = True
-            
-    status = "✅ Active" if is_user_ok else "🔴 Inactive"
-    report.append(f"Account Status: {status}")
-    
-    active_panels = await db.get_active_panels()
-    for p in active_panels:
-        handler = None
-        if p['panel_type'] == 'hiddify':
-            handler = HiddifyPanel(p['api_url'], p['api_token1'], {'proxy_path': p['api_token2']})
-        else:
-            handler = MarzbanPanel(p['api_url'], p['api_token1'], p['api_token2'])
-            
-        is_online = await handler.check_connection()
-        icon = "✅" if is_online else "⚠️"
-        report.append(f"{icon} Server {escape_markdown(p['name'])}")
+        active_uuid = next((u for u in user_uuids if u['is_active']), None)
+        if active_uuid:
+            # تبدیل آبجکت UUID به رشته برای جلوگیری از ارور
+            info = await combined_handler.get_combined_user_info(str(active_uuid['uuid']))
+            if info and info.get('is_active'):
+                is_user_active = True
 
-    report.append("`──────────────────`")
-    if is_user_ok:
-        report.append("If you can't connect, update your link.")
-    else:
-        report.append("Your account is inactive. Please renew.")
+    # 2. بررسی وضعیت سرورها
+    active_panels = await db.get_active_panels()
+    server_categories = await db.get_server_categories()
+    cat_map = {c['code']: c for c in server_categories}
+    
+    panel_status_lines = []
+    category_stats = {} 
+
+    for p in active_panels:
+        p_name = p['name']
+        p_cat = p.get('category')
         
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 Back", callback_data="back"))
-    await _safe_edit(uid, call.message.message_id, "\n".join(report), reply_markup=kb, parse_mode="MarkdownV2")
+        try:
+            handler = await PanelFactory.get_panel(p_name)
+            stats = await handler.get_system_stats()
+            
+            if stats:
+                status_text = "آنلاین و پایدار"
+                icon = "✅"
+                cpu = stats.get('cpu_usage') or stats.get('cpu') or 0
+                if p_cat:
+                    if p_cat not in category_stats: category_stats[p_cat] = []
+                    category_stats[p_cat].append(float(cpu))
+            else:
+                status_text = "آفلاین یا دارای اختلال"
+                icon = "❌"
+        except Exception:
+            status_text = "عدم برقراری ارتباط"
+            icon = "❌"
+
+        # ✅ نکته مهم: نام سرور و وضعیت را اسکیپ می‌کنیم
+        safe_p_name = escape_markdown(p_name)
+        safe_status = escape_markdown(status_text)
+        # خط تیره در MarkdownV2 باید اسکیپ شود، تابع escape_markdown این کار را انجام می‌دهد
+        label = escape_markdown(f"وضعیت سرور «{p_name}»")
+        panel_status_lines.append(f"{icon} {label}: {safe_status}")
+
+    # 3. تحلیل هوشمند بار سرور
+    load_analysis_lines = []
+    
+    if category_stats:
+        for cat_code, loads in category_stats.items():
+            if not loads: continue
+            avg_load = sum(loads) / len(loads)
+            
+            if avg_load < 30:
+                status_label = "خلوت"
+                status_icon = "🟢"
+            elif avg_load < 75:
+                status_label = "عادی"
+                status_icon = "🟡"
+            else:
+                status_label = "شلوغ"
+                status_icon = "🔴"
+            
+            cat_info = cat_map.get(cat_code)
+            if cat_info:
+                cat_name = escape_markdown(cat_info.get('name', cat_code))
+                cat_emoji = cat_info.get('emoji', '')
+            else:
+                cat_name = escape_markdown(cat_code.upper())
+                cat_emoji = ""
+            
+            safe_label = escape_markdown(status_label)
+            server_word = escape_markdown("سرور")
+            load_analysis_lines.append(f" {status_icon} {server_word} {cat_name} {cat_emoji}: {safe_label}")
+    else:
+        # ✅ این متن نقطه دارد، پس حتما باید اسکیپ شود
+        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست."))
+
+    # 4. ساخت پیام نهایی با هدر و فوتر
+    acc_status = escape_markdown("فعال" if is_user_active else "غیرفعال")
+    acc_icon = "✅" if is_user_active else "❌"
+    
+    # خط جداکننده (این کاراکترها معمولا امن هستند اما برای اطمینان اسکیپ می‌کنیم یا داخل کد بلاک می‌گذاریم)
+    # اما چون شما خط ساده می‌خواستید، از تابع رد می‌کنیم
+    separator = escape_markdown("──────────────────")
+
+    msg_lines = [
+        escape_markdown("گزارش پزشک اتصال:"),
+        separator,
+        f"{acc_icon} {escape_markdown('وضعیت اکانت شما:')} {acc_status}",
+    ]
+    
+    msg_lines.extend(panel_status_lines)
+    
+    msg_lines.append(separator)
+    msg_lines.append(escape_markdown("📈 تحلیل هوشمند بار سرور (۱۵ دقیقه اخیر):"))
+    msg_lines.extend(load_analysis_lines)
+    
+    msg_lines.append(separator)
+    msg_lines.append(escape_markdown("💡 پیشنهاد:"))
+    
+    # ✅ متن پیشنهاد که حاوی نقطه است باید کامل اسکیپ شود
+    suggestion_text = (
+        "اگر اکانت و سرورها فعال هستند اما همچنان با کندی مواجه‌اید، "
+        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید. "
+        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید."
+    )
+    msg_lines.append(escape_markdown(suggestion_text))
+    
+    final_text = "\n".join(msg_lines)
+    
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
+    
+    # ارسال نهایی
+    await _safe_edit(uid, call.message.message_id, final_text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
 async def coming_soon(call: types.CallbackQuery):
