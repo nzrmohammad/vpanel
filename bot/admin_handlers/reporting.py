@@ -41,12 +41,14 @@ def write_csv_sync(filepath, users_data):
 @bot.callback_query_handler(func=lambda call: call.data == "admin:reports_menu")
 async def handle_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی اصلی گزارش‌گیری."""
-    # ✅ FIX: Added await before admin_menu.reports_menu()
+    
+    active_panels = await db.get_active_panels()
+    
     await _safe_edit(
         call.from_user.id,
         call.message.message_id,
         "📊 <b>مرکز گزارش‌گیری</b>\nلطفاً نوع گزارش را انتخاب کنید:",
-        reply_markup=await admin_menu.reports_menu(),
+        reply_markup=await admin_menu.reports_menu(active_panels),
         parse_mode='HTML'
     )
 

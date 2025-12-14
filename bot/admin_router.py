@@ -134,7 +134,9 @@ ADMIN_CALLBACK_HANDLERS = {
     "list_by_plan": reporting.handle_list_users_by_plan,
     "list_no_plan": reporting.handle_list_users_no_plan,
     "panel_report_detail": reporting.handle_panel_specific_reports_menu,
-    "manage_single_panel": navigation.handle_panel_management_menu, 
+    "manage_single_panel": user_management.handle_manage_single_panel_menu,
+    "add_user_to_panel": user_management.handle_add_user_to_panel_start,
+    "p_users": user_management.handle_panel_users_list,
 
     # Plans & Panels
     "plan_manage": plan_management.handle_plan_management_menu,

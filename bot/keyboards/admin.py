@@ -34,30 +34,32 @@ class AdminMenu(BaseMenu):
     async def management_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
         """
         منوی انتخاب پنل برای مدیریت کاربران.
-        فقط پنل‌هایی که اضافه شده‌اند را نمایش می‌دهد.
         """
         kb = self.create_markup(row_width=2)
         
         if not panels:
-            # اگر هیچ پنلی نبود
             kb.add(self.btn("⚠️ هیچ پنلی یافت نشد (افزودن پنل)", "admin:panel_add_start"))
         else:
-            # نمایش دکمه برای هر پنل
+            buttons = []
             for p in panels:
-                # ارسال ID و Type پنل در کال‌بک
-                kb.add(self.btn(f"مدیریت {p['name']}", f"admin:manage_single_panel:{p['id']}:{p['panel_type']}"))
+                buttons.append(self.btn(f"{p['name']}", f"admin:manage_single_panel:{p['id']}:{p['panel_type']}"))
+            
+            kb.add(*buttons)
 
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb
 
     async def manage_single_panel_menu(self, panel_id: int, panel_type: str, panel_name: str) -> types.InlineKeyboardMarkup:
-        """منوی عملیات روی یک پنل خاص (افزودن کاربر / لیست)"""
-        kb = self.create_markup(row_width=1)
+        """منوی عملیات روی یک پنل خاص"""
+        kb = self.create_markup(row_width=2)
+        
         kb.add(
-            self.btn(f"➕ افزودن کاربر به {panel_name}", f"admin:add_user_to_panel:{panel_id}"),
-            self.btn(f"📋 لیست کاربران {panel_name}", f"admin:list:panel_users:{panel_id}:0")
+            self.btn(f"📋 لیست کاربران", f"admin:p_users:{panel_id}:0"),
+            self.btn(f"➕ افزودن کاربر", f"admin:add_user_to_panel:{panel_id}")
+            
         )
-        kb.add(self.btn("🔙 بازگشت", "admin:management_menu"))
+        
+        kb.add(self.btn("🔙 بازگشت به لیست سرورها", "admin:management_menu"))
         return kb
 
     # ---------------------------------------------------------

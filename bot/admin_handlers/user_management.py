@@ -15,6 +15,7 @@ from bot.db.base import User, UserUUID, Panel
 from bot.utils import _safe_edit, escape_markdown
 from bot import combined_handler
 from bot.services.panels import PanelFactory
+from bot.formatters import user_formatter
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,6 @@ async def handle_global_search_convo(call, params):
         'next_handler': process_search_input
     }
     
-    # اصلاح: استفاده از Raw String (r)
     text = r"🔎 لطفاً *نام*، *نام کاربری* یا بخشی از *UUID* کاربر را ارسال کنید:"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
@@ -62,8 +62,8 @@ async def handle_search_by_telegram_id_convo(call, params):
         'next_handler': process_search_input
     }
     
-    # ✅ اصلاح: دوبل کردن بک‌اسلش برای رفع وارنینگ
-    text = "🆔 لطفاً *آیدی عددی تلگرام* \\(User ID\\) کاربر را ارسال کنید:"
+    text = "🆔 لطفاً *آیدی عددی تلگرام* کاربر را ارسال کنید:"
+    
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
 async def process_search_input(message: types.Message):
@@ -170,6 +170,7 @@ async def handle_show_user_summary(call, params):
     await show_user_summary(uid, msg_id, real_user_id, context)
 
 async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
+    """نمایش پروفایل دقیق کاربر (مشابه پنل کاربری + اطلاعات ادمین)"""
     async with db.get_session() as session:
         user = await session.get(User, target_user_id)
         if not user:
@@ -179,39 +180,48 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
         uuids = await db.uuids(target_user_id)
         active_uuids = [u for u in uuids if u['is_active']]
         
-        total_usage = 0
-        total_limit = 0
-        
         if active_uuids:
+            # دریافت اطلاعات کامل برای فرمت‌دهی
             main_uuid = active_uuids[0]['uuid']
             info = await combined_handler.get_combined_user_info(str(main_uuid))
+            
             if info:
-                total_usage = info.get('current_usage_GB', 0)
-                total_limit = info.get('usage_limit_GB', 0)
+                info['db_id'] = active_uuids[0]['id']
+                # دریافت تعداد پرداخت‌ها
+                history = await db.get_user_payment_history(active_uuids[0]['id'])
+                payment_count = len(history)
+                
+                # تولید متن پایه با فرمتر
+                formatted_body = await user_formatter.profile_info(info, 'fa')
+                
+                # ✅ تغییر خط اول (هدر) برای افزودن تعداد پرداخت
+                lines = formatted_body.split('\n')
+                # خط اول معمولاً: 👤 نام : Name (✅ فعال)
+                # آن را بازنویسی می‌کنیم:
+                status_emoji = "✅" if info.get('is_active') else "❌"
+                status_text = "فعال" if info.get('is_active') else "غیرفعال"
+                new_header = f"👤 نام : {escape_markdown(user.first_name or 'Unknown')}  ({status_emoji} {status_text} \| {payment_count} پرداخت)"
+                lines[0] = f"*{new_header}*"
+                
+                admin_info = []
+                if user.admin_note:
+                    admin_info.append(f"\n📝 یادداشت: {escape_markdown(user.admin_note)}")
+                
+                admin_info.append(f"\n🆔 آیدی عددی: `{target_user_id}`")
+                admin_info.append(f"💰 کیف پول: `{int(user.wallet_balance or 0):,}`")
+                
+                text = "\n".join(lines) + "".join(admin_info)
+            else:
+                text = "❌ خطا در دریافت اطلاعات از سرور."
+        else:
+            text = f"👤 کاربر: {escape_markdown(user.first_name or '')}\n🔴 وضعیت: غیرفعال (بدون سرویس فعال)\n🆔 `{target_user_id}`"
 
-    status_emoji = "🟢" if active_uuids else "🔴"
-    note = f"\n📝 یادداشت: {escape_markdown(user.admin_note)}" if user.admin_note else ""
-    
-    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
-    text = (
-        f"👤 *پروفایل کاربر*\n"
-        f"➖➖➖➖➖➖➖➖\n"
-        f"🆔 شناسه: `{user.user_id}`\n"
-        f"📛 نام: {escape_markdown(user.first_name or 'نامشخص')}\n"
-        f"🔗 یوزرنیم: @{escape_markdown(user.username or 'ندارد')}\n"
-        f"💰 کیف پول: `{int(user.wallet_balance or 0):,}` تومان\n"
-        f"🎫 سرویس‌های فعال: {len(active_uuids)}\n"
-        f"{status_emoji} وضعیت کلی: {'فعال' if active_uuids else 'غیرفعال'}\n"
-        f"📊 مصرف کل \\(تخمینی\\): `{total_usage:.2f}` / `{total_limit:.0f}` GB\n"
-        f"{note}"
-    )
-    
     back_cb = "admin:search_menu" if context == 's' else "admin:management_menu"
+    # پنل تایپ را پیش‌فرض hiddify می‌گیریم یا از دیتابیس می‌خوانیم (برای دکمه‌ها)
     panel_type = 'hiddify' 
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
-
 # ==============================================================================
 # 3. افزودن کاربر جدید (Add User Flow)
 # ==============================================================================
@@ -457,8 +467,8 @@ async def handle_toggle_status_action(call, params):
 # ==============================================================================
 
 async def handle_payment_history(call, params):
+    """نمایش تاریخچه پرداخت"""
     target_id = int(params[0])
-    page = int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
     uuids = await db.uuids(target_id)
@@ -472,11 +482,11 @@ async def handle_payment_history(call, params):
         await _safe_edit(uid, msg_id, "📜 هیچ سابقه‌ای یافت نشد.", reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
         return
     
-    # ✅ اصلاح: دوبل کردن بک‌اسلش
     text = f"📜 *تاریخچه تمدیدها* \\({len(history)} مورد\\):\n\n"
     for item in history:
-        date_str = item['payment_date'].strftime("%Y-%m-%d %H:%M")
-        text += f"📅 {date_str}\n"
+        dt_str = item['payment_date'].strftime("%Y-%m-%d %H:%M")
+        dt_safe = dt_str.replace("-", "\\-").replace(":", "\\:")
+        text += f"📅 {dt_safe}\n"
         
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🗑 پاکسازی تاریخچه", callback_data=f"admin:reset_phist:{uuids[0]['id']}:{target_id}"))
@@ -485,12 +495,20 @@ async def handle_payment_history(call, params):
     await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_log_payment(call, params):
+    """ثبت دستی پرداخت"""
     target_id = int(params[0])
     uuids = await db.uuids(target_id)
     
     if uuids:
         await db.add_payment_record(uuids[0]['id'])
         await bot.answer_callback_query(call.id, "✅ پرداخت ثبت شد.")
+        
+        try:
+            await bot.send_message(target_id, "✅ اشتراک شما توسط مدیریت تمدید شد.\nبا تشکر از پرداخت شما.")
+        except Exception as e:
+            logger.warning(f"Could not send msg to {target_id}: {e}")
+
+        await show_user_summary(call.from_user.id, call.message.message_id, target_id)
     else:
         await bot.answer_callback_query(call.id, "سرویسی وجود ندارد.", show_alert=True)
 
@@ -581,9 +599,11 @@ async def handle_reset_transfer_cooldown(call, params):
     await handle_user_reset_menu(call, params)
 
 async def handle_user_warning_menu(call, params):
+    """منوی ارسال هشدار"""
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("🔔 یادآوری پرداخت", callback_data=f"admin:us_spn:{target_id}"),
         types.InlineKeyboardButton("🚨 هشدار قطع سرویس", callback_data=f"admin:us_sdw:{target_id}")
@@ -616,6 +636,7 @@ async def handle_send_disconnection_warning(call, params):
         await bot.answer_callback_query(call.id, "❌ خطا.", show_alert=True)
 
 async def handle_ask_for_note(call, params):
+    """دریافت یادداشت از ادمین"""
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     admin_conversations[uid] = {
@@ -625,8 +646,9 @@ async def handle_ask_for_note(call, params):
         'timestamp': time.time(),
         'next_handler': process_save_note
     }
-    await _safe_edit(uid, msg_id, "📝 یادداشت خود را بنویسید (برای حذف، 'پاک' بفرستید):",
-                     reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
+    
+    text = "📝 یادداشت خود را بنویسید \\(برای حذف، 'پاک' بفرستید\\):"
+    await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
 
 async def process_save_note(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -992,3 +1014,172 @@ async def handle_delete_mapping_execute(call: types.CallbackQuery, params: list)
     else:
         await bot.answer_callback_query(call.id, "❌ خطا در حذف.", show_alert=True)
         await handle_mapping_list(call, [page])
+
+# ==============================================================================
+# 1. نمایش منوی مدیریت کاربران برای یک پنل خاص
+# Callback: admin:manage_single_panel:<panel_id>:<panel_type>
+# ==============================================================================
+
+async def handle_manage_single_panel_menu(call: types.CallbackQuery, params: list):
+    """
+    نمایش منوی مدیریت برای یک کشور/سرور انتخاب شده.
+    """
+    panel_id = int(params[0])
+    
+    panel = await db.get_panel_by_id(panel_id)
+    if not panel:
+        await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.", show_alert=True)
+        return
+
+    # ✅ اصلاح شده: خط فاصله (-) با \- جایگزین شد
+    text = (
+        f"👥 *مدیریت کاربران \- {escape_markdown(panel['name'])}*\n\n"
+        f"لطفاً یک گزینه را انتخاب کنید:"
+    )
+    
+    # دریافت منو از admin_menu (فرض بر این است که متد در admin_menu وجود دارد)
+    # اگر متد manage_single_panel_menu در admin_menu نیست، کد آن را پایین‌تر گذاشته‌ام
+    markup = await admin_menu.manage_single_panel_menu(panel['id'], panel['panel_type'], panel['name'])
+    
+    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=markup, parse_mode="MarkdownV2")
+
+
+# ==============================================================================
+# 2. نمایش لیست کاربران پنل با فرمت درخواستی
+# Callback: admin:p_users:<panel_id>:<page>
+# ==============================================================================
+
+async def handle_panel_users_list(call: types.CallbackQuery, params: list):
+    """
+    نمایش لیست کاربران یک پنل خاص (نسخه اصلاح شده و بدون ارور پرانتز).
+    """
+    # هندل کردن پارامترها
+    if len(params) == 3 and params[0] == 'panel_users':
+        panel_id = int(params[1])
+        page = int(params[2])
+    else:
+        panel_id = int(params[0])
+        page = int(params[1])
+
+    PAGE_SIZE = 25
+    
+    panel = await db.get_panel_by_id(panel_id)
+    if not panel:
+        await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.")
+        return
+
+    try:
+        panel_api = await PanelFactory.get_panel(panel['name'])
+        users = await panel_api.get_all_users()
+        # مرتب‌سازی
+        users.sort(key=lambda x: x.get('expire') or x.get('package_days') or 0, reverse=True)
+    except Exception as e:
+        await bot.answer_callback_query(call.id, "❌ خطا در اتصال به پنل.")
+        return
+
+    total_count = len(users)
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    
+    if page >= total_pages: page = total_pages - 1
+    if page < 0: page = 0
+    
+    start_idx = page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    current_users = users[start_idx:end_idx]
+
+    # هدر لیست (اینجا چون متغیر نیست، دستی اسکیپ می‌کنیم)
+    lines = [f"\(صفحه {page + 1} از {total_pages} \| کل: {total_count}\)\n"]
+    
+    current_time = time.time()
+    
+    for u in current_users:
+        name = u.get('username') or u.get('name') or "بی‌نام"
+        
+        expire_val = u.get('expire')
+        package_days = u.get('package_days')
+        start_date = u.get('start_date')
+        
+        status_str = "نامحدود"
+        
+        if expire_val and isinstance(expire_val, (int, float)) and expire_val > 100_000:
+            if expire_val > current_time:
+                days_left = int((expire_val - current_time) / 86400)
+                status_str = f"{days_left} روز"
+            else:
+                status_str = "منقضی"
+                
+        elif package_days is not None:
+            try:
+                p_days = int(package_days)
+                if start_date:
+                    s_date_str = str(start_date).split(' ')[0]
+                    s_dt = datetime.strptime(s_date_str, "%Y-%m-%d").timestamp()
+                    days_passed = int((current_time - s_dt) / 86400)
+                    rem_days = p_days - days_passed
+                    
+                    if rem_days > 0:
+                        status_str = f"{rem_days} روز"
+                    else:
+                        status_str = "منقضی"
+                else:
+                    # ✅ اصلاح شد: حذف بک‌اسلش‌های دستی از (نو)
+                    # تابع escape_markdown خودش پرانتزها را درست می‌کند
+                    status_str = f"{p_days} روز (نو)"
+            except Exception:
+                status_str = f"{package_days} روز"
+
+        # خط زیر هر دو متغیر را اسکیپ می‌کند، پس پرانتزهای داخل name یا status_str مشکلی نخواهند داشت
+        lines.append(f"• {escape_markdown(name)} \| 📅 {escape_markdown(status_str)}")
+
+    text = "\n".join(lines)
+    
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    nav_buttons = []
+    
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=f"admin:p_users:{panel_id}:{page - 1}"))
+    
+    if end_idx < total_count:
+        nav_buttons.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=f"admin:p_users:{panel_id}:{page + 1}"))
+        
+    if nav_buttons:
+        kb.add(*nav_buttons)
+        
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت به منو", callback_data=f"admin:manage_single_panel:{panel_id}:{panel['panel_type']}"))
+
+    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
+
+async def handle_add_user_to_panel_start(call: types.CallbackQuery, params: list):
+    """
+    شروع فرآیند افزودن کاربر به یک پنل خاص (با دکمه بازگشت صحیح).
+    """
+    panel_id = int(params[0])
+    uid = call.from_user.id
+    msg_id = call.message.message_id
+    
+    # دریافت اطلاعات پنل برای دکمه بازگشت
+    panel = await db.get_panel_by_id(panel_id)
+    if not panel:
+        await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.")
+        return
+
+    # ذخیره استیت برای دریافت نام کاربر
+    admin_conversations[uid] = {
+        'action': 'add_user',
+        'step': 'get_name',
+        'data': {'panel_name': panel['name']}, # نام پنل برای استفاده بعدی
+        'msg_id': msg_id,
+        'timestamp': time.time(),
+        'next_handler': get_new_user_name
+    }
+    
+    # ساخت دکمه بازگشت اختصاصی (بازگشت به منوی همین کشور)
+    back_kb = types.InlineKeyboardMarkup()
+    back_kb.add(types.InlineKeyboardButton(
+        "🔙 بازگشت", 
+        callback_data=f"admin:manage_single_panel:{panel['id']}:{panel['panel_type']}"
+    ))
+    
+    text = f"👤 سرور انتخاب شد: *{escape_markdown(panel['name'])}*\n\nلطفاً *نام کاربر* جدید را وارد کنید:"
+    
+    await _safe_edit(uid, msg_id, text, reply_markup=back_kb)
