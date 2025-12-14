@@ -80,29 +80,35 @@ class UserDB:
     async def get_user_settings(self, user_id: int) -> Dict[str, bool]:
         """
         تنظیمات کاربر را از ستون JSON می‌خواند و با مقادیر پیش‌فرض ترکیب می‌کند.
-        دیگر نیازی به ستون‌های هاردکد شده نیست.
         """
         user_data = await self.user(user_id)
         
-        # مقادیر پیش‌فرض برای تمام تنظیمات ممکن
+        # مقادیر پیش‌فرض ثابت
         defaults = {
             'daily_reports': True, 'weekly_reports': True, 'monthly_reports': True,
             'expiry_warnings': True, 'show_info_config': True, 
             'achievement_alerts': True, 'promotional_alerts': True,
             'auto_delete_reports': False,
-            # این‌ها قبلاً ستون بودند، الان کلید در JSON هستند
-            'data_warning_de': True, 'data_warning_fr': True, 'data_warning_tr': True,
-            'data_warning_us': True, 'data_warning_ro': True, 'data_warning_supp': True
         }
+
+        # ✅ اضافه کردن داینامیک کشورهای موجود در دیتابیس به تنظیمات پیش‌فرض
+        # (این بخش باعث می‌شود هر کشوری اضافه کنید، پیش‌فرضش True باشد)
+        async with self.get_session() as session:
+            # از مدل ServerCategory که در فایل base.py است استفاده می‌کنیم
+            from .base import ServerCategory 
+            stmt = select(ServerCategory.code)
+            result = await session.execute(stmt)
+            for code in result.scalars():
+                defaults[f'data_warning_{code}'] = True
         
         if not user_data:
             return defaults
             
-        # دریافت تنظیمات ذخیره شده در دیتابیس
         saved_settings = user_data.get('settings', {}) or {}
         
-        # اولویت با تنظیمات ذخیره شده کاربر است
         return {**defaults, **saved_settings}
+
+    # ... (ادامه کدها)
 
     async def update_user_setting(self, user_id: int, setting: str, value: bool) -> None:
         """

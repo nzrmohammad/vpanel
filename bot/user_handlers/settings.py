@@ -10,7 +10,6 @@ async def settings_menu_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # دریافت تنظیمات و دسترسی‌ها به صورت Async
     settings = await db.get_user_settings(user_id)
     access = await db.get_user_access_rights(user_id)
     
@@ -21,19 +20,16 @@ async def settings_menu_handler(call: types.CallbackQuery):
         reply_markup=await user_menu.settings(settings, lang, access)
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle:"))
 async def toggle_setting_handler(call: types.CallbackQuery):
-    setting_key = call.data.replace("toggle_", "")
+    setting_key = call.data.split(":")[1]
     user_id = call.from_user.id
     
-    # دریافت وضعیت فعلی
     current_settings = await db.get_user_settings(user_id)
     current_val = current_settings.get(setting_key, True)
     
-    # تغییر در دیتابیس
     await db.update_user_setting(user_id, setting_key, not current_val)
     
-    # رفرش منو
     lang = await db.get_user_language(user_id)
     settings = await db.get_user_settings(user_id)
     access = await db.get_user_access_rights(user_id)
@@ -44,14 +40,17 @@ async def toggle_setting_handler(call: types.CallbackQuery):
             call.message.message_id,
             reply_markup=await user_menu.settings(settings, lang, access)
         )
-    except:
+    except Exception:
         pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "change_language")
 async def change_language_handler(call: types.CallbackQuery):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🇮🇷 فارسی", callback_data="set_lang:fa"))
-    markup.add(types.InlineKeyboardButton("🇺🇸 English", callback_data="set_lang:en"))
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🇮🇷 فارسی", callback_data="set_lang:fa"),
+        types.InlineKeyboardButton("🇺🇸 English", callback_data="set_lang:en")
+    )
+    
     markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="settings"))
     
     await bot.edit_message_text("Language / زبان:", call.from_user.id, call.message.message_id, reply_markup=markup)
@@ -62,5 +61,4 @@ async def set_language_confirm(call: types.CallbackQuery):
     await db.set_user_language(call.from_user.id, new_lang)
     
     await bot.answer_callback_query(call.id, "Language updated! / زبان تغییر کرد.")
-    # بازگشت به تنظیمات
     await settings_menu_handler(call)

@@ -15,15 +15,8 @@ def _parse_admin_ids(raw_ids: str | None) -> set[int]:
         return set()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-HIDDIFY_DOMAIN_RAW = os.getenv("HIDDIFY_DOMAIN", "")
-HIDDIFY_DOMAIN = HIDDIFY_DOMAIN_RAW.rstrip("/") if HIDDIFY_DOMAIN_RAW else ""
-ADMIN_PROXY_PATH_RAW = os.getenv("ADMIN_PROXY_PATH", "")
-ADMIN_PROXY_PATH = ADMIN_PROXY_PATH_RAW.strip("/") if ADMIN_PROXY_PATH_RAW else ""
 ADMIN_UUID = os.getenv("ADMIN_UUID")
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS")) or {265455450}
-MARZBAN_API_BASE_URL = os.getenv("MARZBAN_API_BASE_URL", "https://panel2.fox1.eu.org:8000")
-MARZBAN_API_USERNAME = os.getenv("MARZBAN_API_USERNAME")
-MARZBAN_API_PASSWORD = os.getenv("MARZBAN_API_PASSWORD")
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY")
 
 TELEGRAM_FILE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024

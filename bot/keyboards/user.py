@@ -208,24 +208,31 @@ class UserMenu(BaseMenu):
         )
         kb.add(self.btn(f"📆 {get_string('monthly_report', lang_code)} {status('monthly_reports')}", "toggle:monthly_reports"))
 
-        # بخش ۲: هشدارها (داینامیک بر اساس دسترسی سرور)
+        # بخش ۲: هشدارها (اصلاح شده برای نمایش همه کشورها)
         kb.add(self.btn(f"🪫 {get_string('alerts_category', lang_code)}", "noop"))
         
+        # دریافت لیست کامل کشورها از دیتابیس
+        categories_list = await db.get_server_categories()
+        
         alert_btns = []
-        for key, has_access in access.items():
-            if not has_access: continue
+        # به جای بررسی دسترسی (access)، روی تمام کشورهای موجود حلقه می‌زنیم
+        for cat in categories_list:
+            cat_code = cat['code']
+            emoji = cat['emoji']
             
-            # تبدیل has_access_de به de
-            cat_code = key.replace('has_access_', '')
-            meta = CATEGORY_META.get(cat_code, {'emoji': cat_code.upper()})
-            
+            # کلید تنظیمات برای این کشور
             setting_key = f"data_warning_{cat_code}"
-            alert_btns.append(self.btn(f"{meta['emoji']} {status(setting_key)}", f"toggle:{setting_key}"))
+            
+            # ساخت دکمه
+            alert_btns.append(self.btn(f"{emoji} {status(setting_key)}", f"toggle:{setting_key}"))
         
         if alert_btns:
             # دکمه‌ها را ۳ تایی در هر ردیف می‌چینیم
             for i in range(0, len(alert_btns), 3):
                 kb.row(*alert_btns[i:i+3])
+        else:
+            # اگر هیچ کشوری در ادمین تعریف نشده باشد
+            kb.add(self.btn("⚠️ هیچ کشوری تعریف نشده است", "noop"))
 
         # بخش ۳: عمومی
         kb.add(self.btn(f"📢 {get_string('general_notifications_category', lang_code)}", "noop"))

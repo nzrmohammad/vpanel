@@ -343,10 +343,16 @@ class UserFormatter:
             first_uuid_record = user_uuids[0]
             referred_list = await db.get_referred_users(user_id)
             referrals_count = len(referred_list)
-            payments = await db.get_user_payment_history(first_uuid_record.id)
+            
+            # ✅ اصلاح شده: دسترسی به مقادیر دیکشنری با کروشه [] به جای نقطه
+            payments = await db.get_user_payment_history(first_uuid_record['id'])
             payments_count = len(payments)
-            user_group = get_string("group_vip", lang_code) if first_uuid_record.is_vip else get_string("group_normal", lang_code)
-            registration_date = to_shamsi(first_uuid_record.created_at, include_time=False)
+            
+            # ✅ اصلاح شده: is_vip با کروشه
+            user_group = get_string("group_vip", lang_code) if first_uuid_record['is_vip'] else get_string("group_normal", lang_code)
+            
+            # ✅ اصلاح شده: created_at با کروشه
+            registration_date = to_shamsi(first_uuid_record['created_at'], include_time=False)
             
         lines = [
             f"*{escape_markdown(get_string('user_account_page_title', lang_code))}*",

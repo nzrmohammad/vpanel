@@ -615,7 +615,6 @@ async def shop_execute_handler(call: types.CallbackQuery):
 async def connection_doctor_handler(call: types.CallbackQuery):
     uid = call.from_user.id
     
-    # 0. نمایش پیام انتظار (بدون مارک‌داون برای جلوگیری از خطا در شروع)
     await _safe_edit(uid, call.message.message_id, "🩺 ...", reply_markup=None)
     
     # 1. بررسی وضعیت اکانت کاربر
@@ -624,7 +623,6 @@ async def connection_doctor_handler(call: types.CallbackQuery):
     if user_uuids:
         active_uuid = next((u for u in user_uuids if u['is_active']), None)
         if active_uuid:
-            # تبدیل آبجکت UUID به رشته برای جلوگیری از ارور
             info = await combined_handler.get_combined_user_info(str(active_uuid['uuid']))
             if info and info.get('is_active'):
                 is_user_active = True
@@ -659,10 +657,8 @@ async def connection_doctor_handler(call: types.CallbackQuery):
             status_text = "عدم برقراری ارتباط"
             icon = "❌"
 
-        # ✅ نکته مهم: نام سرور و وضعیت را اسکیپ می‌کنیم
         safe_p_name = escape_markdown(p_name)
         safe_status = escape_markdown(status_text)
-        # خط تیره در MarkdownV2 باید اسکیپ شود، تابع escape_markdown این کار را انجام می‌دهد
         label = escape_markdown(f"وضعیت سرور «{p_name}»")
         panel_status_lines.append(f"{icon} {label}: {safe_status}")
 
@@ -696,15 +692,12 @@ async def connection_doctor_handler(call: types.CallbackQuery):
             server_word = escape_markdown("سرور")
             load_analysis_lines.append(f" {status_icon} {server_word} {cat_name} {cat_emoji}: {safe_label}")
     else:
-        # ✅ این متن نقطه دارد، پس حتما باید اسکیپ شود
-        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست."))
+        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست"))
 
     # 4. ساخت پیام نهایی با هدر و فوتر
     acc_status = escape_markdown("فعال" if is_user_active else "غیرفعال")
     acc_icon = "✅" if is_user_active else "❌"
     
-    # خط جداکننده (این کاراکترها معمولا امن هستند اما برای اطمینان اسکیپ می‌کنیم یا داخل کد بلاک می‌گذاریم)
-    # اما چون شما خط ساده می‌خواستید، از تابع رد می‌کنیم
     separator = escape_markdown("──────────────────")
 
     msg_lines = [
@@ -725,8 +718,8 @@ async def connection_doctor_handler(call: types.CallbackQuery):
     # ✅ متن پیشنهاد که حاوی نقطه است باید کامل اسکیپ شود
     suggestion_text = (
         "اگر اکانت و سرورها فعال هستند اما همچنان با کندی مواجه‌اید، "
-        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید. "
-        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید."
+        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید "  # نقطه حذف شد
+        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید"  # نقطه حذف شد
     )
     msg_lines.append(escape_markdown(suggestion_text))
     
