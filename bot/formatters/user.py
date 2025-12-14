@@ -59,7 +59,7 @@ class UserFormatter:
     """
     async def profile_info(self, info: dict, lang_code: str) -> str:
         """
-        نمایش اطلاعات دقیق سرویس با فیکس ساعت هیدیفای و چیدمان فارسی.
+        نمایش اطلاعات دقیق سرویس با فیکس ساعت هیدیفای، چیدمان فارسی و حل مشکل پرچم و اسکیپ.
         """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
@@ -69,12 +69,23 @@ class UserFormatter:
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
 
+        # 1. دریافت نقشه کد به ایموجی
         cat_emoji_map = await _get_category_map()
+
+        # 2. دریافت نقشه نام پنل به کد کشور
+        panel_name_to_cat = {}
+        async with db.get_session() as session:
+            stmt = select(Panel)
+            result = await session.execute(stmt)
+            for p in result.scalars():
+                if p.category:
+                    panel_name_to_cat[p.name] = p.category
 
         raw_name = info.get("name", get_string('unknown_user', lang_code))
         is_active_overall = info.get("is_active", False)
         status_emoji = get_string("fmt_status_active", lang_code) if is_active_overall else get_string("fmt_status_inactive", lang_code)
         
+        # هدر با اسکیپ صحیح
         header_raw = f"{get_string('fmt_user_name_header', lang_code)} : {raw_name} ({EMOJIS['success'] if is_active_overall else EMOJIS['error']} {status_emoji})"
         header_line = f"*{escape_markdown(header_raw)}*"
 
@@ -84,23 +95,36 @@ class UserFormatter:
         
         breakdown = info.get('breakdown', {})
         
-        # کاراکتر اصلاح جهت متن (برای قرارگیری عدد سمت چپ)
+        # کاراکتر اصلاح جهت متن
         LTR = "\u200e"
 
         def format_panel_section(panel_name, panel_details):
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
+            
+            # تشخیص دسته
             category_code = panel_details.get('category')
+            if not category_code:
+                category_code = panel_name_to_cat.get(panel_name)
             
             flag = cat_emoji_map.get(category_code, "") if category_code else ""
             if not flag: flag = "🏳️"
 
+            # تشخیص وضعیت سرور (✅ یا ❌)
+            raw_status = p_data.get('status')
+            is_enabled = p_data.get('enable')
+            is_active_flag = p_data.get('is_active')
+            
+            is_panel_active = (raw_status == 'active') or (is_enabled is True) or (is_active_flag is True)
+            panel_status_icon = "✅" if is_panel_active else "❌"
+
+            # مقادیر مصرف
             limit = p_data.get("usage_limit_GB", 0.0)
             usage = p_data.get("current_usage_GB", 0.0)
             remaining_gb = max(0, limit - usage)
             this_usage = daily_usage_dict.get(p_type, 0.0)
 
-            # --- بخش محاسبه انقضا ---
+            # محاسبه انقضا
             expire_val = p_data.get('expire')
             package_days = p_data.get('package_days')
             start_date = p_data.get('start_date')
@@ -131,32 +155,29 @@ class UserFormatter:
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
                 except: pass
 
-            # --- فیکس ساعت هیدیفای ---
+            # فیکس ساعت
             raw_last_online = p_data.get('last_online') or p_data.get('online_at')
             fixed_last_online = raw_last_online
 
-            # اگر پنل هیدیفای است و فرمت رشته‌ای دارد، دستی تایم‌زون تهران را ست می‌کنیم
-            # تا تابع to_shamsi دوباره ۳.۵ ساعت به آن اضافه نکند.
             if p_type == 'hiddify' and raw_last_online and isinstance(raw_last_online, str):
                 try:
-                    clean_time = raw_last_online.split('.')[0] # حذف میلی‌ثانیه
+                    clean_time = raw_last_online.split('.')[0]
                     dt_obj = datetime.strptime(clean_time, '%Y-%m-%d %H:%M:%S')
                     tehran_tz = pytz.timezone("Asia/Tehran")
-                    # با این کار به سیستم می‌فهمانیم که این زمان خودش زمان تهران است
                     fixed_last_online = tehran_tz.localize(dt_obj)
                 except ValueError:
                     pass
 
             last_online_str = to_shamsi(fixed_last_online, include_time=True)
 
-            # --- فرمت‌دهی اعداد ---
             limit_fmt = f"{LTR}{limit:.0f} GB"
             usage_fmt = f"{LTR}{usage:.2f} GB"
             remaining_fmt = f"{LTR}{remaining_gb:.2f} GB"
             daily_fmt = f"{LTR}{format_daily_usage(this_usage)}"
 
+            # ✅ اصلاح اصلی اینجاست: افزودن \ قبل از پرانتزها
             return [
-                f"*سرور {flag}*",
+                f"*سرور {flag} \({panel_status_icon}\)*",
                 f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(limit_fmt)}",
                 f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(usage_fmt)}",
                 f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_fmt)}",
@@ -187,6 +208,7 @@ class UserFormatter:
                         if parsed:
                             client_name = escape_markdown(parsed.get('client', 'Unknown'))
                             last_seen = escape_markdown(to_shamsi(agent['last_seen'], include_time=True))
+                            # پرانتزهای اینجا هم اسکیپ می‌شوند توسط escape_markdown در last_seen یا دستی
                             report.append(f"` `└─ 💻 *{client_name}* \\(_{last_seen}_\\)")
                     report.append(separator)
 

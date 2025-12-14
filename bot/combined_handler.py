@@ -278,20 +278,22 @@ async def search_user(query: str) -> List[Dict[str, Any]]:
             
     return results
 
+
 async def modify_user_on_all_panels(
     identifier: str,
     add_gb: float = 0,
     add_days: int = 0,
     set_gb: Optional[float] = None,
     set_days: Optional[int] = None,
-    target_panel_type: Optional[str] = None
+    target_panel_type: Optional[str] = None,
+    target_panel_name: Optional[str] = None
 ) -> bool:
     """
-    تغییرات کاربر را به صورت اتمی برای هر پنل اعمال می‌کند (Async).
+    تغییرات کاربر را اعمال می‌کند (با قابلیت انتخاب پنل خاص).
     """
     from bot.database import db # Local import
     
-    logger.info(f"║ Async Modification started for: {identifier}")
+    logger.info(f"║ Async Modification started for: {identifier} (Target: {target_panel_name or 'ALL'})")
 
     is_uuid = validate_uuid(identifier)
     uuid = identifier if is_uuid else await db.get_uuid_by_marzban_username(identifier)
@@ -308,7 +310,12 @@ async def modify_user_on_all_panels(
         panel_type = panel_config['panel_type']
         panel_name = panel_config['name']
 
+        # فیلتر بر اساس نوع پنل (قدیمی)
         if target_panel_type and panel_type != target_panel_type:
+            continue
+            
+        # فیلتر بر اساس نام دقیق پنل (جدید)
+        if target_panel_name and panel_name != target_panel_name:
             continue
 
         handler = await _get_handler_for_panel(panel_name)
@@ -316,22 +323,6 @@ async def modify_user_on_all_panels(
 
         # --- Hiddify Logic ---
         if panel_type == 'hiddify' and uuid:
-            user_panel_data = await handler.get_user(uuid)
-            
-            if not user_panel_data:
-                continue
-            
-            # توجه: کلاس BasePanel متد modify_user دارد که منطق جمع زدن را خودش هندل می‌کند
-            # اما اگر بخواهیم منطق خاص شما (reset start_date) را داشته باشیم:
-            
-            # در اینجا فرض می‌کنیم متد modify_user در HiddifyPanel (که در services/panels/hiddify.py است)
-            # آرگومان‌های add_gb و add_days را می‌پذیرد.
-            # اگر نیاز به منطق خاص package_days دارید، باید آن را در modify_user کلاس HiddifyPanel پیاده کنید
-            # یا اینجا دستی محاسبه کنید و با payload بفرستید.
-            
-            # بیایید از متد استاندارد modify_user که در فایل های شما دیدم استفاده کنیم:
-            # await handler.modify_user(identifier, add_gb=..., add_days=...)
-            
             try:
                 success = await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days)
                 if success:
@@ -342,23 +333,7 @@ async def modify_user_on_all_panels(
 
         # --- Marzban Logic ---
         elif panel_type == 'marzban' and marzban_username:
-            # در فایل ارسالی شما، منطق خاصی برای محاسبه data_limit بود.
-            # چون BasePanel متد modify_user دارد، ما پارامترها را به آن پاس می‌دهیم.
-            # اما چون در فایل شما منطق "اصلاح شده" وجود داشت، آن را اینجا هم پیاده می‌کنیم
-            # تا مطمئن شویم دقیقا همان رفتار را دارد.
-            
-            # دریافت یوزر برای محاسبه مقادیر دقیق
-            user_panel_data = await handler.get_user(marzban_username)
-            if not user_panel_data: continue
-
-            # محاسبه دقیق حجم (طبق درخواست شما)
-            # توجه: کلاس MarzbanPanel شما در فایل services/panels/marzban.py 
-            # خودش متد modify_user دارد که add_gb و add_days را می‌گیرد.
-            # بهتر است از همان استفاده کنید چون کدهای تکراری حذف می‌شود.
-            
-            # اما اگر اصرار دارید که منطق محاسبه اینجا باشد:
             try:
-                # فراخوانی متد استاندارد پنل (توصیه شده)
                 success = await handler.modify_user(marzban_username, add_gb=add_gb, add_days=add_days)
                 if success:
                     any_success = True
@@ -366,17 +341,14 @@ async def modify_user_on_all_panels(
             except Exception as e:
                 logger.error(f"Error modifying Marzban: {e}")
 
-    # ریست کردن فلگ یادآوری تمدید در دیتابیس
+    # ریست کردن فلگ یادآوری تمدید
     if any_success and (add_days > 0 or set_days is not None):
         if uuid:
-            # دریافت ID داخلی UUID برای آپدیت
             uuid_id = await db.get_uuid_id_by_uuid(uuid)
             if uuid_id:
                 await db.reset_renewal_reminder_sent(uuid_id)
-                logger.info(f"🔔 Renewal reminder flag reset.")
     
     return any_success
-
 
 async def delete_user_from_all_panels(identifier: str) -> bool:
     """کاربر را از تمام پنل‌هایی که در آن وجود دارد حذف می‌کند (Async)."""

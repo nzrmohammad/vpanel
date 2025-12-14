@@ -230,15 +230,6 @@ class AdminMenu(BaseMenu):
         kb.add(self.btn("🔙 بازگشت", final_back))
         return kb
 
-    async def edit_user_menu(self, identifier: str, panel_type: str) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=2)
-        kb.add(
-            self.btn("➕ افزودن حجم", f"admin:ae:add_gb:{panel_type}:{identifier}"),
-            self.btn("➕ افزودن روز", f"admin:ae:add_days:{panel_type}:{identifier}")
-        )
-        kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
-        return kb
-
     async def broadcast_target_menu(self) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
         kb.add(
@@ -296,13 +287,11 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def select_action_type_menu(self, context_value: any, context_type: str) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=2)
-        kb.add(
-            self.btn("➕ افزودن حجم", f"admin:ga_ask_value:add_gb:{context_type}:{context_value}"),
-            self.btn("➕ افزودن روز", f"admin:ga_ask_value:add_days:{context_type}:{context_value}")
+        return await self._create_resource_action_menu(
+            base_callback="admin:ga_ask_value",
+            args=[context_type, context_value],
+            back_callback="admin:group_actions_menu"
         )
-        kb.add(self.btn("🔙 بازگشت", "admin:group_actions_menu"))
-        return kb
 
     async def confirm_group_action_menu(self) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
@@ -412,4 +401,62 @@ class AdminMenu(BaseMenu):
             
         # بازگشت به منوی مپینگ (نه پنل اصلی)
         kb.add(self.btn("🔙 بازگشت", "admin:mapping_menu"))
+        return kb
+
+    # ---------------------------------------------------------
+    # متدهای جدید برای بخش ویرایش کاربر
+    # ---------------------------------------------------------
+    async def edit_user_panel_select_menu(self, identifier: str, panels: list) -> types.InlineKeyboardMarkup:
+        """
+        منوی انتخاب پنل برای ویرایش کاربر.
+        """
+        kb = self.create_markup(row_width=2)
+        
+        all_panel_btn = None
+        other_buttons = []
+        
+        for p in panels:
+            cb_data = f"admin:ep:{p['id']}:{identifier}"
+            display_text = f"{p['flag']} {p['name']}"
+            button = self.btn(display_text, cb_data)
+            
+            if p['id'] == 'all':
+                all_panel_btn = button
+            else:
+                other_buttons.append(button)
+        
+        if all_panel_btn:
+            kb.row(all_panel_btn)
+            
+        if other_buttons:
+            kb.add(*other_buttons)
+        
+        kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
+        return kb
+
+    async def edit_user_action_menu(self, identifier: str, panel_target: str) -> types.InlineKeyboardMarkup:
+        return await self._create_resource_action_menu(
+            base_callback="admin:ae",
+            args=[panel_target, identifier],
+            back_callback=f"admin:us_edt:{identifier}"
+        )
+
+    async def _create_resource_action_menu(self, base_callback: str, args: list, back_callback: str) -> types.InlineKeyboardMarkup:
+        """
+        یک تابع عمومی برای ساخت منوی افزودن حجم و روز.
+        base_callback: مثل 'admin:ae' یا 'admin:ga_ask_value'
+        args: لیست پارامترهایی که باید به کالبک چسبانده شوند (مثل [panel_name, uuid])
+        back_callback: کالبک دکمه بازگشت
+        """
+        kb = self.create_markup(row_width=2)
+        
+        # آرگومان‌ها را با : به هم وصل می‌کنیم
+        suffix = ":".join(map(str, args))
+        
+        kb.add(
+            self.btn("➕ افزودن حجم", f"{base_callback}:add_gb:{suffix}"),
+            self.btn("➕ افزودن روز", f"{base_callback}:add_days:{suffix}")
+        )
+        
+        kb.add(self.btn("🔙 بازگشت", back_callback))
         return kb

@@ -354,13 +354,79 @@ async def get_new_user_days(message: types.Message):
 # ==============================================================================
 
 async def handle_edit_user_menu(call, params):
+    """
+    نمایش لیست پنل‌های کاربر برای انتخاب جهت ویرایش.
+    """
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    markup = await admin_menu.edit_user_menu(target_id, 'both') 
-    await _safe_edit(uid, msg_id, "🔧 چه تغییری می‌خواهید اعمال کنید؟", reply_markup=markup)
+    
+    uuids = await db.uuids(int(target_id))
+    if not uuids:
+        await bot.answer_callback_query(call.id, "❌ کاربر یافت نشد.")
+        return
+    uuid_str = str(uuids[0]['uuid'])
+
+    info = await combined_handler.get_combined_user_info(uuid_str)
+    if not info or 'breakdown' not in info:
+        await _safe_edit(
+            uid, 
+            msg_id, 
+            "❌ اطلاعات پنل یافت نشد.", 
+            reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both')
+        )
+        return
+
+    active_panels = await db.get_active_panels()
+    categories = await db.get_server_categories()
+    cat_map = {c['code']: c['emoji'] for c in categories}
+
+    user_panels = []
+    
+    user_panels.append({'name': 'همه پنل‌ها', 'id': 'all', 'flag': '🌐'})
+
+    for p_name in info['breakdown'].keys():
+        p_cfg = next((p for p in active_panels if p['name'] == p_name), None)
+        
+        flag = ""
+        if p_cfg:
+            cat_code = p_cfg.get('category')
+            if cat_code and cat_code in cat_map:
+                flag = cat_map[cat_code]
+
+        user_panels.append({'name': p_name, 'id': p_name, 'flag': flag})
+
+    markup = await admin_menu.edit_user_panel_select_menu(target_id, user_panels)
+    
+    await _safe_edit(
+        uid, 
+        msg_id, 
+        "🔧 **ویرایش کاربر**\n\nلطفاً پنلی که می‌خواهید تغییرات روی آن اعمال شود را انتخاب کنید:", 
+        reply_markup=markup, 
+        parse_mode="Markdown"
+    )
+
+async def handle_select_panel_for_edit(call, params):
+    """
+    هندلر انتخاب پنل -> نمایش گزینه‌های افزودن حجم/روز
+    Callback: admin:ep:{panel_name}:{identifier}
+    """
+    panel_target = params[0] # نام پنل یا 'all'
+    identifier = params[1]
+    uid, msg_id = call.from_user.id, call.message.message_id
+    
+    markup = await admin_menu.edit_user_action_menu(identifier, panel_target)
+    
+    panel_display = "همه پنل‌ها" if panel_target == 'all' else panel_target
+    
+    text = (
+        f"🔧 ویرایش روی: **{escape_markdown(panel_display)}**\n\n"
+        f"چه تغییری می‌خواهید اعمال کنید؟"
+    )
+    
+    await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="Markdown")
 
 async def handle_ask_edit_value(call, params):
-    action, scope, target_id = params[0], params[1], params[2]
+    action, panel_target, target_id = params[0], params[1], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
     
     action_name = "حجم \\(GB\\)" if "gb" in action else "زمان \\(روز\\)"
@@ -369,13 +435,13 @@ async def handle_ask_edit_value(call, params):
         'step': 'edit_value', 
         'msg_id': msg_id, 
         'action': action, 
-        'scope': scope, 
+        'scope': panel_target,
         'target_id': target_id,
         'timestamp': time.time(), 
         'next_handler': process_edit_value
     }
     
-    text = f"🔢 لطفاً مقدار *{action_name}* را که می‌خواهید *اضافه* کنید وارد نمایید \\(عدد مثبت برای افزودن، منفی برای کسر\\):"
+    text = f"🔢 لطفاً مقدار *{action_name}* را وارد کنید \\(مثبت برای افزودن، منفی برای کسر\\):"
     
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
 
@@ -386,86 +452,151 @@ async def process_edit_value(message: types.Message):
     if uid not in admin_conversations: return
     data = admin_conversations.pop(uid)
     msg_id, target_id = data['msg_id'], data['target_id']
-    action, scope = data['action'], data['scope']
+    action, panel_target = data['action'], data['scope']
     
     try:
         value = float(text)
         if value == 0: raise ValueError
     except:
-        await _safe_edit(uid, msg_id, "❌ مقدار نامعتبر.", reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
+        await _safe_edit(uid, msg_id, "❌ مقدار نامعتبر\\.", reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
         return
 
-    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات روی پنل‌ها...", reply_markup=None)
+    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات\\.\\.\\.", reply_markup=None)
     
     uuids = await db.uuids(int(target_id))
     if not uuids:
-        await _safe_edit(uid, msg_id, "❌ کاربر سرویس فعالی ندارد.", reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
+        await _safe_edit(uid, msg_id, "❌ کاربر سرویس فعالی ندارد\\.", reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
         return
         
     main_uuid_str = str(uuids[0]['uuid'])
     add_gb = value if 'gb' in action else 0
     add_days = int(value) if 'days' in action else 0
     
+    # تعیین نام پنل هدف
+    target_name = panel_target if panel_target != 'all' else None
+    
     success = await combined_handler.modify_user_on_all_panels(
         identifier=main_uuid_str,
         add_gb=add_gb,
-        add_days=add_days
+        add_days=add_days,
+        target_panel_name=target_name 
     )
     
-    if success:
-        result_text = f"✅ تغییرات با موفقیت اعمال شد.\n➕ {value} {'GB' if add_gb else 'روز'}"
+    unit = "GB" if add_gb else "روز"
+    
+    if target_name:
+        safe_target = escape_markdown(target_name)
+        scope_text = f"\\({safe_target}\\)"
     else:
-        result_text = "❌ خطا در اعمال تغییرات روی پنل(ها)."
-        
-    await _safe_edit(uid, msg_id, result_text, reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
+        scope_text = "\\(سراسری\\)"
+    
+    safe_value = escape_markdown(str(value))
+    
+    if success:
+        result_text = f"✅ تغییرات با موفقیت اعمال شد {scope_text}\\.\n➕ {safe_value} {unit}"
+    else:
+        result_text = f"❌ خطا در اعمال تغییرات روی {scope_text}\\."
 
-async def handle_select_panel_for_edit(call, params):
-    pass 
+    markup = await admin_menu.edit_user_action_menu(target_id, panel_target)    
+    await _safe_edit(uid, msg_id, result_text, reply_markup=markup, parse_mode="MarkdownV2")
 
 # ==============================================================================
-# 5. تغییر وضعیت (Toggle Status) - اصلاح شده: هوشمند و بدون حذف
+# 5. تغییر وضعیت (Toggle Status) - اصلاح شده: هوشمند و داینامیک
 # ==============================================================================
 
 async def handle_toggle_status(call, params):
     """
-    منوی تغییر وضعیت هوشمند.
-    وضعیت فعلی را چک می‌کند و دکمه معکوس را نشان می‌دهد.
+    منوی تغییر وضعیت هوشمند و داینامیک (دو ردیفه) با اصلاح MarkdownV2.
     """
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت وضعیت فعلی کاربر از دیتابیس
+    # 1. دریافت اطلاعات کاربر از دیتابیس
     uuids = await db.uuids(int(target_id))
     if not uuids:
         await bot.answer_callback_query(call.id, "❌ سرویسی یافت نشد.", show_alert=True)
         return
 
-    # فرض بر این است که وضعیت همه UUIDهای کاربر یکسان است، اولی را چک می‌کنیم
-    is_active = uuids[0]['is_active']
+    uuid_str = str(uuids[0]['uuid'])
     
-    # تعیین متن و اکشن دکمه‌ها بر اساس وضعیت فعلی
-    if is_active:
-        status_text = "🟢 کاربر هم‌اکنون *فعال* است."
-        action_btn_text = "🔴 غیرفعال‌سازی (در همه پنل‌ها)"
-        next_action = "disable"
-    else:
-        status_text = "🔴 کاربر هم‌اکنون *غیرفعال* است."
-        action_btn_text = "🟢 فعال‌سازی (در همه پنل‌ها)"
-        next_action = "enable"
+    # 2. نمایش وضعیت "در حال بارگذاری" (بدون مارک‌داون برای جلوگیری از ارور احتمالی در پیام موقت)
+    await _safe_edit(uid, msg_id, "⏳ در حال استعلام وضعیت از سرورها...", reply_markup=None, parse_mode=None)
+    
+    # 3. دریافت اطلاعات ترکیبی (لایو) از سرورها
+    combined_info = await combined_handler.get_combined_user_info(uuid_str)
+    
+    # 4. تعیین وضعیت کلی در دیتابیس ربات
+    global_is_active = uuids[0]['is_active']
+    status_icon = "🟢" if global_is_active else "🔴"
+    status_text = 'فعال' if global_is_active else 'غیرفعال'
+    
+    # 5. آماده‌سازی متن با رعایت MarkdownV2
+    # نکته: تمام متون فارسی و متغیرها باید اسکیپ شوند
+    header = escape_markdown("مدیریت وضعیت کاربر")
+    db_status_label = escape_markdown("وضعیت کلی در دیتابیس")
+    status_val = escape_markdown(status_text)
+    prompt = escape_markdown("برای تغییر وضعیت، گزینه مورد نظر را انتخاب کنید:")
+    
+    text = (
+        f"⚙️ *{header}*\n\n"
+        f"{status_icon} {db_status_label}: *{status_val}*\n\n"
+        f"👇 {prompt}"
+    )
+    
+    # 6. ساخت دکمه‌ها
+    kb = types.InlineKeyboardMarkup(row_width=2)
 
-    text = f"⚙️ *مدیریت وضعیت کاربر*\n\n{status_text}\n\nآیا می‌خواهید وضعیت را تغییر دهید؟"
+    # دکمه تغییر وضعیت سراسری
+    global_action_text = "🔴 غیرفعال‌سازی سراسری (همه)" if global_is_active else "🟢 فعال‌سازی سراسری (همه)"
+    global_next_action = "disable" if global_is_active else "enable"
+    # پارامتر 'all' نشان‌دهنده تغییر روی تمام پنل‌هاست
+    kb.add(types.InlineKeyboardButton(global_action_text, callback_data=f"admin:tglA:{global_next_action}:{target_id}:all"))
+
+    # دکمه‌های وضعیت تک‌تک پنل‌ها
+    panel_buttons = []
+
+    if combined_info and 'breakdown' in combined_info:
+        active_panels = await db.get_active_panels()
+        panel_map = {p['name']: p for p in active_panels}
+
+        for panel_name, details in combined_info['breakdown'].items():
+            panel_db = panel_map.get(panel_name)
+            if not panel_db: continue
+
+            p_data = details.get('data', {})
+            # بررسی وضعیت در پنل (ممکن است کلیدهای مختلفی داشته باشد)
+            p_is_active = (p_data.get('status') == 'active') or (p_data.get('enable') == True) or (p_data.get('is_active') == True)
+            
+            if p_is_active:
+                btn_text = f"🔴 {panel_name}" # دکمه برای غیرفعال کردن
+                btn_action = "disable"
+            else:
+                btn_text = f"🟢 {panel_name}" # دکمه برای فعال کردن
+                btn_action = "enable"
+            
+            # ارسال ID پنل خاص برای تغییر وضعیت فقط در همان پنل
+            panel_buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:tglA:{btn_action}:{target_id}:{panel_db['id']}"))
+
+    # چینش دکمه‌های پنل (دوتا دوتا)
+    if panel_buttons:
+        kb.add(*panel_buttons)
+
+    # دکمه بازگشت
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(action_btn_text, callback_data=f"admin:tglA:{next_action}:{target_id}"))
-    kb.add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:us:{target_id}"))
-    
-    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
+    # 7. ارسال پیام نهایی (از تابع safe_edit پروژه استفاده می‌شود که پیش‌فرض V2 دارد)
+    await _safe_edit(uid, msg_id, text, reply_markup=kb)
 
 async def handle_toggle_status_action(call, params):
     """
-    اجرای عملیات تغییر وضعیت بدون حذف کاربر.
+    اجرای عملیات تغییر وضعیت (سراسری یا تکی).
     """
-    action, target_id = params[0], params[1]
+    # params: [action, target_id, scope_id]
+    action = params[0]
+    target_id = params[1]
+    # اگر پارامتر سوم وجود نداشت، پیش‌فرض 'all' در نظر گرفته می‌شود (سازگاری با کدهای قبلی)
+    scope = params[2] if len(params) > 2 else 'all' 
+
     uid, msg_id = call.from_user.id, call.message.message_id
     
     uuids = await db.uuids(int(target_id))
@@ -476,22 +607,36 @@ async def handle_toggle_status_action(call, params):
     uuid_str = str(uuids[0]['uuid'])
     uuid_id = uuids[0]['id']
     
-    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات در پنل‌ها...", reply_markup=None)
+    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات...", reply_markup=None)
 
-    # 1. تغییر وضعیت در دیتابیس ربات
-    new_status = (action == 'enable')
-    
-    async with db.get_session() as session:
-        # آپدیت وضعیت در جدول UserUUID
-        stmt = update(UserUUID).where(UserUUID.id == uuid_id).values(is_active=new_status)
-        await session.execute(stmt)
-        await session.commit()
-
-    # 2. ارسال درخواست تغییر وضعیت به پنل‌ها (بدون حذف)
+    new_status_bool = (action == 'enable')
     success_count = 0
-    active_panels = await db.get_active_panels()
-    
-    for p in active_panels:
+    target_panels = []
+
+    # سناریو ۱: تغییر سراسری (Global)
+    if scope == 'all':
+        # آپدیت وضعیت در دیتابیس ربات فقط وقتی سراسری است
+        async with db.get_session() as session:
+            stmt = update(UserUUID).where(UserUUID.id == uuid_id).values(is_active=new_status_bool)
+            await session.execute(stmt)
+            await session.commit()
+        
+        # همه پنل‌های فعال هدف هستند
+        target_panels = await db.get_active_panels()
+
+    # سناریو ۲: تغییر تکی (Specific Panel)
+    else:
+        # پیدا کردن پنل خاص
+        try:
+            panel_id = int(scope)
+            panel = await db.get_panel_by_id(panel_id)
+            if panel:
+                target_panels = [panel]
+        except ValueError:
+            pass
+
+    # اعمال تغییرات روی API پنل‌های هدف
+    for p in target_panels:
         try:
             handler = await PanelFactory.get_panel(p['name'])
             
@@ -501,21 +646,31 @@ async def handle_toggle_status_action(call, params):
                 mapping = await db.get_marzban_username_by_uuid(uuid_str)
                 identifier = mapping if mapping else uuid_str
 
-            # فراخوانی متد اختصاصی برای تغییر وضعیت (نه حذف)
+            # فراخوانی متد تغییر وضعیت
             if await _toggle_panel_user_status(handler, p['panel_type'], identifier, action):
                 success_count += 1
                 
         except Exception as e:
             logger.error(f"Error toggling status on {p['name']}: {e}")
 
-    # 3. نمایش نتیجه
-    if action == 'disable':
-        msg = f"🔴 کاربر غیرفعال شد. (اعمال شده روی {success_count} پنل)"
+    # نمایش نتیجه
+    action_fa = "فعال" if new_status_bool else "غیرفعال"
+    
+    if scope == 'all':
+        msg = f"✅ وضعیت کاربر به *{action_fa}* تغییر کرد (سراسری).\n📊 اعمال شده روی {success_count} سرور."
     else:
-        msg = f"🟢 کاربر مجدداً فعال شد. (اعمال شده روی {success_count} پنل)"
+        # اگر تکی بود، اسم پنل را هم نشان دهیم بهتر است
+        p_name = target_panels[0]['name'] if target_panels else "پنل انتخاب شده"
+        msg = f"✅ کاربر در سرور *{escape_markdown(p_name)}* {action_fa} شد."
 
-    # بازگشت به منوی مدیریت کاربر
-    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.user_interactive_menu(target_id, new_status, 'both'))
+    # بازگشت به منوی تغییر وضعیت (برای دیدن تغییرات جدید)
+    # برای این کار دوباره تابع handle_toggle_status را صدا می‌زنیم تا لیست رفرش شود
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت وضعیت", callback_data=f"admin:us_tgl:{target_id}"))
+    kb.add(types.InlineKeyboardButton("👤 پروفایل کاربر", callback_data=f"admin:us:{target_id}"))
+    
+    await _safe_edit(uid, msg_id, msg, reply_markup=kb, parse_mode="Markdown")
+
 
 async def _toggle_panel_user_status(handler, panel_type, identifier, action):
     """
