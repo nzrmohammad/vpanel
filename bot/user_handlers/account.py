@@ -20,6 +20,15 @@ async def add_account_prompt(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
+    if not hasattr(bot, 'user_states'):
+        bot.user_states = {}
+    
+    bot.user_states[user_id] = {
+        'step': 'waiting_for_uuid',
+        'msg_id': call.message.message_id
+    }
+    # -----------------------------------------------
+
     markup = types.InlineKeyboardMarkup()
     markup.add(user_menu.back_btn("manage", lang))
     

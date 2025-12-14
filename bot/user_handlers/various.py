@@ -102,21 +102,34 @@ async def handle_uuid_login(message: types.Message):
     """Handler for UUID login."""
     user_id = message.from_user.id
     
-    # 🔥 Prevent conflict with admin operations
-    if user_id in ADMIN_IDS:
-        if hasattr(bot, 'context_state') and user_id in bot.context_state:
-            return 
-    
-    # اگر کاربر در حال مکالمه است (مثلا تیکت پشتیبانی)، این هندلر نباید اجرا شود
-    # اما چون هندلر استپ بالاتر تعریف شده، اولویت با آن است.
-    # برای اطمینان بیشتر:
-    if user_id in user_conversations:
-        return
+    # جلوگیری از تداخل با ادمین
+    if user_id in ADMIN_IDS and hasattr(bot, 'context_state') and user_id in bot.context_state:
+        return 
+
+    state = getattr(bot, 'user_states', {}).get(user_id, {})
+    menu_msg_id = state.get('msg_id') if state.get('step') == 'waiting_for_uuid' else None
 
     uuid_str = message.text.strip()
     lang = await db.get_user_language(user_id)
     
-    msg = await bot.send_message(message.chat.id, "⏳ Checking UUID...")
+    try:
+        await bot.delete_message(message.chat.id, message.message_id)
+    except:
+        pass
+
+    wait_text = "⏳ در حال بررسی ..."
+    target_msg_id = None
+
+    if menu_msg_id:
+        try:
+            await bot.edit_message_text(wait_text, message.chat.id, menu_msg_id)
+            target_msg_id = menu_msg_id
+        except:
+            msg = await bot.send_message(message.chat.id, wait_text)
+            target_msg_id = msg.message_id
+    else:
+        msg = await bot.send_message(message.chat.id, wait_text)
+        target_msg_id = msg.message_id
 
     try:
         info = await combined_handler.get_combined_user_info(uuid_str)
@@ -128,18 +141,26 @@ async def handle_uuid_login(message: types.Message):
                 success_text = get_string(result, lang)
                 is_admin = user_id in ADMIN_IDS
                 markup = await user_menu.main(is_admin, lang)
-                await bot.delete_message(message.chat.id, msg.message_id)
-                await bot.send_message(message.chat.id, f"✅ {success_text}", reply_markup=markup)
+                
+                await bot.edit_message_text(
+                    f"✅ {success_text}", 
+                    message.chat.id, 
+                    target_msg_id, 
+                    reply_markup=markup
+                )
+                
+                if hasattr(bot, 'user_states') and user_id in bot.user_states:
+                    del bot.user_states[user_id]
+                    
             elif result == "db_err_uuid_already_active_self":
-                await bot.edit_message_text(get_string(result, lang), message.chat.id, msg.message_id)
+                await bot.edit_message_text(get_string(result, lang), message.chat.id, target_msg_id)
             else:
-                await bot.edit_message_text("❌ This UUID is already registered.", message.chat.id, msg.message_id)
+                await bot.edit_message_text("❌ This UUID is already registered.", message.chat.id, target_msg_id)
         else:
-            await bot.edit_message_text(get_string("uuid_not_found", lang), message.chat.id, msg.message_id)
+            await bot.edit_message_text(get_string("uuid_not_found", lang), message.chat.id, target_msg_id)
     except Exception as e:
         logger.error(f"UUID Login Error: {e}")
-        await bot.edit_message_text("❌ An error occurred.", message.chat.id, msg.message_id)
-
+        await bot.edit_message_text("❌ An error occurred.", message.chat.id, target_msg_id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 async def back_to_main_menu_handler(call: types.CallbackQuery):
