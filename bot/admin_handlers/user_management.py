@@ -48,7 +48,8 @@ async def handle_global_search_convo(call, params):
         'next_handler': process_search_input
     }
     
-    text = "🔎 لطفاً **نام**، **نام کاربری** یا بخشی از **UUID** کاربر را ارسال کنید:"
+    # اصلاح: استفاده از Raw String (r)
+    text = r"🔎 لطفاً *نام*، *نام کاربری* یا بخشی از *UUID* کاربر را ارسال کنید:"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
 async def handle_search_by_telegram_id_convo(call, params):
@@ -61,7 +62,8 @@ async def handle_search_by_telegram_id_convo(call, params):
         'next_handler': process_search_input
     }
     
-    text = "🆔 لطفاً **آیدی عددی تلگرام** (User ID) کاربر را ارسال کنید:"
+    # ✅ اصلاح: دوبل کردن بک‌اسلش برای رفع وارنینگ
+    text = "🆔 لطفاً *آیدی عددی تلگرام* \\(User ID\\) کاربر را ارسال کنید:"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
 async def process_search_input(message: types.Message):
@@ -83,7 +85,6 @@ async def process_search_input(message: types.Message):
                 return
             stmt = stmt.where(User.user_id == int(query))
         else:
-            # جستجوی ترکیبی (نام، یوزرنیم، UUID)
             stmt = stmt.outerjoin(UserUUID).where(
                 or_(
                     User.username.ilike(f"%{query}%"),
@@ -98,22 +99,24 @@ async def process_search_input(message: types.Message):
         users = result.scalars().all()
 
     if not users:
-        await _safe_edit(uid, msg_id, f"❌ کاربری با مشخصات «{query}» یافت نشد.", reply_markup=await admin_menu.search_menu())
+        safe_query = escape_markdown(query)
+        # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
+        await _safe_edit(uid, msg_id, f"❌ کاربری با مشخصات «{safe_query}» یافت نشد\\.", reply_markup=await admin_menu.search_menu())
         return
     
     if len(users) == 1:
-        # اگر یک نفر پیدا شد، مستقیم به پروفایلش برو
         await show_user_summary(uid, msg_id, users[0].user_id)
     else:
-        # نمایش لیست نتایج (محدود به ۱۰ مورد)
-        text = f"🔍 نتایج جستجو برای `{query}` ({len(users)} مورد):"
+        safe_query = escape_markdown(query)
+        # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
+        text = f"🔍 نتایج جستجو برای `{safe_query}` \\({len(users)} مورد\\):"
         kb = types.InlineKeyboardMarkup(row_width=1)
         for u in users[:10]:
             display = f"{u.first_name or 'NoName'} (@{u.username or 'NoUser'})"
-            kb.add(types.InlineKeyboardButton(display, callback_data=f"admin:us:{u.user_id}:s")) # s for search context
+            kb.add(types.InlineKeyboardButton(display, callback_data=f"admin:us:{u.user_id}:s"))
         
         kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:search_menu"))
-        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
+        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_purge_user_convo(call, params):
     """شروع پروسه حذف کامل (Purge) با آیدی"""
@@ -124,7 +127,8 @@ async def handle_purge_user_convo(call, params):
         'timestamp': time.time(),
         'next_handler': process_purge_user
     }
-    await _safe_edit(uid, msg_id, "🔥 برای **پاکسازی کامل** (حذف از دیتابیس)، آیدی عددی کاربر را بفرستید:", 
+    # ✅ اصلاح: دوبل کردن بک‌اسلش
+    await _safe_edit(uid, msg_id, "🔥 برای *پاکسازی کامل* \\(حذف از دیتابیس\\)، آیدی عددی کاربر را بفرستید:", 
                      reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
 async def process_purge_user(message: types.Message):
@@ -138,7 +142,6 @@ async def process_purge_user(message: types.Message):
         return
         
     target_id = int(text)
-    # حذف از دیتابیس
     success = await db.purge_user_by_telegram_id(target_id)
     if success:
         await _safe_edit(uid, msg_id, f"✅ کاربر {target_id} با موفقیت کامل پاکسازی شد.", reply_markup=await admin_menu.search_menu())
@@ -150,8 +153,6 @@ async def process_purge_user(message: types.Message):
 # ==============================================================================
 
 async def handle_show_user_summary(call, params):
-    """هندلر کال‌بک نمایش پروفایل کاربر"""
-    # params: [target_id, context_suffix] (optional)
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -159,26 +160,22 @@ async def handle_show_user_summary(call, params):
     if str(target_id).isdigit():
         real_user_id = int(target_id)
     else:
-        # اگر UUID بود
         real_user_id = await db.get_user_id_by_uuid(target_id)
     
     if not real_user_id:
         await bot.answer_callback_query(call.id, "❌ کاربر یافت نشد.")
         return
 
-    # context برای دکمه بازگشت (مثلاً بازگشت به جستجو یا لیست)
     context = params[1] if len(params) > 1 else None
     await show_user_summary(uid, msg_id, real_user_id, context)
 
 async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
-    """تابع اصلی نمایش اطلاعات کاربر"""
     async with db.get_session() as session:
         user = await session.get(User, target_user_id)
         if not user:
             await _safe_edit(admin_id, msg_id, "❌ کاربر در دیتابیس یافت نشد.", reply_markup=await admin_menu.main())
             return
             
-        # دریافت اکانت‌های فعال
         uuids = await db.uuids(target_user_id)
         active_uuids = [u for u in uuids if u['is_active']]
         
@@ -186,7 +183,6 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
         total_limit = 0
         
         if active_uuids:
-            # دریافت اطلاعات لایو از پنل‌ها
             main_uuid = active_uuids[0]['uuid']
             info = await combined_handler.get_combined_user_info(str(main_uuid))
             if info:
@@ -194,10 +190,11 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
                 total_limit = info.get('usage_limit_GB', 0)
 
     status_emoji = "🟢" if active_uuids else "🔴"
-    note = f"\n📝 یادداشت: {user.admin_note}" if user.admin_note else ""
+    note = f"\n📝 یادداشت: {escape_markdown(user.admin_note)}" if user.admin_note else ""
     
+    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
     text = (
-        f"👤 **پروفایل کاربر**\n"
+        f"👤 *پروفایل کاربر*\n"
         f"➖➖➖➖➖➖➖➖\n"
         f"🆔 شناسه: `{user.user_id}`\n"
         f"📛 نام: {escape_markdown(user.first_name or 'نامشخص')}\n"
@@ -205,30 +202,24 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
         f"💰 کیف پول: `{int(user.wallet_balance or 0):,}` تومان\n"
         f"🎫 سرویس‌های فعال: {len(active_uuids)}\n"
         f"{status_emoji} وضعیت کلی: {'فعال' if active_uuids else 'غیرفعال'}\n"
-        f"📊 مصرف کل (تخمینی): `{total_usage:.2f}` / `{total_limit:.0f}` GB\n"
+        f"📊 مصرف کل \\(تخمینی\\): `{total_usage:.2f}` / `{total_limit:.0f}` GB\n"
         f"{note}"
     )
     
-    # تعیین دکمه بازگشت بر اساس کانتکست
     back_cb = "admin:search_menu" if context == 's' else "admin:management_menu"
-    
-    # استفاده از پنل پیش‌فرض برای دکمه‌ها
     panel_type = 'hiddify' 
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
-    await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="Markdown")
+    await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
 
 # ==============================================================================
 # 3. افزودن کاربر جدید (Add User Flow)
 # ==============================================================================
 
 async def handle_add_user_start(call: types.CallbackQuery, params: list):
-    """شروع پروسه افزودن کاربر: انتخاب پنل"""
-    # params[0] = panel_type (hiddify/marzban)
     panel_type = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت پنل‌های فعال این نوع
     async with db.get_session() as session:
         stmt = select(Panel).where(and_(Panel.panel_type == panel_type, Panel.is_active == True))
         result = await session.execute(stmt)
@@ -238,17 +229,15 @@ async def handle_add_user_start(call: types.CallbackQuery, params: list):
         await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی از این نوع یافت نشد.", show_alert=True)
         return
 
-    # ساخت منوی انتخاب پنل
     kb = types.InlineKeyboardMarkup(row_width=1)
     for p in panels:
         kb.add(types.InlineKeyboardButton(f"سرور: {p.name}", callback_data=f"admin:add_user_select_panel:{p.name}"))
     
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:management_menu"))
     
-    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb)
+    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb, parse_mode="Markdown")
 
 async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
-    """انتخاب پنل و پرسیدن نام"""
     panel_name = params[0]
     uid = call.from_user.id
     msg_id = call.message.message_id
@@ -258,12 +247,12 @@ async def handle_add_user_select_panel_callback(call: types.CallbackQuery, param
         'step': 'get_name',
         'data': {'panel_name': panel_name},
         'msg_id': msg_id,
-        'timestamp': time.time(),  # ✅ اضافه شد
+        'timestamp': time.time(),
         'next_handler': get_new_user_name
     }
     
     await _safe_edit(uid, msg_id, 
-                     f"👤 سرور انتخاب شد: **{panel_name}**\n\nلطفاً **نام کاربر** را وارد کنید:", 
+                     f"👤 سرور انتخاب شد: *{escape_markdown(panel_name)}*\n\nلطفاً *نام کاربر* را وارد کنید:", 
                      reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_name(message: types.Message):
@@ -276,8 +265,9 @@ async def get_new_user_name(message: types.Message):
     admin_conversations[uid]['next_handler'] = get_new_user_limit
     msg_id = admin_conversations[uid]['msg_id']
     
+    # ✅ اصلاح: دوبل کردن بک‌اسلش
     await _safe_edit(uid, msg_id, 
-                     "📦 لطفاً **حجم محدودیت (GB)** را وارد کنید (عدد):", 
+                     "📦 لطفاً *حجم محدودیت \\(GB\\)* را وارد کنید \\(عدد\\):", 
                      reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_limit(message: types.Message):
@@ -291,12 +281,14 @@ async def get_new_user_limit(message: types.Message):
         admin_conversations[uid]['next_handler'] = get_new_user_days
         msg_id = admin_conversations[uid]['msg_id']
         
+        # ✅ اصلاح: دوبل کردن بک‌اسلش
         await _safe_edit(uid, msg_id, 
-                         "📅 لطفاً **تعداد روز اعتبار** را وارد کنید (عدد):", 
+                         "📅 لطفاً *تعداد روز اعتبار* را وارد کنید \\(عدد\\):", 
                          reply_markup=await admin_menu.cancel_action())
     except ValueError:
         msg_id = admin_conversations[uid]['msg_id']
-        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم (GB):", reply_markup=await admin_menu.cancel_action())
+        # ✅ اصلاح: دوبل کردن بک‌اسلش
+        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم \\(GB\\):", reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_days(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -306,7 +298,7 @@ async def get_new_user_days(message: types.Message):
     try:
         days = int(text)
         data = admin_conversations.pop(uid)['data']
-        msg_id = admin_conversations[uid]['msg_id'] # ممکن است با pop پاک شده باشد، اما در متغیر لوکال هست
+        msg_id = admin_conversations[uid]['msg_id'] 
         
         await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر در پنل...", reply_markup=None)
         
@@ -314,27 +306,25 @@ async def get_new_user_days(message: types.Message):
         name = data['name']
         limit = data['limit']
         
-        # استفاده از فکتوری برای گرفتن هندلر پنل
         panel_api = await PanelFactory.get_panel(panel_name)
-        
-        # فراخوانی متد ساخت کاربر
         new_user = await panel_api.add_user(name, limit, days)
         
         if new_user:
             identifier = new_user.get('uuid') or name 
             
+            # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
             res_text = (
-                f"✅ کاربر با موفقیت ساخته شد!\n\n"
-                f"👤 نام: `{name}`\n"
+                f"✅ کاربر با موفقیت ساخته شد\\!\n\n"
+                f"👤 نام: `{escape_markdown(name)}`\n"
                 f"📦 حجم: `{limit} GB`\n"
                 f"📅 مدت: `{days} روز`\n"
-                f"🔑 شناسه: `{identifier}`"
+                f"🔑 شناسه: `{escape_markdown(str(identifier))}`"
             )
             
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت", callback_data=f"admin:management_menu"))
             
-            await _safe_edit(uid, msg_id, res_text, reply_markup=kb)
+            await _safe_edit(uid, msg_id, res_text, reply_markup=kb, parse_mode="MarkdownV2")
             
         else:
             await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر در پنل. لطفاً لاگ را بررسی کنید.", reply_markup=await admin_menu.main())
@@ -354,18 +344,14 @@ async def get_new_user_days(message: types.Message):
 # ==============================================================================
 
 async def handle_edit_user_menu(call, params):
-    """منوی انتخاب نوع ویرایش (حجم یا زمان)"""
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
     markup = await admin_menu.edit_user_menu(target_id, 'both') 
     await _safe_edit(uid, msg_id, "🔧 چه تغییری می‌خواهید اعمال کنید؟", reply_markup=markup)
 
 async def handle_ask_edit_value(call, params):
-    """پرسیدن مقدار عددی برای افزایش حجم یا روز"""
     action, scope, target_id = params[0], params[1], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
     action_name = "حجم (GB)" if "gb" in action else "زمان (روز)"
     
     admin_conversations[uid] = {
@@ -374,11 +360,12 @@ async def handle_ask_edit_value(call, params):
         'action': action,
         'scope': scope,
         'target_id': target_id,
-        'timestamp': time.time(),  # ✅ اضافه شد
+        'timestamp': time.time(),
         'next_handler': process_edit_value
     }
     
-    text = f"🔢 لطفاً مقدار **{action_name}** را که می‌خواهید **اضافه** کنید وارد نمایید (عدد مثبت برای افزودن، منفی برای کسر):"
+    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
+    text = f"🔢 لطفاً مقدار *{action_name}* را که می‌خواهید *اضافه* کنید وارد نمایید \\(عدد مثبت برای افزودن، منفی برای کسر\\):"
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
 
 async def process_edit_value(message: types.Message):
@@ -399,14 +386,12 @@ async def process_edit_value(message: types.Message):
 
     await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات روی پنل‌ها...", reply_markup=None)
     
-    # پیدا کردن UUID های کاربر
     uuids = await db.uuids(int(target_id))
     if not uuids:
         await _safe_edit(uid, msg_id, "❌ کاربر سرویس فعالی ندارد.", reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
         return
         
     main_uuid_str = str(uuids[0]['uuid'])
-    
     add_gb = value if 'gb' in action else 0
     add_days = int(value) if 'days' in action else 0
     
@@ -486,8 +471,9 @@ async def handle_payment_history(call, params):
     if not history:
         await _safe_edit(uid, msg_id, "📜 هیچ سابقه‌ای یافت نشد.", reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
         return
-        
-    text = f"📜 **تاریخچه تمدیدها** ({len(history)} مورد):\n\n"
+    
+    # ✅ اصلاح: دوبل کردن بک‌اسلش
+    text = f"📜 *تاریخچه تمدیدها* \\({len(history)} مورد\\):\n\n"
     for item in history:
         date_str = item['payment_date'].strftime("%Y-%m-%d %H:%M")
         text += f"📅 {date_str}\n"
@@ -496,7 +482,7 @@ async def handle_payment_history(call, params):
     kb.add(types.InlineKeyboardButton("🗑 پاکسازی تاریخچه", callback_data=f"admin:reset_phist:{uuids[0]['id']}:{target_id}"))
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     
-    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
+    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_log_payment(call, params):
     target_id = int(params[0])
@@ -659,9 +645,10 @@ async def process_save_note(message: types.Message):
 async def handle_delete_user_confirm(call, params):
     target_id = params[0]
     markup = await admin_menu.confirm_delete(target_id, 'both')
+    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
     await _safe_edit(call.from_user.id, call.message.message_id, 
-                     f"⚠️ **هشدار:** حذف کاربر `{target_id}` باعث حذف تمام سوابق و قطع دسترسی او می‌شود.\nآیا مطمئن هستید؟",
-                     reply_markup=markup, parse_mode="Markdown")
+                     f"⚠️ *هشدار:* حذف کاربر `{target_id}` باعث حذف تمام سوابق و قطع دسترسی او می‌شود\\.\nآیا مطمئن هستید؟",
+                     reply_markup=markup, parse_mode="MarkdownV2")
 
 async def handle_delete_user_action(call, params):
     decision, target_id = params[0], params[2]
@@ -675,7 +662,9 @@ async def handle_delete_user_action(call, params):
     if uuids:
         await combined_handler.delete_user_from_all_panels(str(uuids[0]['uuid']))
     await db.purge_user_by_telegram_id(int(target_id))
-    await _safe_edit(uid, msg_id, "✅ کاربر حذف شد.", reply_markup=await admin_menu.management_menu([])) # Pass empty list or fetch panels
+    
+    panels = await db.get_active_panels()
+    await _safe_edit(uid, msg_id, "✅ کاربر حذف شد.", reply_markup=await admin_menu.management_menu(panels))
 
 async def handle_delete_devices_confirm(call, params):
     target_id = params[0]

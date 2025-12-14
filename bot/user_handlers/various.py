@@ -28,11 +28,46 @@ logger = logging.getLogger(__name__)
 user_conversations = {}
 
 # =============================================================================
+# 0. Global Step Handler (جایگزین register_next_step_handler)
+# =============================================================================
+
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice'], func=lambda m: m.from_user.id in user_conversations)
+async def conversation_step_handler(message: types.Message):
+    """مدیریت مراحل مکالمه برای کاربرانی که در user_conversations هستند."""
+    uid = message.from_user.id
+    
+    # اگر کاربر دستور لغو یا استارت فرستاد، استیت را پاک کن
+    if message.text and (message.text == '/start' or message.text == '/cancel'):
+        if uid in user_conversations:
+            del user_conversations[uid]
+        # اجازه بده هندلرهای اصلی اجرا شوند (با return نکردن یا فراخوانی مجدد)
+        # اما چون اینجا هندلر است، بهتر است همینجا پردازش استارت را انجام دهیم یا کاربر دوباره بزند
+        if message.text == '/start':
+            await start_command(message)
+        return
+
+    if uid in user_conversations:
+        step_data = user_conversations.pop(uid) # حذف استیت (یکبار مصرف)
+        handler = step_data.get('handler')
+        kwargs = step_data.get('kwargs', {})
+        
+        if handler:
+            try:
+                await handler(message, **kwargs)
+            except Exception as e:
+                logger.error(f"Error in step handler: {e}")
+                await bot.send_message(uid, "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+# =============================================================================
 # 1. Start Command & Main Menus
 # =============================================================================
 
 @bot.message_handler(commands=['start'])
 async def start_command(message: types.Message):
+    # پاک کردن استیت‌های قبلی اگر وجود داشته باشد
+    if message.from_user.id in user_conversations:
+        del user_conversations[message.from_user.id]
+
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -68,11 +103,15 @@ async def handle_uuid_login(message: types.Message):
     user_id = message.from_user.id
     
     # 🔥 Prevent conflict with admin operations
-    # If user is admin and is in an active state in context_state, skip this handler
     if user_id in ADMIN_IDS:
         if hasattr(bot, 'context_state') and user_id in bot.context_state:
-            # Allow Global Step Handler in Admin Router to process it
             return 
+    
+    # اگر کاربر در حال مکالمه است (مثلا تیکت پشتیبانی)، این هندلر نباید اجرا شود
+    # اما چون هندلر استپ بالاتر تعریف شده، اولویت با آن است.
+    # برای اطمینان بیشتر:
+    if user_id in user_conversations:
+        return
 
     uuid_str = message.text.strip()
     lang = await db.get_user_language(user_id)
@@ -105,6 +144,8 @@ async def handle_uuid_login(message: types.Message):
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 async def back_to_main_menu_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
+    if user_id in user_conversations: del user_conversations[user_id] # لغو هر عملیاتی
+
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
     
@@ -120,7 +161,6 @@ async def back_to_main_menu_handler(call: types.CallbackQuery):
 @bot.callback_query_handler(func=lambda call: call.data == "daily_checkin")
 async def daily_checkin_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
-    
     result = await db.claim_daily_checkin(user_id)
     
     if result['status'] == 'success':
@@ -232,7 +272,7 @@ async def referral_info_handler(call: types.CallbackQuery):
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 # =============================================================================
-# 4. Support System
+# 4. Support System (Fixed)
 # =============================================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "support:new")
@@ -250,8 +290,11 @@ async def handle_support_request(call: types.CallbackQuery):
     kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
     
-    # ثبت مرحله بعدی برای دریافت پیام کاربر
-    bot.register_next_step_handler(call.message, get_support_ticket_message, original_msg_id=msg_id)
+    # ✅ FIX: Use manual state dictionary instead of register_next_step_handler
+    user_conversations[uid] = {
+        'handler': get_support_ticket_message,
+        'kwargs': {'original_msg_id': msg_id}
+    }
 
 async def get_support_ticket_message(message: types.Message, original_msg_id: int):
     uid = message.from_user.id
@@ -314,6 +357,7 @@ async def get_support_ticket_message(message: types.Message, original_msg_id: in
     except Exception as e:
         logger.error(f"Support Error: {e}")
         await _safe_edit(uid, original_msg_id, "❌ خطا در ارسال پیام.", reply_markup=None)
+
 # =============================================================================
 # 5. Tutorials
 # =============================================================================
@@ -361,7 +405,7 @@ async def send_tutorial_link(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id, "Link not found.", show_alert=True)
 
 # =============================================================================
-# 6. Birthday Gift
+# 6. Birthday Gift (Fixed)
 # =============================================================================
 
 def _fmt_birthday_info(user_data, lang_code):
@@ -386,7 +430,12 @@ async def handle_birthday_gift_request(call: types.CallbackQuery):
         prompt = escape_markdown(raw_text).replace("YYYY/MM/DD", "`YYYY/MM/DD`")
         kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
         await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
-        bot.register_next_step_handler(call.message, get_birthday_step, original_msg_id=msg_id)
+        
+        # ✅ FIX: Use manual state dictionary
+        user_conversations[uid] = {
+            'handler': get_birthday_step,
+            'kwargs': {'original_msg_id': msg_id}
+        }
 
 async def get_birthday_step(message: types.Message, original_msg_id: int):
     uid, text = message.from_user.id, message.text.strip()
@@ -406,7 +455,12 @@ async def get_birthday_step(message: types.Message, original_msg_id: int):
     except ValueError:
         error = escape_markdown(get_string("birthday_invalid_format", lang_code))
         await _safe_edit(uid, original_msg_id, error, parse_mode="MarkdownV2")
-        bot.register_next_step_handler(message, get_birthday_step, original_msg_id=original_msg_id)
+        
+        # در صورت خطا، دوباره منتظر ورودی بمان
+        user_conversations[uid] = {
+            'handler': get_birthday_step,
+            'kwargs': {'original_msg_id': original_msg_id}
+        }
 
 # =============================================================================
 # 7. Achievements (Badges)
@@ -615,6 +669,7 @@ async def shop_execute_handler(call: types.CallbackQuery):
 async def connection_doctor_handler(call: types.CallbackQuery):
     uid = call.from_user.id
     
+    # 0. نمایش پیام انتظار
     await _safe_edit(uid, call.message.message_id, "🩺 ...", reply_markup=None)
     
     # 1. بررسی وضعیت اکانت کاربر
@@ -692,7 +747,7 @@ async def connection_doctor_handler(call: types.CallbackQuery):
             server_word = escape_markdown("سرور")
             load_analysis_lines.append(f" {status_icon} {server_word} {cat_name} {cat_emoji}: {safe_label}")
     else:
-        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست"))
+        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست."))
 
     # 4. ساخت پیام نهایی با هدر و فوتر
     acc_status = escape_markdown("فعال" if is_user_active else "غیرفعال")
@@ -715,11 +770,10 @@ async def connection_doctor_handler(call: types.CallbackQuery):
     msg_lines.append(separator)
     msg_lines.append(escape_markdown("💡 پیشنهاد:"))
     
-    # ✅ متن پیشنهاد که حاوی نقطه است باید کامل اسکیپ شود
     suggestion_text = (
         "اگر اکانت و سرورها فعال هستند اما همچنان با کندی مواجه‌اید، "
-        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید "  # نقطه حذف شد
-        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید"  # نقطه حذف شد
+        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید. "
+        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید."
     )
     msg_lines.append(escape_markdown(suggestion_text))
     
@@ -727,7 +781,6 @@ async def connection_doctor_handler(call: types.CallbackQuery):
     
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
     
-    # ارسال نهایی
     await _safe_edit(uid, call.message.message_id, final_text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
