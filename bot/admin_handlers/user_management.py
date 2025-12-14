@@ -12,7 +12,7 @@ from bot.bot_instance import bot
 from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, Panel
-from bot.utils import _safe_edit, escape_markdown
+from bot.utils import _safe_edit, escape_markdown, to_shamsi
 from bot import combined_handler
 from bot.services.panels import PanelFactory
 from bot.formatters import user_formatter
@@ -100,16 +100,14 @@ async def process_search_input(message: types.Message):
 
     if not users:
         safe_query = escape_markdown(query)
-        # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
-        await _safe_edit(uid, msg_id, f"❌ کاربری با مشخصات «{safe_query}» یافت نشد\\.", reply_markup=await admin_menu.search_menu())
+        await _safe_edit(uid, msg_id, rf"❌ کاربری با مشخصات «{safe_query}» یافت نشد\.", reply_markup=await admin_menu.search_menu())
         return
     
     if len(users) == 1:
         await show_user_summary(uid, msg_id, users[0].user_id)
     else:
         safe_query = escape_markdown(query)
-        # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
-        text = f"🔍 نتایج جستجو برای `{safe_query}` \\({len(users)} مورد\\):"
+        text = rf"🔍 نتایج جستجو برای `{safe_query}` \({len(users)} مورد\):"
         kb = types.InlineKeyboardMarkup(row_width=1)
         for u in users[:10]:
             display = f"{u.first_name or 'NoName'} (@{u.username or 'NoUser'})"
@@ -127,9 +125,8 @@ async def handle_purge_user_convo(call, params):
         'timestamp': time.time(),
         'next_handler': process_purge_user
     }
-    # ✅ اصلاح: دوبل کردن بک‌اسلش
-    await _safe_edit(uid, msg_id, "🔥 برای *پاکسازی کامل* \\(حذف از دیتابیس\\)، آیدی عددی کاربر را بفرستید:", 
-                     reply_markup=await admin_menu.cancel_action("admin:search_menu"))
+    text = r"🔥 برای *پاکسازی کامل* \(حذف از دیتابیس\)، آیدی عددی کاربر را بفرستید:"
+    await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action("admin:search_menu"))
 
 async def process_purge_user(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -169,60 +166,63 @@ async def handle_show_user_summary(call, params):
     context = params[1] if len(params) > 1 else None
     await show_user_summary(uid, msg_id, real_user_id, context)
 
-async def show_user_summary(admin_id, msg_id, target_user_id, context=None):
-    """نمایش پروفایل دقیق کاربر (مشابه پنل کاربری + اطلاعات ادمین)"""
+
+async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extra_message=None):
     async with db.get_session() as session:
         user = await session.get(User, target_user_id)
         if not user:
-            await _safe_edit(admin_id, msg_id, "❌ کاربر در دیتابیس یافت نشد.", reply_markup=await admin_menu.main())
+            await _safe_edit(admin_id, msg_id, escape_markdown("❌ کاربر در دیتابیس یافت نشد."), reply_markup=await admin_menu.main(), parse_mode="MarkdownV2")
             return
             
         uuids = await db.uuids(target_user_id)
         active_uuids = [u for u in uuids if u['is_active']]
         
+        safe_name = escape_markdown(user.first_name or 'Unknown')
+        
         if active_uuids:
-            # دریافت اطلاعات کامل برای فرمت‌دهی
             main_uuid = active_uuids[0]['uuid']
             info = await combined_handler.get_combined_user_info(str(main_uuid))
             
             if info:
                 info['db_id'] = active_uuids[0]['id']
-                # دریافت تعداد پرداخت‌ها
                 history = await db.get_user_payment_history(active_uuids[0]['id'])
                 payment_count = len(history)
                 
-                # تولید متن پایه با فرمتر
                 formatted_body = await user_formatter.profile_info(info, 'fa')
-                
-                # ✅ تغییر خط اول (هدر) برای افزودن تعداد پرداخت
                 lines = formatted_body.split('\n')
-                # خط اول معمولاً: 👤 نام : Name (✅ فعال)
-                # آن را بازنویسی می‌کنیم:
-                status_emoji = "✅" if info.get('is_active') else "❌"
-                status_text = "فعال" if info.get('is_active') else "غیرفعال"
-                new_header = f"👤 نام : {escape_markdown(user.first_name or 'Unknown')}  ({status_emoji} {status_text} \| {payment_count} پرداخت)"
+                
+                is_active = info.get('is_active')
+                status_emoji = "✅" if is_active else "❌"
+                status_text = "فعال" if is_active else "غیرفعال"
+                
+                new_header = f"👤 نام : {safe_name} \({status_emoji} {status_text} \| {payment_count} پرداخت\)"
                 lines[0] = f"*{new_header}*"
                 
-                admin_info = []
+                admin_lines = ["──────────────────"]
+                
                 if user.admin_note:
-                    admin_info.append(f"\n📝 یادداشت: {escape_markdown(user.admin_note)}")
+                    safe_note = escape_markdown(user.admin_note)
+                    admin_lines.append(f"📝 یادداشت: {safe_note}")
                 
-                admin_info.append(f"\n🆔 آیدی عددی: `{target_user_id}`")
-                admin_info.append(f"💰 کیف پول: `{int(user.wallet_balance or 0):,}`")
+                admin_lines.append(f"🆔 آیدی عددی: `{target_user_id}`")
+                wallet_balance = int(user.wallet_balance or 0)
+                admin_lines.append(f"💰 کیف پول: `{wallet_balance:,}` تومان")
                 
-                text = "\n".join(lines) + "".join(admin_info)
+                text = "\n".join(lines) + "\n" + "\n".join(admin_lines)
             else:
-                text = "❌ خطا در دریافت اطلاعات از سرور."
+                text = escape_markdown("❌ خطا در دریافت اطلاعات از سرور.")
         else:
-            text = f"👤 کاربر: {escape_markdown(user.first_name or '')}\n🔴 وضعیت: غیرفعال (بدون سرویس فعال)\n🆔 `{target_user_id}`"
+            text = f"👤 کاربر: {safe_name}\n🔴 وضعیت: غیرفعال \(بدون سرویس فعال\)\n🆔 `{target_user_id}`"
+
+    if extra_message:
+        text += f"\n\n{extra_message}"
 
     back_cb = "admin:search_menu" if context == 's' else "admin:management_menu"
-    # پنل تایپ را پیش‌فرض hiddify می‌گیریم یا از دیتابیس می‌خوانیم (برای دکمه‌ها)
-    panel_type = 'hiddify' 
+    panel_type = 'hiddify'
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
-# ==============================================================================
+
 # 3. افزودن کاربر جدید (Add User Flow)
 # ==============================================================================
 
@@ -467,32 +467,49 @@ async def handle_toggle_status_action(call, params):
 # ==============================================================================
 
 async def handle_payment_history(call, params):
-    """نمایش تاریخچه پرداخت"""
     target_id = int(params[0])
+    page = int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    uuids = await db.uuids(target_id)
-    if not uuids:
-        await bot.answer_callback_query(call.id, "بدون سرویس.")
-        return
-        
-    history = await db.get_user_payment_history(uuids[0]['id'])
+    user_info = await db.user(target_id)
+    user_name = user_info.get('first_name', str(target_id)) if user_info else str(target_id)
+
+    history = await db.get_wallet_history(target_id, limit=20)
     
     if not history:
-        await _safe_edit(uid, msg_id, "📜 هیچ سابقه‌ای یافت نشد.", reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+        await _safe_edit(uid, msg_id, "📜 هیچ تراکنشی یافت نشد.", reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
         return
     
-    text = f"📜 *تاریخچه تمدیدها* \\({len(history)} مورد\\):\n\n"
-    for item in history:
-        dt_str = item['payment_date'].strftime("%Y-%m-%d %H:%M")
-        dt_safe = dt_str.replace("-", "\\-").replace(":", "\\:")
-        text += f"📅 {dt_safe}\n"
+    lines = [f"📜 <b>تاریخچه تراکنش‌های {escape_markdown(user_name)}</b>", "──────────────────"]
+    
+    for t in history:
+        amount = t.get('amount', 0)
+        desc = t.get('description') or t.get('type', '')
+        
+        dt_str = to_shamsi(t.get('transaction_date'), include_time=True)
+        
+        if amount > 0:
+            icon = "➕"
+            amt_str = f"{int(amount):,} تومان"
+        else:
+            icon = "➖"
+            amt_str = f"{int(abs(amount)):,} تومان"
+            
+        block = (
+            f"{icon} {amt_str}\n"
+            f" {desc}\n"
+            f" {dt_str}"
+        )
+        lines.append(block)
+        lines.append("──────────────────")
+        
+    final_text = "\n".join(lines)
         
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🗑 پاکسازی تاریخچه", callback_data=f"admin:reset_phist:{uuids[0]['id']}:{target_id}"))
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     
-    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
+    await _safe_edit(uid, msg_id, final_text, reply_markup=kb, parse_mode="HTML")
+
 
 async def handle_log_payment(call, params):
     """ثبت دستی پرداخت"""
@@ -636,38 +653,48 @@ async def handle_send_disconnection_warning(call, params):
         await bot.answer_callback_query(call.id, "❌ خطا.", show_alert=True)
 
 async def handle_ask_for_note(call, params):
-    """دریافت یادداشت از ادمین"""
     target_id = params[0]
+    context_code = params[1] if len(params) > 1 else None
+    
     uid, msg_id = call.from_user.id, call.message.message_id
+    
     admin_conversations[uid] = {
         'step': 'save_note', 
         'msg_id': msg_id, 
         'target_id': int(target_id),
+        'context': context_code,
         'timestamp': time.time(),
         'next_handler': process_save_note
     }
     
-    text = "📝 یادداشت خود را بنویسید \\(برای حذف، 'پاک' بفرستید\\):"
-    await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
+    prompt = r"📝 یادداشت خود را بنویسید \(برای حذف، *پاک* بفرستید\):"
+    
+    await _safe_edit(uid, msg_id, prompt,
+                     reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}:{context_code}"),
+                     parse_mode="MarkdownV2")
+
 
 async def process_save_note(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
+    
     if uid not in admin_conversations: return
     data = admin_conversations.pop(uid)
+    
     target_id = data['target_id']
     msg_id = data['msg_id']
+    context_code = data.get('context')
     
     note_val = None if text == 'پاک' else text
     await db.update_user_note(target_id, note_val)
     
-    await _safe_edit(uid, msg_id, "✅ یادداشت ذخیره شد.", 
-                     reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+    status_msg = r"🗑 *یادداشت حذف شد\.*" if text == 'پاک' else r"✅ *یادداشت ذخیره شد\.*"
+    
+    await show_user_summary(uid, msg_id, target_id, context=context_code, extra_message=status_msg)
 
 async def handle_delete_user_confirm(call, params):
     target_id = params[0]
     markup = await admin_menu.confirm_delete(target_id, 'both')
-    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
     await _safe_edit(call.from_user.id, call.message.message_id, 
                      f"⚠️ *هشدار:* حذف کاربر `{target_id}` باعث حذف تمام سوابق و قطع دسترسی او می‌شود\\.\nآیا مطمئن هستید؟",
                      reply_markup=markup, parse_mode="MarkdownV2")

@@ -195,38 +195,32 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def user_interactive_menu(self, identifier: str, is_active: bool, panel_type: str, back_callback: str = None) -> types.InlineKeyboardMarkup:
-        """منوی مدیریت تکی کاربر"""
+        """منوی مدیریت تکی کاربر با حفظ کانتکست (سرچ/مدیریت)"""
         kb = self.create_markup(row_width=2)
         base = f"{identifier}"
-        # اگر از سرچ آمده باشد، دکمه بازگشت به سرچ می‌رود
-        context = ":s" if back_callback and "search" in back_callback else ""
         
-        # ردیف ۱
+        ctx_param = "s" if back_callback and "search" in back_callback else "x"
+        
         kb.add(
             self.btn("⚙️ تغییر وضعیت", f"admin:us_tgl:{base}"),
-            self.btn("📝 یادداشت", f"admin:us_note:{base}:x")
+            self.btn("📝 یادداشت", f"admin:us_note:{base}:{ctx_param}")
         )
-        # ردیف ۲
         kb.add(
             self.btn("💳 ثبت پرداخت", f"admin:us_lpay:{base}"),
-            self.btn("📜 سابقه پرداخت", f"admin:us_phist:{identifier}:0{context}")
+            self.btn("📜 سابقه پرداخت", f"admin:us_phist:{identifier}:0")
         )
-        # ردیف ۳
         kb.add(
             self.btn("💰 شارژ کیف پول", f"admin:us_mchg:{base}:x"),
             self.btn("💸 برداشت وجه", f"admin:us_wdrw:{base}")
         )
-        # ردیف ۴
         kb.add(
             self.btn("🔧 ویرایش کاربر", f"admin:us_edt:{base}"),
             self.btn("📱 حذف دستگاه‌ها", f"admin:us_ddev:{base}")
         )
-        # ردیف ۵
         kb.add(
             self.btn("♻️ تنظیمات ریست", f"admin:us_reset_menu:{base}:x"),
             self.btn("⚠️ ارسال هشدار", f"admin:us_warn_menu:{base}:x")
         )
-        # ردیف ۶
         kb.add(
             self.btn("🔄 تمدید اشتراک", f"admin:renew_sub_menu:{base}"),
             self.btn("🗑 حذف کامل", f"admin:us_delc:{base}")
