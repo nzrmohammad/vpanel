@@ -102,21 +102,24 @@ async def handle_uuid_login(message: types.Message):
     """Handler for UUID login."""
     user_id = message.from_user.id
     
-    # جلوگیری از تداخل با ادمین
+    # جلوگیری از تداخل با عملیات ادمین
     if user_id in ADMIN_IDS and hasattr(bot, 'context_state') and user_id in bot.context_state:
         return 
 
+    # --- دریافت اطلاعات پیام قبلی (برای ادیت) ---
     state = getattr(bot, 'user_states', {}).get(user_id, {})
     menu_msg_id = state.get('msg_id') if state.get('step') == 'waiting_for_uuid' else None
 
     uuid_str = message.text.strip()
     lang = await db.get_user_language(user_id)
     
+    # ۱. حذف پیام ارسالی کاربر (UUID) برای تمیز ماندن چت
     try:
         await bot.delete_message(message.chat.id, message.message_id)
     except:
         pass
 
+    # ۲. نمایش وضعیت "در حال بررسی" روی همان پیام قبلی (ادیت)
     wait_text = "⏳ در حال بررسی ..."
     target_msg_id = None
 
@@ -125,6 +128,7 @@ async def handle_uuid_login(message: types.Message):
             await bot.edit_message_text(wait_text, message.chat.id, menu_msg_id)
             target_msg_id = menu_msg_id
         except:
+            # اگر پیام قبلی پاک شده بود، پیام جدید می‌فرستیم
             msg = await bot.send_message(message.chat.id, wait_text)
             target_msg_id = msg.message_id
     else:
@@ -139,16 +143,43 @@ async def handle_uuid_login(message: types.Message):
             
             if result in ["db_msg_uuid_added", "db_msg_uuid_reactivated"]:
                 success_text = get_string(result, lang)
-                is_admin = user_id in ADMIN_IDS
-                markup = await user_menu.main(is_admin, lang)
                 
+                # --- تغییر مهم: ساخت لیست اکانت‌ها به جای منوی اصلی ---
+                
+                # الف) دریافت لیست اکانت‌ها از دیتابیس
+                accounts = await db.uuids(user_id)
+                
+                # ب) محاسبه درصد مصرف (مشابه فایل account.py)
+                if accounts:
+                    for acc in accounts:
+                        try:
+                            u_str = str(acc['uuid'])
+                            u_info = await combined_handler.get_combined_user_info(u_str)
+                            if u_info:
+                                acc['usage_percentage'] = u_info.get('usage_percentage', 0)
+                                acc['expire'] = u_info.get('expire')
+                            else:
+                                acc['usage_percentage'] = 0
+                        except:
+                            acc['usage_percentage'] = 0
+                
+                # ج) ساخت منوی لیست اکانت‌ها
+                markup = await user_menu.accounts(accounts, lang)
+                
+                # د) ترکیب پیام موفقیت با تیتر لیست اکانت‌ها
+                # متن: ✅ اکانت اضافه شد. \n\n لیست اکانت‌ها
+                final_text = f"✅ {success_text}\n\n{get_string('account_list_title', lang)}"
+                
+                # ه) ویرایش پیام نهایی
                 await bot.edit_message_text(
-                    f"✅ {success_text}", 
+                    final_text, 
                     message.chat.id, 
                     target_msg_id, 
-                    reply_markup=markup
+                    reply_markup=markup,
+                    parse_mode="Markdown" # یا HTML بسته به فرمت متن‌ها
                 )
                 
+                # پاک کردن استیت
                 if hasattr(bot, 'user_states') and user_id in bot.user_states:
                     del bot.user_states[user_id]
                     
