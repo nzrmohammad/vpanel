@@ -5,7 +5,7 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 from telebot import types
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, update
 from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot
@@ -362,20 +362,21 @@ async def handle_edit_user_menu(call, params):
 async def handle_ask_edit_value(call, params):
     action, scope, target_id = params[0], params[1], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
-    action_name = "حجم (GB)" if "gb" in action else "زمان (روز)"
+    
+    action_name = "حجم \\(GB\\)" if "gb" in action else "زمان \\(روز\\)"
     
     admin_conversations[uid] = {
-        'step': 'edit_value',
-        'msg_id': msg_id,
-        'action': action,
-        'scope': scope,
+        'step': 'edit_value', 
+        'msg_id': msg_id, 
+        'action': action, 
+        'scope': scope, 
         'target_id': target_id,
-        'timestamp': time.time(),
+        'timestamp': time.time(), 
         'next_handler': process_edit_value
     }
     
-    # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
     text = f"🔢 لطفاً مقدار *{action_name}* را که می‌خواهید *اضافه* کنید وارد نمایید \\(عدد مثبت برای افزودن، منفی برای کسر\\):"
+    
     await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
 
 async def process_edit_value(message: types.Message):
@@ -422,24 +423,48 @@ async def handle_select_panel_for_edit(call, params):
     pass 
 
 # ==============================================================================
-# 5. تغییر وضعیت (Toggle Status)
+# 5. تغییر وضعیت (Toggle Status) - اصلاح شده: هوشمند و بدون حذف
 # ==============================================================================
 
 async def handle_toggle_status(call, params):
+    """
+    منوی تغییر وضعیت هوشمند.
+    وضعیت فعلی را چک می‌کند و دکمه معکوس را نشان می‌دهد.
+    """
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    text = "⚙️ آیا می‌خواهید وضعیت کاربر را تغییر دهید؟\n(غیرفعال کردن باعث قطع دسترسی در تمام پنل‌ها می‌شود)"
+    # دریافت وضعیت فعلی کاربر از دیتابیس
+    uuids = await db.uuids(int(target_id))
+    if not uuids:
+        await bot.answer_callback_query(call.id, "❌ سرویسی یافت نشد.", show_alert=True)
+        return
+
+    # فرض بر این است که وضعیت همه UUIDهای کاربر یکسان است، اولی را چک می‌کنیم
+    is_active = uuids[0]['is_active']
+    
+    # تعیین متن و اکشن دکمه‌ها بر اساس وضعیت فعلی
+    if is_active:
+        status_text = "🟢 کاربر هم‌اکنون *فعال* است."
+        action_btn_text = "🔴 غیرفعال‌سازی (در همه پنل‌ها)"
+        next_action = "disable"
+    else:
+        status_text = "🔴 کاربر هم‌اکنون *غیرفعال* است."
+        action_btn_text = "🟢 فعال‌سازی (در همه پنل‌ها)"
+        next_action = "enable"
+
+    text = f"⚙️ *مدیریت وضعیت کاربر*\n\n{status_text}\n\nآیا می‌خواهید وضعیت را تغییر دهید؟"
+    
     kb = types.InlineKeyboardMarkup()
-    kb.add(
-        types.InlineKeyboardButton("🔴 غیرفعال کردن", callback_data=f"admin:tglA:disable:{target_id}"),
-        types.InlineKeyboardButton("🟢 فعال کردن", callback_data=f"admin:tglA:enable:{target_id}")
-    )
+    kb.add(types.InlineKeyboardButton(action_btn_text, callback_data=f"admin:tglA:{next_action}:{target_id}"))
     kb.add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:us:{target_id}"))
     
-    await _safe_edit(uid, msg_id, text, reply_markup=kb)
+    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="Markdown")
 
 async def handle_toggle_status_action(call, params):
+    """
+    اجرای عملیات تغییر وضعیت بدون حذف کاربر.
+    """
     action, target_id = params[0], params[1]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -451,65 +476,122 @@ async def handle_toggle_status_action(call, params):
     uuid_str = str(uuids[0]['uuid'])
     uuid_id = uuids[0]['id']
     
+    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات در پنل‌ها...", reply_markup=None)
+
+    # 1. تغییر وضعیت در دیتابیس ربات
+    new_status = (action == 'enable')
+    
+    async with db.get_session() as session:
+        # آپدیت وضعیت در جدول UserUUID
+        stmt = update(UserUUID).where(UserUUID.id == uuid_id).values(is_active=new_status)
+        await session.execute(stmt)
+        await session.commit()
+
+    # 2. ارسال درخواست تغییر وضعیت به پنل‌ها (بدون حذف)
+    success_count = 0
+    active_panels = await db.get_active_panels()
+    
+    for p in active_panels:
+        try:
+            handler = await PanelFactory.get_panel(p['name'])
+            
+            # تعیین شناسه کاربر برای پنل
+            identifier = uuid_str
+            if p['panel_type'] == 'marzban':
+                mapping = await db.get_marzban_username_by_uuid(uuid_str)
+                identifier = mapping if mapping else uuid_str
+
+            # فراخوانی متد اختصاصی برای تغییر وضعیت (نه حذف)
+            if await _toggle_panel_user_status(handler, p['panel_type'], identifier, action):
+                success_count += 1
+                
+        except Exception as e:
+            logger.error(f"Error toggling status on {p['name']}: {e}")
+
+    # 3. نمایش نتیجه
     if action == 'disable':
-        await db.deactivate_uuid(uuid_id)
-        await combined_handler.delete_user_from_all_panels(uuid_str)
-        msg = "🔴 کاربر غیرفعال و از پنل‌ها حذف شد."
-        
-    else: 
-        await bot.answer_callback_query(call.id, "برای فعال‌سازی مجدد، لطفاً اشتراک را تمدید کنید.", show_alert=True)
-        return
+        msg = f"🔴 کاربر غیرفعال شد. (اعمال شده روی {success_count} پنل)"
+    else:
+        msg = f"🟢 کاربر مجدداً فعال شد. (اعمال شده روی {success_count} پنل)"
 
-    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
+    # بازگشت به منوی مدیریت کاربر
+    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.user_interactive_menu(target_id, new_status, 'both'))
 
+async def _toggle_panel_user_status(handler, panel_type, identifier, action):
+    """
+    تابع کمکی برای ارسال درخواست فعال/غیرفعال سازی به API پنل‌ها
+    """
+    try:
+        if panel_type == 'marzban':
+            # در مرزبان وضعیت status باید تغییر کند
+            # active | disabled
+            status_val = "active" if action == 'enable' else "disabled"
+            payload = {"status": status_val}
+            # استفاده از متد داخلی modify_user یا ارسال مستقیم ریکوئست
+            # چون modify_user استاندارد معمولا فقط حجم/روز دارد، اینجا مستقیم می‌زنیم
+            return await handler._request("PUT", f"user/{identifier}", json=payload) is not None
+
+        elif panel_type == 'hiddify':
+            # در هیدیفای معمولاً enable: true/false یا is_active استفاده می‌شود
+            # برای اطمینان از عدم حذف، فقط وضعیت را پچ می‌کنیم
+            is_enable = (action == 'enable')
+            # نکته: برخی نسخه‌های هیدیفای enable و برخی is_active می‌پذیرند
+            # هر دو را می‌فرستیم تا روی نسخه‌های مختلف کار کند
+            payload = {
+                "enable": is_enable, 
+                "is_active": is_enable,
+                "mode": "no_reset" # جلوگیری از ریست شدن حجم هنگام ادیت
+            }
+            return await handler._request("PATCH", f"user/{identifier}", json=payload) is not None
+            
+    except Exception as e:
+        logger.error(f"Failed to toggle status API: {e}")
+        return False
 # ==============================================================================
 # 6. تاریخچه پرداخت و ثبت دستی
 # ==============================================================================
 
 async def handle_payment_history(call, params):
     target_id = int(params[0])
-    page = int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
     user_info = await db.user(target_id)
     user_name = user_info.get('first_name', str(target_id)) if user_info else str(target_id)
-
+    safe_name = escape_markdown(user_name)
+    
     history = await db.get_wallet_history(target_id, limit=20)
     
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
+    
     if not history:
-        await _safe_edit(uid, msg_id, "📜 هیچ تراکنشی یافت نشد.", reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+        # نمایش پیام مخصوص زمانی که سابقه‌ای وجود ندارد
+        text = f"سابقه پرداخت‌های کاربر: {safe_name}\n\nهیچ پرداخت ثبت‌شده‌ای برای این کاربر یافت نشد\\."
+        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
         return
     
-    lines = [f"📜 <b>تاریخچه تراکنش‌های {escape_markdown(user_name)}</b>", "──────────────────"]
+    # نمایش لیست تراکنش‌ها در صورت وجود
+    lines = [f"📜 *تاریخچه تراکنش‌های {safe_name}*", "──────────────────"]
     
     for t in history:
         amount = t.get('amount', 0)
         desc = t.get('description') or t.get('type', '')
-        
         dt_str = to_shamsi(t.get('transaction_date'), include_time=True)
         
-        if amount > 0:
-            icon = "➕"
-            amt_str = f"{int(amount):,} تومان"
-        else:
-            icon = "➖"
-            amt_str = f"{int(abs(amount)):,} تومان"
-            
+        icon = "🟢" if amount > 0 else "🔴"
+        amt_str = f"{int(abs(amount)):,} تومان"
+        
         block = (
-            f"{icon} {amt_str}\n"
-            f" {desc}\n"
-            f" {dt_str}"
+            f"{icon} *{escape_markdown(amt_str)}*\n"
+            f"📅 {escape_markdown(dt_str)}\n"
+            f"📝 {escape_markdown(desc)}\n"
+            "──────────────────"
         )
         lines.append(block)
-        lines.append("──────────────────")
         
     final_text = "\n".join(lines)
-        
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     
-    await _safe_edit(uid, msg_id, final_text, reply_markup=kb, parse_mode="HTML")
-
+    await _safe_edit(uid, msg_id, final_text, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_log_payment(call, params):
     """ثبت دستی پرداخت"""

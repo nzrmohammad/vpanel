@@ -127,26 +127,24 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
 # ---------------------------------------------------------
 # 2. شارژ دستی (Manual Charge) - مدیریت کامل
 # ---------------------------------------------------------
-
 async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
-    """شروع فرآیند شارژ دستی کیف پول توسط ادمین."""
     uid, msg_id = call.from_user.id, call.message.message_id
-    identifier = params[0] # UUID یا username یا UserID
+    identifier = params[0]
     context = "search" if len(params) > 1 and params[1] == 'search' else None
     
-    prompt = "💰 لطفاً مبلغ مورد نظر برای **شارژ دستی** کیف پول کاربر را به تومان وارد کنید:"
+    prompt = "💰 لطفاً مبلغ مورد نظر برای *شارژ دستی* کیف پول کاربر را به تومان وارد کنید:"
+    
     admin_conversations[uid] = {
         'action_type': 'manual_charge',
         'msg_id': msg_id,
         'identifier': identifier,
-        'context': context
+        'context': context,
+        'next_handler': _get_manual_charge_amount
     }
     
-    # دکمه بازگشت هوشمند
     back_cb = f"admin:user_details:{identifier}" if identifier.isdigit() else "admin:user_manage"
     
-    await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.cancel_action(back_cb))
-    bot.register_next_step_handler(call.message, _get_manual_charge_amount)
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action(back_cb))
 
 async def _get_manual_charge_amount(message: types.Message):
     """مبلغ شارژ دستی را دریافت و تاییدیه می‌گیرد."""
@@ -251,9 +249,8 @@ async def handle_manual_charge_cancel(call: types.CallbackQuery, params: list):
 # ---------------------------------------------------------
 
 async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list):
-    """شروع فرآیند برداشت وجه / صفر کردن موجودی."""
     uid, msg_id = call.from_user.id, call.message.message_id
-    identifier = params[0] # UserID
+    identifier = params[0]
     
     try:
         user_id = int(identifier)
@@ -280,8 +277,9 @@ async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list
         'current_balance': balance
     }
     
-    prompt = (f"موجودی فعلی کاربر *{escape_markdown(user.first_name or 'User')}* مبلغ *{balance:,.0f} تومان* است\\.\n\n"
-              f"آیا از صفر کردن موجودی (برداشت کل مبلغ) اطمینان دارید؟")
+    safe_name = escape_markdown(user.first_name or 'User')
+    prompt = (f"موجودی فعلی کاربر *{safe_name}* مبلغ *{balance:,.0f} تومان* است\\.\n\n"
+              f"آیا از صفر کردن موجودی \\(برداشت کل مبلغ\\) اطمینان دارید؟")
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -291,7 +289,6 @@ async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
 
 async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: list):
-    """برداشت وجه را نهایی می‌کند."""
     admin_id = call.from_user.id
     if admin_id not in admin_conversations: return
     
@@ -303,12 +300,10 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
     if not all([msg_id, target_user_id]):
         return
     
-    # برای صفر کردن، به اندازه موجودی فعلی، برداشت می‌زنیم (مقدار منفی)
-    # توجه: db.update_wallet_balance اگر مقدار منفی باشد و موجودی کافی نباشد False می‌دهد
-    # اما اینجا چون دقیقاً موجودی فعلی را کم می‌کنیم، باید اوکی باشد.
     if await db.update_wallet_balance(target_user_id, -amount_to_withdraw, 'withdraw', "برداشت/صفر کردن توسط مدیریت"):
         
         success_msg = escape_markdown(f"✅ موجودی کاربر صفر شد. (برداشت {amount_to_withdraw:,.0f} تومان)")
+        
         kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👤 بازگشت به پروفایل کاربر", callback_data=f"admin:user_details:{target_user_id}"))
         
         await _safe_edit(admin_id, msg_id, success_msg, reply_markup=kb)
