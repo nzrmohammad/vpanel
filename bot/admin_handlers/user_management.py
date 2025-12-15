@@ -348,12 +348,12 @@ async def get_new_user_days(message: types.Message):
     
     try:
         days = int(text)
-        # دریافت تمام داده‌های جمع‌آوری شده
         convo_data = admin_conversations.pop(uid)
         data = convo_data['data']
         msg_id = convo_data['msg_id'] 
         
-        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر...", reply_markup=None)
+        waiting_text = escape_markdown("⏳ در حال ساخت کاربر...")
+        await _safe_edit(uid, msg_id, waiting_text, reply_markup=None)
         
         panel_name_target = data['panel_name']
         name = data['name']
@@ -363,24 +363,21 @@ async def get_new_user_days(message: types.Message):
         success_list = []
         fail_list = []
         
-        # تعیین پنل‌های هدف
         target_panels = []
         if panel_name_target == 'all':
             target_panels = await db.get_active_panels()
         else:
-            # دریافت اطلاعات یک پنل خاص
             p = await db.get_panel_by_name(panel_name_target)
             if p: target_panels = [p]
 
         if not target_panels:
-            await _safe_edit(uid, msg_id, "❌ هیچ پنلی برای ساخت کاربر یافت نشد.", reply_markup=await admin_menu.main())
+            error_text = escape_markdown("❌ هیچ پنلی یافت نشد.")
+            await _safe_edit(uid, msg_id, error_text, reply_markup=await admin_menu.main())
             return
 
-        # حلقه روی پنل‌ها
         for p in target_panels:
             try:
                 panel_api = await PanelFactory.get_panel(p['name'])
-                # ارسال UUID دستی یا تولید شده (تا در همه پنل‌ها یکی باشد)
                 res = await panel_api.add_user(name, limit, days, uuid=user_uuid)
                 
                 if res:
@@ -391,25 +388,25 @@ async def get_new_user_days(message: types.Message):
                 logger.error(f"Error creating user on {p['name']}: {e}")
                 fail_list.append(p['name'])
 
-        # نمایش نتیجه
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت", callback_data=f"admin:management_menu"))
+
         if success_list:
-            # اگر حداقل در یک پنل ساخته شد، در دیتابیس ربات هم ثبت می‌کنیم (اختیاری، چون لاگین با UUID است)
-            # اما برای مدیریت بهتر، می‌توانیم اینجا ثبت کنیم اگر کاربری تلگرامی باشد (که اینجا نیست)
+            success_str = ", ".join([escape_markdown(s) for s in success_list])
             
             result_text = (
-                f"✅ **عملیات پایان یافت**\n\n"
-                f"👤 نام: `{escape_markdown(name)}`\n"
+                f"✅ *{escape_markdown('عملیات پایان یافت')}*\n\n"
+                f"👤 {escape_markdown('نام')}: `{escape_markdown(name)}`\n"
                 f"🔑 UUID: `{escape_markdown(user_uuid)}`\n"
-                f"📦 حجم: `{limit} GB` | 📅 مدت: `{days} روز`\n\n"
-                f"🟢 موفق در: {', '.join(success_list)}\n"
+                f"📦 {escape_markdown('حجم')}: `{limit} GB` \| 📅 {escape_markdown('مدت')}: `{days} {escape_markdown('روز')}`\n\n"
+                f"🟢 {escape_markdown('موفق در')}: {success_str}\n"
             )
-            if fail_list:
-                result_text += f"🔴 ناموفق در: {', '.join(fail_list)}"
-                
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت", callback_data=f"admin:management_menu"))
             
-            await _safe_edit(uid, msg_id, result_text, reply_markup=kb, parse_mode="Markdown")
+            if fail_list:
+                fail_str = ", ".join([escape_markdown(s) for s in fail_list])
+                result_text += f"🔴 {escape_markdown('ناموفق در')}: {fail_str}"
+                
+            await _safe_edit(uid, msg_id, result_text, reply_markup=kb, parse_mode="MarkdownV2")
             
         else:
             error_msg = escape_markdown("❌ خطا: کاربر در هیچ پنلی ساخته نشد")
@@ -418,14 +415,15 @@ async def get_new_user_days(message: types.Message):
     except ValueError:
         if uid in admin_conversations:
             msg_id = admin_conversations[uid]['msg_id']
-            await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد صحیح وارد کنید. روز:", reply_markup=await admin_menu.cancel_action())
+            err_text = escape_markdown("❌ لطفاً فقط عدد صحیح وارد کنید. روز:")
+            await _safe_edit(uid, msg_id, err_text, reply_markup=await admin_menu.cancel_action(), parse_mode="MarkdownV2")
+            
     except Exception as e:
         logger.error(f"Critical Error creating user: {e}", exc_info=True)
-        # چون admin_conversations پاپ شده، باید پیام جدید بفرستیم یا اگر ID داریم ادیت کنیم
         try:
-            await bot.send_message(uid, f"❌ خطای غیرمنتظره: {e}")
+            sys_err = escape_markdown(f"❌ خطای غیرمنتظره: {e}")
+            await bot.send_message(uid, sys_err, parse_mode="MarkdownV2")
         except: pass
-
 # ==============================================================================
 # 4. ویرایش سرویس (Edit User - Volume/Days)
 # ==============================================================================
