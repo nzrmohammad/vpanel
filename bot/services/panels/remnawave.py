@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional, List, Any
+from datetime import datetime, timedelta
 from remnawave import RemnawaveSDK
 from remnawave.models import (
     UserResponseDto, 
@@ -26,19 +27,19 @@ class RemnawavePanel(BasePanel):
             # تبدیل گیگابایت به بایت
             traffic_limit = int(limit_gb * 1024 * 1024 * 1024) if limit_gb > 0 else 0
             
-            # محاسبه تاریخ انقضا (اگر پنل روز را مستقیم نپذیرد، باید محاسبه شود)
-            # اما معمولاً Remnawave قابلیت expire_strategy یا expiration_date دارد.
-            # فرض می‌کنیم API یک فیلد برای روز یا تاریخ دارد. 
-            # اگر SDK فیلد days نداشت، باید Timestamp بفرستید.
+            # ✅ محاسبه تاریخ انقضا (Timestamp)
+            expire_at = None
+            if expire_days > 0:
+                # محاسبه زمان فعلی + تعداد روزها -> تبدیل به تایم‌استمپ (عدد صحیح)
+                expire_date = datetime.now() + timedelta(days=expire_days)
+                expire_at = int(expire_date.timestamp())
             
             # ساخت DTO برای درخواست
             request_data = CreateUserRequestDto(
                 username=name,
                 traffic_limit=traffic_limit,
-                # برخی نسخه‌ها expiration_days دارند، برخی expiration_date
-                # این بخش را بر اساس نسخه دقیق API چک کنید. 
-                # فرض بر استاندارد پنل:
-                status="active"
+                expire_at=expire_at, # ✅ فیلد اجباری اضافه شد
+                status="ACTIVE" # ✅ حروف بزرگ (ACTIVE) طبق مستندات و ارور
             )
             
             if uuid:
@@ -87,15 +88,17 @@ class RemnawavePanel(BasePanel):
                 update_data.traffic_limit = int(current_limit + (add_gb * 1024**3))
                 should_update = True
 
-            # ویرایش زمان (بسته به فیلد موجود در مدل یوزر - مثلا expire_at)
+            # ویرایش زمان
             if new_expire_ts is not None:
                 update_data.expire_at = new_expire_ts
                 should_update = True
             elif add_days != 0:
                 # منطق افزودن روز (نیاز به محاسبه Timestamp فعلی + روز)
                 import time
-                current_expire = user.expire_at or time.time()
-                update_data.expire_at = int(current_expire + (add_days * 86400))
+                current_expire = user.expire_at or int(time.time())
+                # اگر زمان انقضا گذشته باشد، از زمان حال محاسبه می‌کنیم
+                base_time = max(current_expire, int(time.time()))
+                update_data.expire_at = int(base_time + (add_days * 86400))
                 should_update = True
 
             if should_update:
@@ -127,7 +130,7 @@ class RemnawavePanel(BasePanel):
             # اگر متد system در SDK موجود باشد
             # stats = await self.client.system.get_stats()
             # return stats.model_dump()
-            return {} # فعلا خالی تا زمانی که متد دقیق را پیدا کنید
+            return {} 
         except:
             return {}
             

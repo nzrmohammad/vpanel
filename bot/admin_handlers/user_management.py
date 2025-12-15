@@ -1,5 +1,6 @@
 # bot/admin_handlers/user_management.py
 
+import uuid as uuid_lib
 import logging
 import asyncio
 import time
@@ -12,7 +13,7 @@ from bot.bot_instance import bot
 from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, Panel
-from bot.utils import _safe_edit, escape_markdown, to_shamsi
+from bot.utils import _safe_edit, escape_markdown, to_shamsi, validate_uuid
 from bot import combined_handler
 from bot.services.panels import PanelFactory
 from bot.formatters import user_formatter
@@ -227,6 +228,7 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
 # ==============================================================================
 
 async def handle_add_user_start(call: types.CallbackQuery, params: list):
+    """مرحله ۱: انتخاب پنل (یا همه پنل‌ها)"""
     panel_type = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -236,19 +238,24 @@ async def handle_add_user_start(call: types.CallbackQuery, params: list):
         panels = result.scalars().all()
     
     if not panels:
-        await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی از این نوع یافت نشد.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ هیچ پنل فعالی یافت نشد.", show_alert=True)
         return
 
     kb = types.InlineKeyboardMarkup(row_width=1)
+    
+    # ✅ اضافه کردن گزینه "همه پنل‌ها"
+    kb.add(types.InlineKeyboardButton(f"🌐 ایجاد در همه سرورها ({len(panels)})", callback_data="admin:add_user_select_panel:all"))
+    
     for p in panels:
         kb.add(types.InlineKeyboardButton(f"سرور: {p.name}", callback_data=f"admin:add_user_select_panel:{p.name}"))
     
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:management_menu"))
     
-    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nلطفاً سرور مورد نظر را انتخاب کنید:", reply_markup=kb, parse_mode="Markdown")
+    await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر به {panel_type.capitalize()}**\n\nسرور هدف را انتخاب کنید:", reply_markup=kb, parse_mode="Markdown")
 
 async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
-    panel_name = params[0]
+    """مرحله ۲: دریافت نام کاربر"""
+    panel_name = params[0] # نام پنل یا 'all'
     uid = call.from_user.id
     msg_id = call.message.message_id
     
@@ -261,26 +268,61 @@ async def handle_add_user_select_panel_callback(call: types.CallbackQuery, param
         'next_handler': get_new_user_name
     }
     
+    target_display = "همه سرورها" if panel_name == 'all' else panel_name
+    
     await _safe_edit(uid, msg_id, 
-                     f"👤 سرور انتخاب شد: *{escape_markdown(panel_name)}*\n\nلطفاً *نام کاربر* را وارد کنید:", 
+                     f"👤 هدف: *{escape_markdown(target_display)}*\n\nلطفاً *نام کاربر* را وارد کنید:", 
                      reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_name(message: types.Message):
+    """مرحله ۳: دریافت نام و درخواست UUID"""
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
     if uid not in admin_conversations: return
     
     admin_conversations[uid]['data']['name'] = text
+    # ✅ تغییر مسیر به دریافت UUID
+    admin_conversations[uid]['next_handler'] = get_new_user_uuid
+    msg_id = admin_conversations[uid]['msg_id']
+    
+    prompt = (
+        "🔑 لطفاً **UUID** کاربر را ارسال کنید:\n\n"
+        "▫️ برای تولید خودکار (رندوم)، نقطه `.` را ارسال کنید.\n"
+        "▫️ یا یک UUID معتبر وارد کنید."
+    )
+    
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action(), parse_mode="Markdown")
+
+async def get_new_user_uuid(message: types.Message):
+    """مرحله ۴: دریافت UUID و درخواست حجم"""
+    uid, text = message.from_user.id, message.text.strip()
+    await _delete_user_message(message)
+    
+    if uid not in admin_conversations: return
+    
+    # پردازش UUID
+    final_uuid = None
+    if text == '.' or text.lower() == 'random':
+        final_uuid = str(uuid_lib.uuid4()) # تولید همین الان برای استفاده یکسان در همه پنل‌ها
+    elif validate_uuid(text):
+        final_uuid = text
+    else:
+        # فرمت نامعتبر
+        msg_id = admin_conversations[uid]['msg_id']
+        await _safe_edit(uid, msg_id, "❌ فرمت UUID نامعتبر است. لطفاً مجدد ارسال کنید یا `.` بزنید:", reply_markup=await admin_menu.cancel_action())
+        return
+
+    admin_conversations[uid]['data']['uuid'] = final_uuid
     admin_conversations[uid]['next_handler'] = get_new_user_limit
     msg_id = admin_conversations[uid]['msg_id']
     
-    # ✅ اصلاح: دوبل کردن بک‌اسلش
     await _safe_edit(uid, msg_id, 
-                     "📦 لطفاً *حجم محدودیت \\(GB\\)* را وارد کنید \\(عدد\\):", 
-                     reply_markup=await admin_menu.cancel_action())
+                     "📦 لطفاً *حجم محدودیت (GB)* را وارد کنید (عدد):", 
+                     reply_markup=await admin_menu.cancel_action(), parse_mode="Markdown")
 
 async def get_new_user_limit(message: types.Message):
+    """مرحله ۵: دریافت حجم و درخواست روز"""
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     if uid not in admin_conversations: return
@@ -291,164 +333,149 @@ async def get_new_user_limit(message: types.Message):
         admin_conversations[uid]['next_handler'] = get_new_user_days
         msg_id = admin_conversations[uid]['msg_id']
         
-        # ✅ اصلاح: دوبل کردن بک‌اسلش
         await _safe_edit(uid, msg_id, 
-                         "📅 لطفاً *تعداد روز اعتبار* را وارد کنید \\(عدد\\):", 
-                         reply_markup=await admin_menu.cancel_action())
+                         "📅 لطفاً *تعداد روز اعتبار* را وارد کنید (عدد):", 
+                         reply_markup=await admin_menu.cancel_action(), parse_mode="Markdown")
     except ValueError:
         msg_id = admin_conversations[uid]['msg_id']
-        # ✅ اصلاح: دوبل کردن بک‌اسلش
-        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم \\(GB\\):", reply_markup=await admin_menu.cancel_action())
+        await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد وارد کنید. حجم (GB):", reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_days(message: types.Message):
+    """مرحله نهایی: اجرا و ساخت کاربر"""
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     if uid not in admin_conversations: return
     
     try:
         days = int(text)
-        data = admin_conversations.pop(uid)['data']
-        msg_id = admin_conversations[uid]['msg_id'] 
+        # دریافت تمام داده‌های جمع‌آوری شده
+        convo_data = admin_conversations.pop(uid)
+        data = convo_data['data']
+        msg_id = convo_data['msg_id'] 
         
-        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر در پنل...", reply_markup=None)
+        await _safe_edit(uid, msg_id, "⏳ در حال ساخت کاربر...", reply_markup=None)
         
-        panel_name = data['panel_name']
+        panel_name_target = data['panel_name']
         name = data['name']
         limit = data['limit']
+        user_uuid = data['uuid']
         
-        panel_api = await PanelFactory.get_panel(panel_name)
-        new_user = await panel_api.add_user(name, limit, days)
+        success_list = []
+        fail_list = []
         
-        if new_user:
-            identifier = new_user.get('uuid') or name 
+        # تعیین پنل‌های هدف
+        target_panels = []
+        if panel_name_target == 'all':
+            target_panels = await db.get_active_panels()
+        else:
+            # دریافت اطلاعات یک پنل خاص
+            p = await db.get_panel_by_name(panel_name_target)
+            if p: target_panels = [p]
+
+        if not target_panels:
+            await _safe_edit(uid, msg_id, "❌ هیچ پنلی برای ساخت کاربر یافت نشد.", reply_markup=await admin_menu.main())
+            return
+
+        # حلقه روی پنل‌ها
+        for p in target_panels:
+            try:
+                panel_api = await PanelFactory.get_panel(p['name'])
+                # ارسال UUID دستی یا تولید شده (تا در همه پنل‌ها یکی باشد)
+                res = await panel_api.add_user(name, limit, days, uuid=user_uuid)
+                
+                if res:
+                    success_list.append(p['name'])
+                else:
+                    fail_list.append(p['name'])
+            except Exception as e:
+                logger.error(f"Error creating user on {p['name']}: {e}")
+                fail_list.append(p['name'])
+
+        # نمایش نتیجه
+        if success_list:
+            # اگر حداقل در یک پنل ساخته شد، در دیتابیس ربات هم ثبت می‌کنیم (اختیاری، چون لاگین با UUID است)
+            # اما برای مدیریت بهتر، می‌توانیم اینجا ثبت کنیم اگر کاربری تلگرامی باشد (که اینجا نیست)
             
-            # ✅ اصلاح: دوبل کردن بک‌اسلش در f-string
-            res_text = (
-                f"✅ کاربر با موفقیت ساخته شد\\!\n\n"
+            result_text = (
+                f"✅ **عملیات پایان یافت**\n\n"
                 f"👤 نام: `{escape_markdown(name)}`\n"
-                f"📦 حجم: `{limit} GB`\n"
-                f"📅 مدت: `{days} روز`\n"
-                f"🔑 شناسه: `{escape_markdown(str(identifier))}`"
+                f"🔑 UUID: `{escape_markdown(user_uuid)}`\n"
+                f"📦 حجم: `{limit} GB` | 📅 مدت: `{days} روز`\n\n"
+                f"🟢 موفق در: {', '.join(success_list)}\n"
             )
-            
+            if fail_list:
+                result_text += f"🔴 ناموفق در: {', '.join(fail_list)}"
+                
             kb = types.InlineKeyboardMarkup()
             kb.add(types.InlineKeyboardButton("🔙 بازگشت به مدیریت", callback_data=f"admin:management_menu"))
             
-            await _safe_edit(uid, msg_id, res_text, reply_markup=kb, parse_mode="MarkdownV2")
+            await _safe_edit(uid, msg_id, result_text, reply_markup=kb, parse_mode="Markdown")
             
         else:
-            await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر در پنل. لطفاً لاگ را بررسی کنید.", reply_markup=await admin_menu.main())
+            error_msg = escape_markdown("❌ خطا: کاربر در هیچ پنلی ساخته نشد")
+            await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.main(), parse_mode="MarkdownV2")
             
     except ValueError:
         if uid in admin_conversations:
             msg_id = admin_conversations[uid]['msg_id']
             await _safe_edit(uid, msg_id, "❌ لطفاً فقط عدد صحیح وارد کنید. روز:", reply_markup=await admin_menu.cancel_action())
     except Exception as e:
-        logger.error(f"Error creating user: {e}")
-        if uid in admin_conversations:
-            msg_id = admin_conversations[uid].get('msg_id')
-            await _safe_edit(uid, msg_id, f"❌ خطای غیرمنتظره: {e}", reply_markup=await admin_menu.main())
+        logger.error(f"Critical Error creating user: {e}", exc_info=True)
+        # چون admin_conversations پاپ شده، باید پیام جدید بفرستیم یا اگر ID داریم ادیت کنیم
+        try:
+            await bot.send_message(uid, f"❌ خطای غیرمنتظره: {e}")
+        except: pass
 
 # ==============================================================================
 # 4. ویرایش سرویس (Edit User - Volume/Days)
 # ==============================================================================
 
 async def handle_edit_user_menu(call, params):
-    """
-    نمایش لیست پنل‌های کاربر برای انتخاب جهت ویرایش.
-    """
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
     uuids = await db.uuids(int(target_id))
     if not uuids:
         await bot.answer_callback_query(call.id, "❌ کاربر یافت نشد.")
         return
     uuid_str = str(uuids[0]['uuid'])
-
     info = await combined_handler.get_combined_user_info(uuid_str)
-    if not info or 'breakdown' not in info:
-        await _safe_edit(
-            uid, 
-            msg_id, 
-            "❌ اطلاعات پنل یافت نشد.", 
-            reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both')
-        )
-        return
-
+    
     active_panels = await db.get_active_panels()
     categories = await db.get_server_categories()
     cat_map = {c['code']: c['emoji'] for c in categories}
+    user_panels = [{'name': 'همه پنل‌ها', 'id': 'all', 'flag': '🌐'}]
 
-    user_panels = []
-    
-    user_panels.append({'name': 'همه پنل‌ها', 'id': 'all', 'flag': '🌐'})
-
-    for p_name in info['breakdown'].keys():
-        p_cfg = next((p for p in active_panels if p['name'] == p_name), None)
-        
-        flag = ""
-        if p_cfg:
-            cat_code = p_cfg.get('category')
-            if cat_code and cat_code in cat_map:
-                flag = cat_map[cat_code]
-
-        user_panels.append({'name': p_name, 'id': p_name, 'flag': flag})
+    if info and 'breakdown' in info:
+        for p_name in info['breakdown'].keys():
+            p_cfg = next((p for p in active_panels if p['name'] == p_name), None)
+            flag = cat_map.get(p_cfg.get('category'), "") if p_cfg else ""
+            user_panels.append({'name': p_name, 'id': p_name, 'flag': flag})
 
     markup = await admin_menu.edit_user_panel_select_menu(target_id, user_panels)
-    
-    await _safe_edit(
-        uid, 
-        msg_id, 
-        "🔧 **ویرایش کاربر**\n\nلطفاً پنلی که می‌خواهید تغییرات روی آن اعمال شود را انتخاب کنید:", 
-        reply_markup=markup, 
-        parse_mode="Markdown"
-    )
+    await _safe_edit(uid, msg_id, "🔧 **ویرایش کاربر**\nپنل مورد نظر را انتخاب کنید:", reply_markup=markup, parse_mode="Markdown")
 
 async def handle_select_panel_for_edit(call, params):
-    """
-    هندلر انتخاب پنل -> نمایش گزینه‌های افزودن حجم/روز
-    Callback: admin:ep:{panel_name}:{identifier}
-    """
-    panel_target = params[0] # نام پنل یا 'all'
-    identifier = params[1]
+    panel_target, identifier = params[0], params[1]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
     markup = await admin_menu.edit_user_action_menu(identifier, panel_target)
-    
     panel_display = "همه پنل‌ها" if panel_target == 'all' else panel_target
-    
-    text = (
-        f"🔧 ویرایش روی: **{escape_markdown(panel_display)}**\n\n"
-        f"چه تغییری می‌خواهید اعمال کنید؟"
-    )
-    
-    await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="Markdown")
+    await _safe_edit(uid, msg_id, f"🔧 ویرایش روی: **{escape_markdown(panel_display)}**\nچه تغییری اعمال شود؟", reply_markup=markup, parse_mode="Markdown")
 
 async def handle_ask_edit_value(call, params):
     action, panel_target, target_id = params[0], params[1], params[2]
     uid, msg_id = call.from_user.id, call.message.message_id
-    
-    action_name = "حجم \\(GB\\)" if "gb" in action else "زمان \\(روز\\)"
+    action_name = "حجم (GB)" if "gb" in action else "زمان (روز)"
     
     admin_conversations[uid] = {
-        'step': 'edit_value', 
-        'msg_id': msg_id, 
-        'action': action, 
-        'scope': panel_target,
-        'target_id': target_id,
-        'timestamp': time.time(), 
-        'next_handler': process_edit_value
+        'step': 'edit_value', 'msg_id': msg_id, 'action': action, 'scope': panel_target,
+        'target_id': target_id, 'timestamp': time.time(), 'next_handler': process_edit_value
     }
-    
-    text = f"🔢 لطفاً مقدار *{action_name}* را وارد کنید \\(مثبت برای افزودن، منفی برای کسر\\):"
-    
-    await _safe_edit(uid, msg_id, text, reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"))
+    await _safe_edit(uid, msg_id, f"🔢 مقدار *{action_name}* را وارد کنید (مثبت برای افزودن، منفی برای کسر):", 
+                     reply_markup=await admin_menu.cancel_action(f"admin:us:{target_id}"), parse_mode="Markdown")
 
 async def process_edit_value(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
-    
     if uid not in admin_conversations: return
     data = admin_conversations.pop(uid)
     msg_id, target_id = data['msg_id'], data['target_id']
@@ -458,47 +485,23 @@ async def process_edit_value(message: types.Message):
         value = float(text)
         if value == 0: raise ValueError
     except:
-        await _safe_edit(uid, msg_id, "❌ مقدار نامعتبر\\.", reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
+        await _safe_edit(uid, msg_id, "❌ مقدار نامعتبر.", reply_markup=await admin_menu.user_interactive_menu(target_id, True, 'both'))
         return
 
-    await _safe_edit(uid, msg_id, "⏳ در حال اعمال تغییرات\\.\\.\\.", reply_markup=None)
-    
+    await _safe_edit(uid, msg_id, "⏳ اعمال تغییرات...", reply_markup=None)
     uuids = await db.uuids(int(target_id))
-    if not uuids:
-        await _safe_edit(uid, msg_id, "❌ کاربر سرویس فعالی ندارد\\.", reply_markup=await admin_menu.user_interactive_menu(target_id, False, 'both'))
-        return
-        
+    if not uuids: return
+    
     main_uuid_str = str(uuids[0]['uuid'])
     add_gb = value if 'gb' in action else 0
     add_days = int(value) if 'days' in action else 0
-    
-    # تعیین نام پنل هدف
     target_name = panel_target if panel_target != 'all' else None
     
-    success = await combined_handler.modify_user_on_all_panels(
-        identifier=main_uuid_str,
-        add_gb=add_gb,
-        add_days=add_days,
-        target_panel_name=target_name 
-    )
+    success = await combined_handler.modify_user_on_all_panels(main_uuid_str, add_gb=add_gb, add_days=add_days, target_panel_name=target_name)
     
-    unit = "GB" if add_gb else "روز"
-    
-    if target_name:
-        safe_target = escape_markdown(target_name)
-        scope_text = f"\\({safe_target}\\)"
-    else:
-        scope_text = "\\(سراسری\\)"
-    
-    safe_value = escape_markdown(str(value))
-    
-    if success:
-        result_text = f"✅ تغییرات با موفقیت اعمال شد {scope_text}\\.\n➕ {safe_value} {unit}"
-    else:
-        result_text = f"❌ خطا در اعمال تغییرات روی {scope_text}\\."
-
+    res_text = f"✅ انجام شد: {value}" if success else "❌ خطا در انجام عملیات."
     markup = await admin_menu.edit_user_action_menu(target_id, panel_target)    
-    await _safe_edit(uid, msg_id, result_text, reply_markup=markup, parse_mode="MarkdownV2")
+    await _safe_edit(uid, msg_id, res_text, reply_markup=markup)
 
 # ==============================================================================
 # 5. تغییر وضعیت (Toggle Status) - اصلاح شده: هوشمند و داینامیک
