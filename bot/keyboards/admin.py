@@ -3,6 +3,7 @@
 from telebot import types
 from typing import Optional, List, Dict, Any
 from .base import BaseMenu
+from bot.database import db
 
 class AdminMenu(BaseMenu):
     """
@@ -33,16 +34,20 @@ class AdminMenu(BaseMenu):
     
     async def management_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
         """
-        منوی انتخاب پنل برای مدیریت کاربران.
+        منوی انتخاب پنل برای مدیریت کاربران (همراه با پرچم و نوع پنل).
         """
         kb = self.create_markup(row_width=2)
+        categories = await db.get_server_categories()
+        cat_map = {c['code']: c['emoji'] for c in categories}
         
         if not panels:
             kb.add(self.btn("⚠️ هیچ پنلی یافت نشد (افزودن پنل)", "admin:panel_add_start"))
         else:
             buttons = []
             for p in panels:
-                buttons.append(self.btn(f"{p['name']}", f"admin:manage_single_panel:{p['id']}:{p['panel_type']}"))
+                flag = cat_map.get(p.get('category'), "")
+                btn_text = f"{p['name']} {flag} ({p['panel_type']})"
+                buttons.append(self.btn(btn_text, f"admin:manage_single_panel:{p['id']}:{p['panel_type']}"))
             
             kb.add(*buttons)
 
@@ -132,8 +137,11 @@ class AdminMenu(BaseMenu):
     # ---------------------------------------------------------
 
     async def panel_list_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """لیست پنل‌های متصل برای ویرایش/حذف (دو ستونه)"""
+        """لیست پنل‌های متصل برای ویرایش/حذف (دو ستونه + پرچم)"""
         kb = self.create_markup(row_width=2)
+        
+        categories = await db.get_server_categories()
+        cat_map = {c['code']: c['emoji'] for c in categories}
         
         if not panels:
             kb.row(self.btn("⚠️ هنوز پنلی اضافه نکرده‌اید", "noop"))
@@ -141,7 +149,9 @@ class AdminMenu(BaseMenu):
         panel_buttons = []
         for p in panels:
             status = "✅" if p['is_active'] else "❌"
-            btn_text = f"{status} {p['name']} ({p['panel_type']})"
+            flag = cat_map.get(p.get('category'), "")
+            
+            btn_text = f"{status} {p['name']} {flag} ({p['panel_type']})"
             panel_buttons.append(self.btn(btn_text, f"admin:panel_details:{p['id']}"))
             
         if panel_buttons:
@@ -154,7 +164,6 @@ class AdminMenu(BaseMenu):
         
         kb.row(self.btn("🔙 بازگشت", "admin:panel"))
         return kb
-
 
     async def panel_category_selection_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
         """منوی انتخاب کشور برای پنل (دو ستونه)"""

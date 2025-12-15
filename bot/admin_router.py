@@ -197,7 +197,6 @@ ADMIN_CALLBACK_HANDLERS = {
     "renew_apply_plan": user_management.handle_renew_apply_plan,
     "churn_contact_user": user_management.handle_churn_contact_user,
     "churn_send_offer": user_management.handle_churn_send_offer,
-    "add_user_to_panel": user_management.handle_add_user_start,
 
     # Marzban Mapping
     "mapping_menu": user_management.handle_mapping_menu,
