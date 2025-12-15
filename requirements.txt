@@ -1,4 +1,5 @@
 sqlalchemy>=2.0.0
+remnawave>=2.0.0
 asyncpg
 python-dotenv
 pytz

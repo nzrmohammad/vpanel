@@ -169,11 +169,18 @@ class ProductDB:
                 return True
             except IntegrityError:
                 return False
-            
+
+    async def update_server_category_name(self, code: str, new_name: str) -> bool:
+        """ویرایش نام یک دسته‌بندی سرور"""
+        async with self.get_session() as session:
+            stmt = update(ServerCategory).where(ServerCategory.code == code).values(name=new_name)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
     async def delete_server_category(self, code: str) -> bool:
         """حذف یک دسته‌بندی سرور"""
         async with self.get_session() as session:
-            from .base import ServerCategory
             stmt = delete(ServerCategory).where(ServerCategory.code == code)
             result = await session.execute(stmt)
             await session.commit()

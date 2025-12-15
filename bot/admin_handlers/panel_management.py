@@ -1,6 +1,7 @@
 # bot/admin_handlers/panel_management.py
 
 import logging
+import time  # ✅ اضافه شد
 from telebot import types
 from bot.database import db
 from bot.keyboards import admin as admin_menu
@@ -36,7 +37,6 @@ async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
         f"{escape_markdown('در این بخش می‌توانید سرورهای Hiddify و Marzban متصل به ربات را مدیریت کنید.')}"
     )
     
-    # استفاده از متد جدید در admin_menu که لیست را می‌گیرد
     markup = await admin_menu.panel_list_menu(panels)
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
@@ -53,16 +53,20 @@ async def handle_start_add_panel(call: types.CallbackQuery, params: list):
         'action': 'add_panel',
         'step': 'type', 
         'msg_id': msg_id, 
-        'data': {}
+        'data': {},
+        'timestamp': time.time()  # ✅ اضافه شد: حل مشکل Timeout در افزودن پنل
     }
     
     prompt = escape_markdown("1️⃣ لطفاً نوع پنلی که می‌خواهید اضافه کنید را انتخاب کنید:")
+    
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("Hiddify", callback_data="admin:panel_set_type:hiddify"),
-        types.InlineKeyboardButton("Marzban", callback_data="admin:panel_set_type:marzban")
+        types.InlineKeyboardButton("Marzban", callback_data="admin:panel_set_type:marzban"),
+        types.InlineKeyboardButton("Remnawave", callback_data="admin:panel_set_type:remnawave")
     )
-    kb.add(types.InlineKeyboardButton("🔙 لغو", callback_data="admin:panel_manage"))
+    kb.row(types.InlineKeyboardButton("🔙 لغو", callback_data="admin:panel_manage"))
+    
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
 
 async def handle_set_panel_type(call: types.CallbackQuery, params: list):
@@ -74,6 +78,8 @@ async def handle_set_panel_type(call: types.CallbackQuery, params: list):
     admin_conversations[uid]['data']['panel_type'] = panel_type
     admin_conversations[uid]['step'] = 'name'
     
+    # تمدید زمان
+    admin_conversations[uid]['timestamp'] = time.time()
     # تنظیم هندلر مرحله بعد برای روتر
     admin_conversations[uid]['next_handler'] = get_panel_name
     
@@ -93,7 +99,11 @@ async def get_panel_name(message: types.Message):
     # تنظیم هندلر مرحله بعد
     admin_conversations[uid]['next_handler'] = get_panel_url
     
-    prompt = escape_markdown(f"3️⃣ لطفاً آدرس کامل پنل را وارد کنید:\n\n*مثال:*\n`https://mypanel.domain.com`")
+    prompt = (
+        f"3️⃣ {escape_markdown('لطفاً آدرس کامل پنل را وارد کنید:')}\n\n"
+        f"*{escape_markdown('مثال:')}*\n"
+        f"`https://mypanel.domain.com`"
+    )
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
 async def get_panel_url(message: types.Message):
@@ -110,16 +120,18 @@ async def get_panel_url(message: types.Message):
     # تنظیم هندلر مرحله بعد
     admin_conversations[uid]['next_handler'] = get_panel_token1
 
-    prompt_text = "4️⃣ "
+    prefix = "4️⃣ "
     if panel_type == 'hiddify':
-        prompt_text += "لطفاً `API Key` (توکن ادمین) هیدیفای را وارد کنید:"
+        msg = f"{prefix}{escape_markdown('لطفاً')} `API Key` {escape_markdown('(توکن ادمین) هیدیفای را وارد کنید:')}"
+    elif panel_type == 'remnawave':
+        msg = f"{prefix}{escape_markdown('لطفاً')} `API Token` {escape_markdown('ادمین رمناویو را وارد کنید:')}"
     else: # Marzban
-        prompt_text += "لطفاً `Username` (نام کاربری) ادمین مرزبان را وارد کنید:"
+        msg = f"{prefix}{escape_markdown('لطفاً')} `Username` {escape_markdown('(نام کاربری) ادمین مرزبان را وارد کنید:')}"
         
-    await _safe_edit(uid, msg_id, escape_markdown(prompt_text), reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
 async def get_panel_token1(message: types.Message):
-    """مرحله پنجم: دریافت توکن اول و پرسیدن توکن دوم (در صورت نیاز)."""
+    """مرحله پنجم: دریافت توکن اول و تصمیم‌گیری برای مرحله بعد."""
     uid, token1 = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     if uid not in admin_conversations: return
@@ -128,29 +140,42 @@ async def get_panel_token1(message: types.Message):
     msg_id = admin_conversations[uid]['msg_id']
     panel_type = admin_conversations[uid]['data']['panel_type']
 
+    # --- اگر پنل Remnawave باشد، نیازی به پسورد دوم نیست ---
+    if panel_type == 'remnawave':
+        admin_conversations[uid]['data']['api_token2'] = None
+        # پرش مستقیم به مرحله انتخاب کشور
+        admin_conversations[uid]['step'] = 'select_category'
+        # هندلر بعدی را روی نال تنظیم میکنیم چون دکمه است (نه تکست)
+        admin_conversations[uid]['next_handler'] = None
+        
+        # دریافت لیست کشورها
+        categories = await db.get_server_categories()
+        
+        prompt = f"6️⃣ {escape_markdown('لطفاً')} *{escape_markdown('موقعیت (کشور)')}* {escape_markdown('این سرور را انتخاب کنید:')}"
+        markup = await admin_menu.panel_category_selection_menu(categories)
+        
+        await _safe_edit(uid, msg_id, prompt, reply_markup=markup)
+        return
+
+    # --- برای بقیه پنل‌ها ادامه می‌دهیم ---
     admin_conversations[uid]['step'] = 'token2'
-    # تنظیم هندلر مرحله بعد
     admin_conversations[uid]['next_handler'] = get_panel_token2
 
     if panel_type == 'hiddify':
-        prompt = escape_markdown("5️⃣ (اختیاری) لطفاً `Proxy Path` را وارد کنید. اگر ندارید، کلمه `ندارم` را ارسال کنید:")
-        await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+        prompt = f"5️⃣ {escape_markdown('(اختیاری) لطفاً')} `Proxy Path` {escape_markdown('را وارد کنید. اگر ندارید، کلمه')} `ندارم` {escape_markdown('را ارسال کنید:')}"
     else: # Marzban
-        prompt = escape_markdown("5️⃣ لطفاً `Password` (رمز عبور) ادمین مرزبان را وارد کنید:")
-        await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
-
-# در فایل bot/admin_handlers/panel_management.py
+        prompt = f"5️⃣ {escape_markdown('لطفاً')} `Password` {escape_markdown('(رمز عبور) ادمین مرزبان را وارد کنید:')}"
+        
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
 async def get_panel_token2(message: types.Message):
     """مرحله ششم: دریافت توکن دوم و نمایش منوی انتخاب کشور."""
     uid, token2 = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
-    if uid not in admin_conversations:
-        await bot.send_message(uid, "❌ نشست منقضی شد.")
-        return
+    if uid not in admin_conversations: return
 
-    # ذخیره توکن دوم در حافظه موقت
+    # ذخیره توکن دوم
     if admin_conversations[uid]['data']['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-', '.']:
         admin_conversations[uid]['data']['api_token2'] = None
     else:
@@ -159,11 +184,14 @@ async def get_panel_token2(message: types.Message):
     # تغییر وضعیت به انتخاب دسته‌بندی
     admin_conversations[uid]['step'] = 'select_category'
     msg_id = admin_conversations[uid]['msg_id']
+    
+    # چون مرحله بعد انتخاب دکمه است، هندلر متنی نداریم
+    admin_conversations[uid]['next_handler'] = None
 
     # دریافت لیست کشورها از دیتابیس
     categories = await db.get_server_categories()
     
-    prompt = escape_markdown("6️⃣ لطفاً **موقعیت (کشور)** این سرور را انتخاب کنید:")
+    prompt = f"6️⃣ {escape_markdown('لطفاً')} *{escape_markdown('موقعیت (کشور)')}* {escape_markdown('این سرور را انتخاب کنید:')}"
     markup = await admin_menu.panel_category_selection_menu(categories)
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=markup)
@@ -171,17 +199,16 @@ async def get_panel_token2(message: types.Message):
 async def handle_set_panel_category(call: types.CallbackQuery, params: list):
     """مرحله هفتم (نهایی): دریافت کشور و ذخیره پنل در دیتابیس."""
     uid = call.from_user.id
-    category_code = params[0] # کدی که از دکمه آمد (مثلاً de)
+    category_code = params[0]
     
     if uid not in admin_conversations:
         await bot.answer_callback_query(call.id, "❌ نشست منقضی شد.", show_alert=True)
         return
 
-    convo_data = admin_conversations.pop(uid) # پایان مکالمه و پاک کردن حافظه
+    convo_data = admin_conversations.pop(uid)
     panel_data = convo_data['data']
     msg_id = convo_data['msg_id']
 
-    # ذخیره نهایی در دیتابیس
     success = await db.add_panel(
         name=panel_data['name'],
         panel_type=panel_data['panel_type'],
@@ -259,7 +286,7 @@ async def handle_panel_delete_confirm(call: types.CallbackQuery, params: list):
         types.InlineKeyboardButton("❌ بله، حذف کن", callback_data=f"admin:panel_delete_execute:{panel_id}"),
         types.InlineKeyboardButton("✅ انصراف", callback_data=f"admin:panel_details:{panel_id}")
     )
-    await _safe_edit(call.from_user.id, call.message.message_id, prompt, reply_markup=kb)
+    await _safe_edit(call.from_user.id, call.message.message_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_panel_delete_execute(call: types.CallbackQuery, params: list):
     """حذف نهایی پنل."""
@@ -288,7 +315,8 @@ async def handle_panel_edit_start(call: types.CallbackQuery, params: list):
         'action': 'edit_panel_name',
         'msg_id': msg_id, 
         'panel_id': panel_id,
-        'next_handler': get_new_panel_name  # <--- ست کردن هندلر بعدی
+        'next_handler': get_new_panel_name,
+        'timestamp': time.time()  # ✅ اضافه شد: حل مشکل Timeout در ویرایش نام پنل
     }
     
     prompt = f"نام فعلی: {escape_markdown(panel['name'])}\nلطفاً نام جدید را وارد کنید:"

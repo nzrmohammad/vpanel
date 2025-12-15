@@ -1,8 +1,10 @@
 # bot/services/panels/factory.py
 from typing import Dict
 from .base import BasePanel
-from .marzban import MarzbanPanel
 from .hiddify import HiddifyPanel
+from .remnawave import RemnawavePanel
+from .marzban import MarzbanPanel
+
 
 class PanelFactory:
     _instances: Dict[str, BasePanel] = {}
@@ -44,7 +46,13 @@ class PanelFactory:
                 api_key=panel_data['api_token1'], # در دیتابیس: توکن ۱ = API Key
                 extra_config=extra
             )
-        
+        elif p_type == 'remnawave':
+            instance = RemnawavePanel(
+                api_url=panel_data['api_url'],
+                api_token=panel_data['api_token1'] # توکن در فیلد token1 ذخیره می‌شود
+            )
+
+
         else:
             raise ValueError(f"Unknown panel type: {p_type}")
 

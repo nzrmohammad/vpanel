@@ -471,3 +471,20 @@ async def reset_all_templates():
     # ✅ await
     await db.reset_templates_table()
     return True
+
+def extract_country_code_from_flag(text: str) -> str:
+    """
+    اگر ورودی پرچم باشد (مثلاً 🇩🇪)، کد آن (de) را برمی‌گرداند.
+    اگر متن باشد، همان متن را کوچک کرده و برمی‌گرداند.
+    """
+    text = text.strip()
+    
+    # پرچم‌ها معمولاً ۲ کاراکتر یونیکد هستند (حتی اگر ۱ شکل دیده شوند)
+    if len(text) == 2:
+        # بررسی اینکه آیا کاراکترها در بازه Regional Indicator هستند
+        if all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in text):
+            # تبدیل به حروف انگلیسی (A=65, Regional A=127462 -> Diff=127397)
+            code = "".join([chr(ord(c) - 127397) for c in text])
+            return code.lower()
+            
+    return text.lower()

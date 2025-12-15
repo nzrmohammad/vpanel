@@ -132,23 +132,33 @@ class AdminMenu(BaseMenu):
     # ---------------------------------------------------------
 
     async def panel_list_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """لیست پنل‌های متصل برای ویرایش/حذف"""
-        kb = self.create_markup(row_width=1)
+        """لیست پنل‌های متصل برای ویرایش/حذف (دو ستونه)"""
+        kb = self.create_markup(row_width=2)
         
         if not panels:
-            kb.add(self.btn("⚠️ هنوز پنلی اضافه نکرده‌اید", "noop"))
+            kb.row(self.btn("⚠️ هنوز پنلی اضافه نکرده‌اید", "noop"))
         
+        panel_buttons = []
         for p in panels:
             status = "✅" if p['is_active'] else "❌"
-            kb.add(self.btn(f"{status} {p['name']} ({p['panel_type']})", f"admin:panel_details:{p['id']}"))
+            btn_text = f"{status} {p['name']} ({p['panel_type']})"
+            panel_buttons.append(self.btn(btn_text, f"admin:panel_details:{p['id']}"))
             
-        kb.add(self.btn("➕ افزودن پنل جدید", "admin:panel_add_start"))
-        kb.add(self.btn("🔙 بازگشت", "admin:panel"))
+        if panel_buttons:
+            kb.add(*panel_buttons)
+            
+        kb.row(
+            self.btn("🌍 مدیریت کشورها", "admin:cat_manage"),
+            self.btn("➕ افزودن پنل", "admin:panel_add_start")
+        )
+        
+        kb.row(self.btn("🔙 بازگشت", "admin:panel"))
         return kb
 
 
     async def panel_category_selection_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=3) 
+        """منوی انتخاب کشور برای پنل (دو ستونه)"""
+        kb = self.create_markup(row_width=2) 
         
         for cat in categories:
             button_text = f"{cat['emoji']} {cat['name']}"
