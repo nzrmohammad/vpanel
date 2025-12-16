@@ -34,12 +34,14 @@ class AdminMenu(BaseMenu):
     
     async def management_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
         """
-        منوی انتخاب پنل برای مدیریت کاربران (همراه با پرچم و نوع پنل).
+        منوی انتخاب پنل برای مدیریت کاربران.
         """
         kb = self.create_markup(row_width=2)
         categories = await db.get_server_categories()
         cat_map = {c['code']: c['emoji'] for c in categories}
         
+        kb.add(self.btn("➕ افزودن کاربر جدید (سراسری)", "admin:add_user:all"))
+
         if not panels:
             kb.add(self.btn("⚠️ هیچ پنلی یافت نشد (افزودن پنل)", "admin:panel_add_start"))
         else:

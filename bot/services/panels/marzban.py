@@ -67,14 +67,17 @@ class MarzbanPanel(BasePanel):
 
     # --- Implementation of Base Methods ---
 
-    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None) -> Optional[dict]:
+    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None, telegram_id: str = None, squad_uuid: str = None) -> Optional[dict]:
         expire_ts = 0
         if expire_days > 0:
             expire_ts = int((datetime.now() + timedelta(days=expire_days)).timestamp())
         
+        ACTIVE_PROTOCOLS = ["vless"] 
+        proxies_config = {p: {} for p in ACTIVE_PROTOCOLS}
+
         payload = {
             "username": name,
-            "proxies": {"vless": {}, "vmess": {}, "trojan": {}, "shadowsocks": {}},
+            "proxies": proxies_config,
             "data_limit": int(limit_gb * (1024**3)),
             "expire": expire_ts,
             "status": "active"

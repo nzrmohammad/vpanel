@@ -44,7 +44,7 @@ class HiddifyPanel(BasePanel):
 
     # --- Implementation ---
 
-    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None) -> Optional[dict]:
+    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None, telegram_id: str = None, squad_uuid: str = None) -> Optional[dict]:
         payload = {
             "name": name,
             "usage_limit_GB": limit_gb,

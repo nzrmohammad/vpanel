@@ -13,18 +13,16 @@ class BasePanel(ABC):
         self.extra_config = extra_config or {}
 
     @abstractmethod
-    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None) -> Optional[dict]:
+    async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None, telegram_id: str = None, squad_uuid: str = None) -> Optional[dict]:
         """
         ساخت کاربر جدید در پنل.
-        
         Args:
             name: نام کاربر
-            limit_gb: محدودیت حجم به گیگابایت
-            expire_days: تعداد روز اعتبار
+            limit_gb: محدودیت حجم (GB)
+            expire_days: اعتبار (روز)
             uuid: شناسه یکتا (اختیاری)
-            
-        Returns:
-            دیکشنری اطلاعات کاربر ساخته شده یا None در صورت خطا
+            telegram_id: آیدی عددی تلگرام (فقط برای Remnawave)
+            squad_uuid: شناسه گروه/اسکواد (فقط برای Remnawave)
         """
         pass
 
