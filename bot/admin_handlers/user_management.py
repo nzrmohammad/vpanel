@@ -283,45 +283,56 @@ async def handle_add_user_start(call: types.CallbackQuery, params: list):
     await _safe_edit(uid, msg_id, f"➕ **افزودن کاربر جدید**\n\n🎯 فیلتر: {target_text}\n👇 سرور هدف را انتخاب کنید:", reply_markup=kb, parse_mode="Markdown")
 
 async def handle_add_user_select_panel(call: types.CallbackQuery):
-    """ذخیره پنل انتخاب شده و درخواست نام کاربر"""
+    """ذخیره پنل انتخاب شده و درخواست نام کاربر (همراه با لاگ دیباگ)"""
     uid = call.from_user.id
     msg_id = call.message.message_id
     
+    # لاگ ابتدایی برای بررسی دیتای دریافتی
+    print(f"\n[DEBUG] >>> handle_add_user_select_panel called")
+    print(f"[DEBUG] Callback Data: {call.data}")
+    
     # استخراج نام پنل از کالبک (admin:add_user_select_panel:PanelName)
     data_parts = call.data.split(':')
-    if len(data_parts) < 3: return
+    if len(data_parts) < 3: 
+        print("[DEBUG] ❌ Error: Invalid callback data length")
+        return
     panel_name = data_parts[2]
+    print(f"[DEBUG] Extracted panel_name: '{panel_name}'")
     
     # 1. تنظیم دقیق استیت برای دریافت نام
-    # این بخش حیاتی است تا ربات بداند مرحله بعدی "دریافت نام" است نه عدد
     admin_conversations[uid] = {
         'action': 'add_user',
-        'step': 'get_name',      # مرحله نام
+        'step': 'get_name',
         'data': {
             'panel_name': panel_name,
-            # مقادیر پیش‌فرض
             'telegram_id': None,
             'squad_uuid': None
         },
-        'msg_id': msg_id,        # آیدی پیام برای ویرایش
+        'msg_id': msg_id,
         'timestamp': time.time(),
-        'next_handler': get_new_user_name  # تابع بعدی که اجرا می‌شود
+        'next_handler': get_new_user_name
     }
     
     # 2. آماده‌سازی متن با رعایت Escape (حل ارور پرانتز)
     safe_panel_name = escape_markdown(panel_name)
+    print(f"[DEBUG] Escaped panel_name: '{safe_panel_name}'")
     
     text = (
         f"✅ سرور انتخاب شد: *{safe_panel_name}*\n\n"
         f"👤 لطفاً *نام کاربر جدید* را وارد کنید:"
     )
+    print(f"[DEBUG] Final text payload:\n{text}")
     
-    # 3. ویرایش همان پیام قبلی (جلوگیری از پیام جدید)
-    # دکمه انصراف هم می‌گذاریم
+    # 3. دکمه انصراف
     kb = types.InlineKeyboardMarkup()
     kb.add(admin_menu.btn("انصراف", "admin:cancel"))
     
-    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
+    # 4. ویرایش پیام با هندل کردن خطا
+    try:
+        await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
+        print("[DEBUG] ✅ Message edited successfully via _safe_edit")
+    except Exception as e:
+        print(f"[DEBUG] ❌ Error in _safe_edit: {e}")
 
 async def handle_add_user_select_panel_callback(call: types.CallbackQuery, params: list):
     """مرحله ۲: دریافت نام کاربر"""
@@ -345,7 +356,7 @@ async def handle_add_user_select_panel_callback(call: types.CallbackQuery, param
                      reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_name(message: types.Message):
-    """مرحله ۲: دریافت نام و تصمیم‌گیری برای مرحله بعد"""
+    """مرحله ۲: دریافت نام و تصمیم‌گیری برای مرحله بعد (اصلاح شده)"""
     uid, name = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
@@ -353,6 +364,7 @@ async def get_new_user_name(message: types.Message):
     
     # ذخیره نام
     admin_conversations[uid]['data']['name'] = name
+    msg_id = admin_conversations[uid]['msg_id']
     
     # تشخیص نوع پنل
     panel_name = admin_conversations[uid]['data'].get('panel_name')
@@ -367,17 +379,19 @@ async def get_new_user_name(message: types.Message):
     # 🛣️ تصمیم‌گیری مسیر
     if is_remnawave:
         try:
-            waiting = await bot.send_message(uid, "⏳ در حال دریافت لیست گروه‌ها (Squads)...")
+            # 1. به جای ارسال پیام جدید، پیام قبلی را ویرایش می‌کنیم
+            # پرانتزها باید اسکیپ شوند: \(Squads\)
+            waiting_text = "⏳ در حال دریافت لیست گروه‌ها \(Squads\)\.\.\."
+            await _safe_edit(uid, msg_id, waiting_text, reply_markup=None)
             
             panel_api = await PanelFactory.get_panel(panel_name)
             squads = await panel_api.get_active_squads()
-            
-            await waiting.delete()
 
             if squads:
                 # نمایش لیست اسکوادها
                 kb = types.InlineKeyboardMarkup(row_width=1)
                 for s in squads:
+                    # نام دکمه‌ها (text) نیاز به اسکیپ ندارد، اما callback_data باید دقیق باشد
                     kb.add(types.InlineKeyboardButton(f"🛡 {s['name']}", callback_data=f"admin:sel_squad:{s['uuid']}"))
                 
                 kb.add(types.InlineKeyboardButton("رد کردن (پیش‌فرض)", callback_data="admin:skip_squad"))
@@ -386,20 +400,27 @@ async def get_new_user_name(message: types.Message):
                 admin_conversations[uid]['step'] = 'get_squad'
                 admin_conversations[uid]['next_handler'] = None # منتظر کالبک
                 
-                await _safe_edit(uid, admin_conversations[uid]['msg_id'], 
-                                 f"👤 نام: `{name}`\n\n🛡 لطفاً یک **گروه (Squad)** برای کاربر انتخاب کنید:\n(تنظیمات پروتکل‌ها از این گروه خوانده می‌شود)", 
-                                 reply_markup=kb)
+                # 2. متن نهایی با رعایت کامل MarkdownV2
+                # پرانتزهای دور Squad باید اسکیپ شوند: \(Squad\)
+                safe_name = escape_markdown(name)
+                prompt_text = (
+                    f"👤 نام: `{safe_name}`\n\n"
+                    f"🛡 لطفاً یک *گروه \(Squad\)* برای کاربر انتخاب کنید:\n"
+                    f"\(تنظیمات پروتکل‌ها از این گروه خوانده می‌شود\)"
+                )
+                
+                await _safe_edit(uid, msg_id, prompt_text, reply_markup=kb)
                 return
             
         except Exception as e:
             logger.error(f"Error fetching squads: {e}")
         
-        # اگر اسکوادی نبود، برو مرحله تلگرام آیدی
+        # اگر اسکوادی نبود، برو مرحله بعد (تلگرام آیدی)
         await _ask_telegram_id(uid, name)
         
     else:
-        # اگر پنل معمولی بود -> برو مرحله حجم
-        await _ask_limit(uid, name)
+        # اگر پنل معمولی بود -> برو مرحله بعد (دریافت UUID)
+        await _ask_uuid(uid, name)
 
 async def get_new_user_telegram_id(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
@@ -413,7 +434,9 @@ async def get_new_user_telegram_id(message: types.Message):
         return
 
     admin_conversations[uid]['data']['telegram_id'] = text
-    await _ask_limit(uid, admin_conversations[uid]['data']['name'])
+    
+    name = admin_conversations[uid]['data']['name']
+    await _ask_uuid(uid, name)
 
 async def _ask_telegram_id(uid, name, prefix_msg=""):
     admin_conversations[uid]['step'] = 'get_telegram_id'
@@ -432,7 +455,23 @@ async def skip_telegram_id(call: types.CallbackQuery):
     uid = call.from_user.id
     if uid in admin_conversations:
         admin_conversations[uid]['data']['telegram_id'] = None
-        await _ask_limit(uid, admin_conversations[uid]['data']['name'])
+        
+        # تغییر مهم: رفتن به مرحله UUID به جای Limit
+        name = admin_conversations[uid]['data']['name']
+        await _ask_uuid(uid, name)
+
+async def _ask_uuid(uid, name):
+    """نمایش پیام درخواست UUID"""
+    admin_conversations[uid]['step'] = 'get_uuid'
+    admin_conversations[uid]['next_handler'] = get_new_user_uuid
+    
+    text = (
+        f"👤 نام: `{escape_markdown(name)}`\n\n"
+        f"🔑 لطفاً *UUID* دلخواه را ارسال کنید:\n"
+        f"\(یا برای ساخت رندوم، فقط کاراکتر `.` را بفرستید\)"
+    )
+    
+    await _safe_edit(uid, admin_conversations[uid]['msg_id'], text, reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_uuid(message: types.Message):
     """مرحله ۴: دریافت UUID و درخواست حجم"""
@@ -466,6 +505,8 @@ async def get_new_user_limit(message: types.Message):
     await _delete_user_message(message)
     if uid not in admin_conversations: return
     
+    msg_id = admin_conversations[uid]['msg_id']
+    
     try:
         limit = float(text)
         admin_conversations[uid]['data']['limit'] = limit
@@ -474,35 +515,39 @@ async def get_new_user_limit(message: types.Message):
         admin_conversations[uid]['step'] = 'get_days'
         admin_conversations[uid]['next_handler'] = get_new_user_days
         
-        await _safe_edit(uid, admin_conversations[uid]['msg_id'], 
-                         "📅 لطفاً **مدت اعتبار** را به روز وارد کنید:", 
+        # متن مرحله بعد (مدت زمان)
+        msg_text = "📅 لطفاً *مدت اعتبار* را به روز وارد کنید:"
+        
+        await _safe_edit(uid, msg_id, 
+                         msg_text, 
                          reply_markup=await admin_menu.cancel_action())
     except ValueError:
-        msg = await bot.send_message(uid, "❌ لطفاً عدد معتبر وارد کنید.")
-        asyncio.create_task(_auto_delete(msg, 3))
+        # نمایش خطا با ویرایش پیام قبلی
+        # نکته: متن خطا و راهنمای مجدد را با هم می‌آوریم تا کاربر بداند چه کند
+        error_text = "❌ لطفاً *عدد معتبر* وارد کنید\.\n\n📦 لطفاً حجم را به گیگابایت وارد کنید:\n\(عدد 0 برای نامحدود\)"
+        await _safe_edit(uid, msg_id, error_text, reply_markup=await admin_menu.cancel_action())
 
 async def get_new_user_days(message: types.Message):
-    """مرحله نهایی: ساخت کاربر"""
+    """مرحله نهایی: ساخت کاربر (با فرمت اصلاح شده)"""
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     if uid not in admin_conversations: return
+
+    msg_id = admin_conversations[uid]['msg_id']
 
     try:
         days = int(text)
         convo_data = admin_conversations.pop(uid)
         data = convo_data['data']
-        msg_id = convo_data['msg_id']
         
         waiting_text = escape_markdown("⏳ در حال ساخت کاربر...")
         await _safe_edit(uid, msg_id, waiting_text, reply_markup=None)
 
-        # استخراج تمام داده‌ها
+        # استخراج داده‌ها
         panel_name_target = data['panel_name']
         name = data['name']
         limit = data['limit']
-        user_uuid = data.get('uuid') # ممکن است از قبل ست شده باشد یا None
-        
-        # پارامترهای جدید
+        user_uuid = data.get('uuid') 
         telegram_id = data.get('telegram_id')
         squad_uuid = data.get('squad_uuid')
 
@@ -525,7 +570,6 @@ async def get_new_user_days(message: types.Message):
             try:
                 panel_api = await PanelFactory.get_panel(p['name'])
                 
-                # فراخوانی متد add_user با همه پارامترها
                 res = await panel_api.add_user(
                     name, limit, days, 
                     uuid=user_uuid, 
@@ -533,16 +577,14 @@ async def get_new_user_days(message: types.Message):
                     squad_uuid=squad_uuid
                 )
                 
-                # اگر اولین پنل موفق بود و UUID نداشتیم، UUID ساخته شده را برداریم
-                # (برای اینکه در همه پنل‌ها یکسان باشد، البته اگر پنل UUID برگرداند)
                 if res and res.get('uuid') and not user_uuid:
                     user_uuid = res.get('uuid')
 
-                # ساخت گزارش نمایش
                 cat_code = p.get('category')
                 meta = CATEGORY_META.get(cat_code, {})
                 flag = meta.get('emoji', '')
                 raw_cat_name = meta.get('name') if meta.get('name') else p['name']
+                # اسکیپ کردن نام‌ها برای لیست موفق‌ها
                 display_str = f"{flag} {escape_markdown(raw_cat_name)} \({escape_markdown(p['panel_type'])}\)"
                 
                 if res: success_list.append(display_str)
@@ -560,6 +602,13 @@ async def get_new_user_days(message: types.Message):
             success_str = "\n".join([f"🟢 {s}" for s in success_list])
             if not user_uuid: user_uuid = "نامشخص"
 
+            # ==========================================
+            # بخش اصلاح فرمت خروجی (واحد GB چسبیده به عدد)
+            # ==========================================
+            
+            # نکته: در MarkdownV2 همه متغیرها باید اسکیپ شوند.
+            # برای اینکه GB سمت راست عدد بیاید، فاصله را برمی‌داریم: `{limit}GB`
+            
             result_text = (
                 f"✅ *{escape_markdown('عملیات پایان یافت')}*\n\n"
                 f"👤 {escape_markdown('نام')} : `{escape_markdown(name)}`\n"
@@ -577,14 +626,17 @@ async def get_new_user_days(message: types.Message):
             await _safe_edit(uid, msg_id, "❌ خطا در ساخت کاربر.", reply_markup=kb)
 
     except ValueError:
-        pass
+        error_text = "❌ لطفاً *عدد معتبر* وارد کنید\.\n\n📅 لطفاً *مدت اعتبار* را به روز وارد کنید:"
+        await _safe_edit(uid, msg_id, error_text, reply_markup=await admin_menu.cancel_action())
 
 async def _ask_limit(uid, name):
     admin_conversations[uid]['step'] = 'get_limit'
     admin_conversations[uid]['next_handler'] = get_new_user_limit
     
+    text = "📦 لطفاً *حجم* را به گیگابایت وارد کنید:\n\(عدد 0 برای نامحدود\)"
+    
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], 
-                     "📦 لطفاً **حجم** را به گیگابایت وارد کنید:\n(عدد 0 برای نامحدود)", 
+                     text, 
                      reply_markup=await admin_menu.cancel_action())
 
 async def handle_squad_callback(call: types.CallbackQuery):
