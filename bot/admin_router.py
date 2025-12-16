@@ -118,6 +118,9 @@ ADMIN_CALLBACK_HANDLERS = {
     # Actions
     "add_user": route_add_user,
     "add_user_select_panel": getattr(user_management, 'handle_add_user_select_panel_callback', None),
+    "sel_squad": user_management.handle_squad_callback,
+    "skip_squad": user_management.handle_squad_callback,
+    "cancel": user_management.handle_cancel_process,
 
     # Reports
     "quick_dashboard": reporting.handle_quick_dashboard,
@@ -197,6 +200,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "renew_apply_plan": user_management.handle_renew_apply_plan,
     "churn_contact_user": user_management.handle_churn_contact_user,
     "churn_send_offer": user_management.handle_churn_send_offer,
+    "skip_telegram_id": user_management.skip_telegram_id,
 
     # Marzban Mapping
     "mapping_menu": user_management.handle_mapping_menu,

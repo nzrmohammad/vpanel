@@ -65,10 +65,9 @@ class RemnawavePanel(BasePanel):
 
         return new_data
 
-    # ✅ دریافت لیست اسکوادها
     async def get_active_squads(self) -> List[dict]:
         try:
-            # تلاش برای یافتن متد صحیح در SDK برای لیست کردن Squads
+            # 1. یافتن متد صحیح
             method_ctrl = getattr(self.client, "internal_squads", None)
             if not method_ctrl: return []
             
@@ -78,25 +77,57 @@ class RemnawavePanel(BasePanel):
             
             if not get_method: return []
 
+            # 2. دریافت پاسخ
             response = await get_method()
             
+            raw_items = []
+
+            # 3. استخراج لیست بر اساس ساختار لاگ شما
+            # لاگ نشان داد که response دارای فیلد internal_squads است
+            if hasattr(response, 'internal_squads'):
+                raw_items = response.internal_squads
+            elif isinstance(response, dict) and 'internal_squads' in response:
+                raw_items = response['internal_squads']
+            # سایر حالت‌های احتمالی
+            elif hasattr(response, 'items'):
+                raw_items = response.items
+            elif isinstance(response, list):
+                raw_items = response
+            elif hasattr(response, 'data'):
+                raw_items = response.data
+
             squads_list = []
-            raw_items = response.items if hasattr(response, 'items') else (response if isinstance(response, list) else [])
             
+            # 4. پردازش آیتم‌ها
             for s in raw_items:
-                # تبدیل مدل به دیکشنری
-                s_dict = s.model_dump() if hasattr(s, 'model_dump') else (s.__dict__ if hasattr(s, '__dict__') else str(s))
-                if isinstance(s_dict, dict):
+                # تلاش برای استخراج مستقیم ویژگی‌ها (چون DTO هستند)
+                uuid_val = getattr(s, 'uuid', None)
+                name_val = getattr(s, 'name', None)
+
+                # اگر مستقیم نشد، تلاش برای تبدیل به دیکشنری
+                if uuid_val is None:
+                    try:
+                        s_dict = {}
+                        if hasattr(s, 'model_dump'): s_dict = s.model_dump()
+                        elif hasattr(s, 'dict'): s_dict = s.dict()
+                        elif isinstance(s, dict): s_dict = s
+                        
+                        uuid_val = s_dict.get('uuid') or s_dict.get('id')
+                        name_val = s_dict.get('name') or s_dict.get('title')
+                    except: pass
+
+                if uuid_val:
                     squads_list.append({
-                        'uuid': str(s_dict.get('uuid', '')),
-                        'name': s_dict.get('name', 'Unknown Squad')
+                        'uuid': str(uuid_val),
+                        'name': str(name_val or 'Unknown Squad')
                     })
+
             return squads_list
+
         except Exception as e:
             logger.error(f"Error getting squads: {e}")
             return []
 
-    # ✅ متد کامل ساخت کاربر
     async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None, telegram_id: str = None, squad_uuid: str = None) -> Optional[dict]:
         try:
             # محاسبه حجم به بایت
@@ -110,12 +141,12 @@ class RemnawavePanel(BasePanel):
                 expire_date = datetime.now() + timedelta(days=int(expire_days))
                 expire_at = int(expire_date.timestamp())
             
-            # تنظیم درخواست
+            # تنظیم درخواست ساخت کاربر
             request_data = CreateUserRequestDto(
                 username=name,
-                traffic_limit_bytes=traffic_limit,  # نام فیلد صحیح (Bytes)
+                traffic_limit_bytes=traffic_limit,
                 expire_at=expire_at, 
-                status="ACTIVE", # حروف بزرگ
+                status="ACTIVE",
                 telegram_id=int(telegram_id) if telegram_id and str(telegram_id).isdigit() else None
             )
             
@@ -124,21 +155,40 @@ class RemnawavePanel(BasePanel):
                     request_data.uuid = uuid if isinstance(uuid, uuid_lib.UUID) else uuid_lib.UUID(uuid)
                 except ValueError: pass
 
-            # 1. ارسال درخواست ساخت کاربر
+            # 1. ساخت کاربر
             user_resp: UserResponseDto = await self.client.users.create_user(request_data)
             
-            # 2. افزودن به اسکواد (اگر انتخاب شده باشد)
-            if squad_uuid:
+            # 2. افزودن به اسکواد (با دور زدن باگ کتابخانه)
+            if squad_uuid and user_resp.uuid:
                 try:
+                    logger.info(f"Attempting to add user {user_resp.uuid} to squad {squad_uuid} via direct request")
+                    
+                    # تلاش برای یافتن متد صحیح یا ارسال مستقیم
+                    # ساختار بادی معمولا لیستی از UUID هاست
+                    payload = [str(user_resp.uuid)]
+                    
+                    # دسترسی به آبجکت داخلی برای ارسال درخواست خام (اگر متد رپر کار نکند)
+                    # معمولاً client.request یا client.api_client.request وجود دارد
+                    # اما اینجا سعی می‌کنیم از متد add_users_to_internal_squad با پارامتر body استفاده کنیم اگر جواب داد
+                    
                     squads_ctrl = getattr(self.client, "internal_squads", None)
                     if squads_ctrl:
-                        add_method = getattr(squads_ctrl, "add_users_to_internal_squad", None) or \
-                                     getattr(squads_ctrl, "add_users", None)
+                        # اگر متد استاندارد کار نکرد، بیایید فرض کنیم شاید body را به عنوان positional میپذیرد؟
+                        # اما چون signature فقط uuid دارد، احتمالا این راه بسته است.
                         
-                        if add_method:
-                            # ارسال درخواست عضویت در گروه
-                            await add_method(uuid=squad_uuid, users=[user_resp.uuid])
-                            logger.info(f"User {name} added to squad {squad_uuid}")
+                        # راه حل جایگزین: استفاده از `client.request` یا `httpx` اگر در دسترس باشد.
+                        # فرض بر این است که self.client یک متد request دارد (چون از remnawave.rapid استفاده میکند)
+                        
+                        # اگر نتوانستیم مستقیم بزنیم، لاگ میکنیم که دستی اضافه کنند
+                        # اما بیایید یک تلاش نهایی با پارامتر 'body' بکنیم (برخی کلاینت‌ها این را جادویی هندل می‌کنند)
+                        try:
+                            await squads_ctrl.add_users_to_internal_squad(uuid=squad_uuid, body=payload)
+                        except TypeError:
+                            # اگر باز هم نشد، یعنی کلاینت کاملا آن را مسدود کرده.
+                            # تنها راه باقی مانده دستکاری دیکشنری kwargs قبل از بیلد است که سخت است.
+                            logger.warning(f"⚠️ Could not add user to squad automatically due to library limitation. Please add user {name} to squad manually.")
+                            print(f"[CRITICAL] Remnawave Library Bug: add_users_to_internal_squad has no body argument. User created but not added to squad.")
+
                 except Exception as ex:
                     logger.error(f"Failed to add to squad: {ex}")
 

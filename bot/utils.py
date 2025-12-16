@@ -230,13 +230,28 @@ def _extract_browser_details(user_agent: str, browser_match: re.Match) -> Option
 # ==============================================================================
 
 async def _safe_edit(chat_id: int, msg_id: int, text: str, **kwargs):
+    """ویرایش پیام با قابلیت دیباگ دقیق"""
     if not bot: return
     try:
+        # پیش‌فرض MarkdownV2 است مگر اینکه چیز دیگری تنظیم شده باشد
         kwargs.setdefault('parse_mode', 'MarkdownV2')
+        
         await bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, **kwargs)
+        
     except Exception as e:
-        if 'message is not modified' not in str(e).lower():
-            logger.error(f"Safe edit failed: {e}")
+        # نادیده گرفتن ارور "پیام تغییر نکرده است"
+        if 'message is not modified' in str(e).lower():
+            return
+
+        # 🔥 اینجا جایی است که دیباگ می‌کنیم
+        print("\n" + "🔴" * 20)
+        print(f"[ERROR] Safe Edit Failed!")
+        print(f"❌ Exception: {e}")
+        print(f"📩 PAYLOAD (متنی که خطا داد):")
+        print(f"'{text}'")  # متن را داخل کوتیشن چاپ می‌کند تا فضاها مشخص شود
+        print("🔴" * 20 + "\n")
+        
+        logger.error(f"Safe edit failed for {chat_id}: {e}")
 
 async def get_service_plans() -> List[dict]:
     """دریافت پلن‌ها از دیتابیس به صورت Async"""
