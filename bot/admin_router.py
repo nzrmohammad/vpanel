@@ -119,6 +119,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "add_user": route_add_user,
     "add_user_select_panel": getattr(user_management, 'handle_add_user_select_panel_callback', None),
     "sel_squad": user_management.handle_squad_callback,
+    "sel_ext_squad": user_management.handle_external_squad_callback,
     "skip_squad": user_management.handle_squad_callback,
     "cancel": user_management.handle_cancel_process,
 

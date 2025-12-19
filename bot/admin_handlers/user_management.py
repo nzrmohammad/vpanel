@@ -307,7 +307,7 @@ async def get_new_user_uuid(message: types.Message):
         final_uuid = text
     else:
         msg_id = admin_conversations[uid]['msg_id']
-        await _safe_edit(uid, msg_id, "❌ فرمت UUID نامعتبر است. مجدد ارسال کنید یا `.` بزنید:", reply_markup=await admin_menu.cancel_action())
+        await _safe_edit(uid, msg_id, r"❌ فرمت UUID نامعتبر است\. مجدد ارسال کنید یا `\.` بزنید:", reply_markup=await admin_menu.cancel_action())
         return
 
     admin_conversations[uid]['data']['uuid'] = final_uuid
@@ -475,7 +475,7 @@ async def _ask_squad_selection(uid):
         await _finalize_user_creation(uid)
 
 async def handle_squad_callback(call: types.CallbackQuery, params: list):
-    """دریافت انتخاب اسکواد ⬅️ پایان"""
+    """دریافت انتخاب اسکواد داخلی ⬅️ انتخاب اسکواد خارجی"""
     uid = call.from_user.id
     if uid not in admin_conversations: return
 
@@ -484,12 +484,67 @@ async def handle_squad_callback(call: types.CallbackQuery, params: list):
 
     if action == 'sel_squad' and params:
         squad_uuid = params[0]
-        await bot.answer_callback_query(call.id, "✅ گروه انتخاب شد.")
+        await bot.answer_callback_query(call.id, "✅ گروه داخلی انتخاب شد.")
     else:
         await bot.answer_callback_query(call.id, "⏭ رد شد.")
 
     admin_conversations[uid]['data']['squad_uuid'] = squad_uuid
-    # نهایی‌سازی
+    
+    await _ask_external_squad_selection(uid)
+
+async def _ask_external_squad_selection(uid):
+    """مرحله ۷ (رمناویو): نمایش لیست External Squads"""
+    msg_id = admin_conversations[uid]['msg_id']
+    panel_name = admin_conversations[uid]['data'].get('panel_name')
+    
+    try:
+        await _safe_edit(uid, msg_id, "⏳ دریافت لیست External Squads...", reply_markup=None)
+        
+        panel_api = await PanelFactory.get_panel(panel_name)
+        
+        # چک می‌کنیم آیا این پنل اصلا متد اکسترنال دارد یا نه
+        if not hasattr(panel_api, 'get_active_external_squads'):
+            await _finalize_user_creation(uid)
+            return
+
+        ext_squads = await panel_api.get_active_external_squads()
+
+        if ext_squads:
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            buttons = []
+            for s in ext_squads:
+                # کال‌بک جدید: admin:sel_ext_squad
+                buttons.append(
+                    types.InlineKeyboardButton(f"🌍 {s['name']}", callback_data=f"admin:sel_ext_squad:{s['uuid']}")
+                )
+            kb.add(*buttons)
+            kb.add(admin_menu.btn("انصراف", "admin:cancel"))
+
+            admin_conversations[uid]['step'] = 'get_ext_squad'
+            
+            prompt_text = (
+                "🌍 لطفاً یک *External Squad* انتخاب کنید:\n"
+                "\(تنظیمات ظاهری و لینک اشتراک از این گروه خوانده می‌شود\)"
+            )
+            await _safe_edit(uid, msg_id, prompt_text, reply_markup=kb, parse_mode="MarkdownV2")
+        else:
+            # اگر اکسترنال اسکوادی نبود، تمام کن
+            await _finalize_user_creation(uid)
+            
+    except Exception as e:
+        logger.error(f"Error in external squad selection: {e}")
+        await _finalize_user_creation(uid)
+
+async def handle_external_squad_callback(call: types.CallbackQuery, params: list):
+    """دریافت انتخاب اسکواد خارجی ⬅️ پایان"""
+    uid = call.from_user.id
+    if uid not in admin_conversations: return
+
+    ext_uuid = params[0]
+    await bot.answer_callback_query(call.id, "✅ انتخاب شد.")
+
+    admin_conversations[uid]['data']['external_squad_uuid'] = ext_uuid
+    
     await _finalize_user_creation(uid)
 
 async def _finalize_user_creation(uid):
@@ -514,6 +569,7 @@ async def _finalize_user_creation(uid):
     user_uuid = data.get('uuid')
     telegram_id = data.get('telegram_id')
     squad_uuid = data.get('squad_uuid')
+    external_squad_uuid = data.get('external_squad_uuid')
 
     success_list = []
     fail_list = []
@@ -536,7 +592,8 @@ async def _finalize_user_creation(uid):
                 name, limit, days, 
                 uuid=user_uuid, 
                 telegram_id=telegram_id, 
-                squad_uuid=squad_uuid
+                squad_uuid=squad_uuid,
+                external_squad_uuid=external_squad_uuid
             )
             
             if res and res.get('uuid') and not user_uuid:
