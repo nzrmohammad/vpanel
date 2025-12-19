@@ -83,16 +83,29 @@ async def handle_quick_dashboard(call: types.CallbackQuery, params: list = None)
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel"))
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("admin:panel_reports"))
-async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: list):
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin:panel_report"))
+async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی گزارش‌های اختصاصی یک پنل."""
-    panel_type = params[0] if params else 'hiddify'
-    # ✅ This one already had await, keep it
+    if params is None:
+        params = call.data.split(':')[2:]
+        
+    if not params:
+        return await bot.answer_callback_query(call.id, "❌ شناسه پنل یافت نشد.")
+
+    panel_id = int(params[0])
+    
+    # دریافت نام پنل برای نمایش در متن پیام
+    async with db.get_session() as session:
+        from bot.db.base import Panel
+        panel_obj = await session.get(Panel, panel_id)
+        panel_name = panel_obj.name if panel_obj else f"Panel {panel_id}"
+
     await _safe_edit(
         call.from_user.id,
         call.message.message_id,
-        f"📊 گزارش‌های مربوط به پنل‌های <b>{panel_type}</b>:",
-        reply_markup=await admin_menu.panel_specific_reports_menu(panel_type),
+        f"📊 گزارش‌های مربوط به پنل <b>{panel_name}</b>:",
+        reply_markup=await admin_menu.panel_specific_reports_menu(panel_id, panel_name),
         parse_mode='HTML'
     )
 

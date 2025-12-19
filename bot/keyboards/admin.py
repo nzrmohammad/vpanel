@@ -78,8 +78,13 @@ class AdminMenu(BaseMenu):
         kb = self.create_markup(row_width=2)
         
         # دکمه‌های گزارش اختصاصی برای هر پنل
+        panel_buttons = []
         for p in panels:
-            kb.add(self.btn(f"گزارش {p['name']}", f"admin:panel_report_detail:{p['id']}"))
+            btn_text = f"{p['name']} ({p['panel_type']})" # فرمت درخواستی شما
+            panel_buttons.append(self.btn(btn_text, f"admin:panel_report_detail:{p['id']}"))
+
+        if panel_buttons:
+            kb.add(*panel_buttons)
 
         # گزارش‌های عمومی
         kb.add(
