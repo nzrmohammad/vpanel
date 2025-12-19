@@ -45,7 +45,8 @@ class User(Base):
     achievement_points: Mapped[int] = mapped_column(Integer, default=0)
     wallet_balance: Mapped[float] = mapped_column(Float, default=0.0)
     auto_renew: Mapped[bool] = mapped_column(Boolean, default=False)
-    uuids: Mapped[List["UserUUID"]] = relationship("UserUUID", back_populates="user", cascade="all, delete-orphan",lazy="selectin")
+    plan_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("plans.id", ondelete="SET NULL"))
+    uuids: Mapped[List["UserUUID"]] = relationship("UserUUID", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     transactions: Mapped[List["WalletTransaction"]] = relationship("WalletTransaction", back_populates="user")
 
 

@@ -299,10 +299,19 @@ class AdminMenu(BaseMenu):
     # --- متدهای کمکی و متفرقه ---
 
     async def select_plan_for_report_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=1)
+        kb = self.create_markup(row_width=2)
+        
+        kb.row(self.btn("👤 کاربران بدون پلن", "admin:list_by_plan:0:0"))
+        
+        # ساخت لیست دکمه‌های پلن‌ها
+        plan_btns = []
         for plan in plans:
-            kb.add(self.btn(plan['name'], f"admin:list_by_plan:{plan['id']}:0"))
-        kb.add(self.btn("🔙 بازگشت", "admin:reports_menu"))
+            plan_btns.append(self.btn(f"📦 {plan['name']}", f"admin:list_by_plan:{plan['id']}:0"))
+        
+        # اضافه کردن دکمه‌ها به صورت دو تایی در هر ردیف
+        kb.add(*plan_btns)
+        
+        kb.row(self.btn("🔙 بازگشت", "admin:reports_menu"))
         return kb
 
     async def select_plan_for_action_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:

@@ -8,12 +8,13 @@ from datetime import datetime, timedelta
 import asyncio
 import aiofiles
 from telebot import types
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, or_, desc
 
 from bot.bot_instance import bot
 from bot.keyboards import admin as admin_menu
 from bot.database import db
-from bot.db.base import User, UserUUID, WalletTransaction, ScheduledMessage, Panel
+from bot.db.base import User, UserUUID, WalletTransaction, ScheduledMessage, Panel, UsageSnapshot, Plan
+from bot.db import queries
 from bot.utils import _safe_edit, escape_markdown
 from bot.services.panels import PanelFactory
 
@@ -83,10 +84,10 @@ async def handle_quick_dashboard(call: types.CallbackQuery, params: list = None)
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel"))
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin:panel_report"))
 async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی گزارش‌های اختصاصی یک پنل."""
+    # اگر params ارسال نشده بود (فراخوانی مستقیم توسط تلگرام)، آن را استخراج کن
     if params is None:
         params = call.data.split(':')[2:]
         
@@ -281,87 +282,81 @@ async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = 
 # ---------------------------------------------------------
 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
-    """
-    هندلر عمومی برای نمایش لیست‌های طولانی.
-    """
     list_type = params[0]
-    
-    if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users', 'top_consumers']:
-        target_panel = params[1]
-        page = int(params[2])
-    elif list_type == 'by_plan':
-        plan_id = int(params[1])
-        page = int(params[2])
-        target_panel = None
-    else:
-        page = int(params[1])
-        target_panel = None
+    target_panel_id = int(params[1]) if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users'] else None
+    plan_id = int(params[1]) if list_type == 'by_plan' else None
+    page = int(params[2]) if (target_panel_id or plan_id is not None) else int(params[1])
 
-    PAGE_SIZE = 10
+    PAGE_SIZE = 34
     offset = page * PAGE_SIZE
-    
-    items = []
-    total_count = 0
-    title = "لیست"
+    items, total_count, title = [], 0, "گزارش"
 
     async with db.get_session() as session:
-        if list_type == 'payments':
-            title = "آخرین تراکنش‌ها (واریز)"
-            count_stmt = select(func.count(WalletTransaction.id)).where(WalletTransaction.type == 'charge')
-            stmt = select(WalletTransaction, User).join(User).where(WalletTransaction.type == 'charge') \
-                   .order_by(desc(WalletTransaction.transaction_date)).offset(offset).limit(PAGE_SIZE)
+        # ۱. انتخاب کوئری مناسب از فایل queries.py
+        if list_type == 'online_users':
+            panel_obj = await session.get(Panel, target_panel_id)
+            title = f"📡 آنلاین‌های پنل: {panel_obj.name}"
+            # دریافت از API
+            panel_service = await PanelFactory.get_panel(panel_obj.name)
+            online_data = await panel_service.get_all_users()
+            online_ids = [u.get('username') or u.get('uuid') for u in online_data if u.get('status') == 'active']
+            stmt = queries.get_online_users_query(target_panel_id, online_ids)
             
-            total_count = await session.scalar(count_stmt)
-            result = await session.execute(stmt)
-            
-            rows = result.all()
-            for trans, user in rows:
-                date_str = trans.transaction_date.strftime("%Y-%m-%d %H:%M")
-                items.append(f"👤 <code>{user.user_id}</code> | 💰 {int(trans.amount):,} | 📅 {date_str}")
-
+        elif list_type == 'active_users':
+            title = "✅ فعال (۲۴س) پنل"
+            stmt = queries.get_active_users_query(target_panel_id)
+        elif list_type == 'inactive_users':
+            title = "⏳ غیرفعال‌های پنل"
+            stmt = queries.get_inactive_users_query(target_panel_id)
+        elif list_type == 'never_connected':
+            title = "🚫 هرگز متصل نشده"
+            stmt = queries.get_never_connected_query(target_panel_id)
+        elif list_type == 'by_plan':
+            title = "📊 گزارش بر اساس پلن"
+            stmt = queries.get_users_by_plan_query(plan_id)
         elif list_type == 'bot_users':
-            title = "کاربران ربات"
-            count_stmt = select(func.count(User.user_id))
-            stmt = select(User).order_by(desc(User.user_id)).offset(offset).limit(PAGE_SIZE)
-            
-            total_count = await session.scalar(count_stmt)
-            result = await session.execute(stmt)
-            
-            for user in result.scalars():
-                items.append(f"👤 {user.first_name} (<code>{user.user_id}</code>)")
+            title = "👥 کل کاربران ربات"
+            stmt = select(User).order_by(User.user_id.desc())
+        else:
+            stmt = select(User) # پیش‌فرض
 
-        elif list_type == 'balances':
-            title = "موجودی کیف پول‌ها"
-            count_stmt = select(func.count(User.user_id)).where(User.wallet_balance > 0)
-            stmt = select(User).where(User.wallet_balance > 0).order_by(desc(User.wallet_balance)).offset(offset).limit(PAGE_SIZE)
-            
-            total_count = await session.scalar(count_stmt)
-            result = await session.execute(stmt)
-            
-            for user in result.scalars():
-                items.append(f"💰 {int(user.wallet_balance):,} T | 👤 {user.first_name}")
+        # ۲. اجرای کوئری با پجینیشن
+        total_count = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
+        
+        for user in result.scalars():
+            u_name = user.first_name or "بدون نام"
+            u_user = f" (@{user.username})" if user.username else ""
+            items.append(f"• {u_name}{u_user} [<code>{user.user_id}</code>] |")
 
-    text = f"📋 <b>{title}</b> (صفحه {page + 1})\n\n"
-    text += "\n".join(items) if items else "موردی یافت نشد."
-    
+    # ۳. ساخت متن و محاسبات صفحات
+    total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
+    text = f"<b>{title}</b>\n(صفحه {page + 1} از {max(1, total_pages)} | کل: {total_count})\n\n"
+    text += "\n".join(items) if items else "❌ موردی یافت نشد."
+
+    # ۴. ساخت دکمه‌های ناوبری (ناوبری کامل)
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
-    def make_cb(p):
-        if target_panel:
-            return f"admin:list:{list_type}:{target_panel}:{p}"
-        elif list_type == 'by_plan':
-            return f"admin:list_by_plan:{plan_id}:{p}"
-        else:
-            return f"admin:list:{list_type}:{p}"
+    # تابع کمکی برای ساخت کالبک دکمه‌ها
+    def get_cb(p):
+        if target_panel_id: return f"admin:list:{list_type}:{target_panel_id}:{p}"
+        if list_type == 'by_plan': return f"admin:list_by_plan:{plan_id}:{p}"
+        return f"admin:list:{list_type}:{p}"
 
+    # دکمه قبلی
     if page > 0:
-        nav_btns.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=make_cb(page - 1)))
+        nav_btns.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=get_cb(page - 1)))
+    # دکمه بعدی
     if (page + 1) * PAGE_SIZE < total_count:
-        nav_btns.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=make_cb(page + 1)))
-        
+        nav_btns.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=get_cb(page + 1)))
+
     if nav_btns: kb.add(*nav_btns)
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:reports_menu"))
+
+    # ۵. دکمه بازگشت هوشمند
+    back_cb = f"admin:panel_report:{target_panel_id}" if target_panel_id else \
+              ("admin:user_analysis_menu" if list_type == 'by_plan' else "admin:reports_menu")
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
 
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
