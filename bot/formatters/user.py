@@ -256,6 +256,13 @@ class UserFormatter:
         if not info:
             return escape_markdown("خطا در دریافت اطلاعات"), menu_data
 
+        user_id = target_row.get('user_id')
+        if user_id:
+            async with db.get_session() as session:
+                user_obj = await session.get(User, user_id)
+                if user_obj and user_obj.settings:
+                    info['settings'] = user_obj.settings
+
         report_text = await self.profile_info(info, lang_code)
         return report_text, menu_data
 

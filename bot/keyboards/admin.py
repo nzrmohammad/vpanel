@@ -607,3 +607,45 @@ class AdminMenu(BaseMenu):
         # بازگشت به لیست پنل‌ها
         kb.row(self.btn("🔙 بازگشت به لیست پنل‌ها", f"admin:us_acc_p_list:{identifier}"))
         return kb
+    
+
+    async def user_access_aggregated_menu(self, target_id, panels_data, user_panel_access):
+        """
+        منوی تجمیعی مدیریت دسترسی (پنل غیرقابل کلیک، نودها شامل سرور اصلی)
+        """
+        markup = types.InlineKeyboardMarkup(row_width=2)
+
+        for item in panels_data:
+            panel = item['panel']
+            nodes = item['nodes']
+            flag = item['flag']
+            panel_id = str(panel['id'])
+            
+            current_access = user_panel_access.get(panel_id, [])
+
+            # ۱. هدر پنل (فقط نمایش نام - غیرقابل کلیک)
+            header_text = f"📂 {panel['name']} ({panel['panel_type']}) {flag}"
+            markup.add(types.InlineKeyboardButton(header_text, callback_data="admin:none"))
+
+            # ۲. لیست نودها (شامل سرور اصلی و نودهای فرعی)
+            node_btns = []
+            for node in nodes:
+                # بررسی فعال بودن نود
+                is_enabled = node['code'] in current_access
+                status_icon = "✅" if is_enabled else "❌"
+                
+                # متن دکمه: وضعیت + پرچم + نام نود
+                btn_text = f"{status_icon} {node['flag']} {node['name']}"
+                
+                # کالبک تغییر وضعیت نود
+                callback = f"admin:tgl_n_acc:{target_id}:{panel['id']}:{node['code']}"
+                
+                node_btns.append(types.InlineKeyboardButton(btn_text, callback_data=callback))
+            
+            # چیدمان نودها
+            if node_btns:
+                markup.add(*node_btns)
+
+        markup.add(types.InlineKeyboardButton("🔙 بازگشت به پروفایل", callback_data=f"admin:us:{target_id}"))
+        
+        return markup

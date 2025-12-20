@@ -1743,15 +1743,47 @@ async def get_user_db_object(session, identifier: str):
             return await session.get(User, uuid_obj.user_id)
     return None
 
+# در فایل bot/admin_handlers/user_management.py
+
 async def handle_user_access_panel_list(call, params):
-    """مرحله ۱: نمایش لیست پنل‌ها (دو ستونه)"""
     identifier = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # 1. دریافت تمام پنل‌ها
-    panels = await db.get_all_panels()
+    panels = await db.get_active_panels()
+    all_cats = await db.get_server_categories()
+    cat_map = {c['code']: c['emoji'] for c in all_cats}
     
-    # 2. دریافت اطلاعات کاربر
+    panels_data = []
+    
+    for p in panels:
+        # دریافت نودهای واقعی (تعریف شده توسط ادمین)
+        nodes = await db.get_panel_nodes(p['id'])
+        
+        # اطلاعات سرور اصلی
+        main_cat = p['category'] or 'general'
+        main_flag = cat_map.get(main_cat, "🏳️")
+        
+        # بررسی اینکه آیا کد سرور اصلی در نودها هست یا خیر (جلوگیری از تکرار)
+        existing_codes = set(n['code'] for n in nodes)
+        
+        if main_cat not in existing_codes:
+            # ساخت نود مجازی برای سرور اصلی
+            main_node = {
+                'id': 0,
+                'name': 'سرور اصلی', 
+                'code': main_cat, 
+                'flag': main_flag
+            }
+            # اضافه کردن به ابتدای لیست نودها
+            nodes.insert(0, main_node)
+        
+        panels_data.append({
+            'panel': p,
+            'nodes': nodes,
+            'flag': main_flag
+        })
+
+    # دریافت تنظیمات کاربر
     user_settings = {}
     user_name = identifier
     async with db.get_session() as session:
@@ -1762,76 +1794,19 @@ async def handle_user_access_panel_list(call, params):
 
     panel_access = user_settings.get('panel_access', {})
 
-    # 3. دریافت مپینگ پرچم‌ها (برای نمایش روی دکمه‌های مرحله اول)
-    all_cats = await db.get_server_categories()
-    cat_map = {c['code']: c['emoji'] for c in all_cats}
+    markup = await admin_menu.user_access_aggregated_menu(identifier, panels_data, panel_access)
 
-    # متن با رعایت اسکیپ کاراکترها
     prompt = (
-        f"🏗 **مدیریت دسترسی نودها \(Nodes\)**\n"
+        f"🏗 *مدیریت دسترسی نودها \(Nodes\)*\n"
         f"👤 کاربر: `{escape_markdown(str(user_name))}`\n\n"
-        f"لیست پنل‌ها در زیر نمایش داده شده است\. روی هر پنل کلیک کنید تا نودهای آن را مدیریت کنید\.\n"
-        f"*\(\پرچم‌های روی دکمه نشان‌دهنده دسترسی‌های فعلی کاربر است\)*"
+        f"در اینجا می‌توانید دسترسی کاربر به نودهای هر سرور را مدیریت کنید\.\n"
+        f"با کلیک روی دکمه‌ها، دسترسی آن نود خاص برای کاربر قطع/وصل می‌شود\."
     )
     
-    markup = await admin_menu.user_access_panel_list_menu(identifier, panels, panel_access, cat_map)
     await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
-
-
-async def handle_user_access_nodes_menu(call, params):
-    """مرحله ۲: نمایش لیست نودهای اختصاصی پنل (از جدول PanelNode)"""
-    identifier = params[0]
-    panel_id = int(params[1])
-    uid, msg_id = call.from_user.id, call.message.message_id
     
-    async with db.get_session() as session:
-        user_db = await get_user_db_object(session, identifier)
-        if not user_db: return
-
-        panel = await session.get(Panel, panel_id)
-        if not panel: return
-
-        # خواندن تنظیمات کاربر
-        settings = user_db.settings or {}
-        panel_access = settings.get('panel_access', {})
-        allowed_nodes = panel_access.get(str(panel_id), [])
-
-    # ✅ تغییر مهم: دریافت نودهای اختصاصی این پنل از دیتابیس
-    # (قبلاً همه کشورها را می‌گرفتیم، الان فقط نودهای تعریف شده برای این پنل)
-    panel_nodes = await db.get_panel_nodes(panel_id)
-    
-    # اگر پنل هیچ نودی نداشت (مثلاً Hiddify ساده که نود تعریف نکردید)
-    # یک نود "پیش‌فرض" مجازی می‌سازیم که کاربر بتواند دسترسی را قطع/وصل کند
-    if not panel_nodes:
-        # استفاده از دسته‌بندی خود پنل به عنوان تک نود
-        main_cat = panel.category or 'general'
-        # پیدا کردن پرچم
-        all_cats = await db.get_server_categories()
-        flag = "🏳️"
-        for c in all_cats:
-            if c['code'] == main_cat:
-                flag = c['emoji']
-                break
-        
-        panel_nodes = [{
-            'id': 0, 
-            'name': 'سرور اصلی', 
-            'code': main_cat, 
-            'flag': flag
-        }]
-
-    prompt = (
-        f"🌍 **تنظیم نودهای سرور: {escape_markdown(panel.name)}**\n\n"
-        f"فقط نودهای فعال برای کاربر نمایش داده می‌شوند\."
-    )
-    
-    # ارسال لیست نودها به کیبورد
-    markup = await admin_menu.user_access_nodes_menu(identifier, panel_id, panel.name, panel_nodes, allowed_nodes)
-    await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
-
-
 async def handle_user_access_toggle(call, params):
-    """تغییر وضعیت یک کشور برای یک پنل خاص"""
+    """تغییر وضعیت دسترسی و رفرش لیست کلی"""
     identifier = params[0]
     panel_id = str(params[1])
     target_code = params[2]
@@ -1840,19 +1815,20 @@ async def handle_user_access_toggle(call, params):
         user_db = await get_user_db_object(session, identifier)
         if not user_db: return
         
+        # لود و آپدیت تنظیمات
         settings = dict(user_db.settings) if user_db.settings else {}
         panel_access = settings.get('panel_access', {})
         if not isinstance(panel_access, dict): panel_access = {}
         
         current_nodes = panel_access.get(panel_id, [])
         
-        action = ""
+        action_msg = ""
         if target_code in current_nodes:
             current_nodes.remove(target_code)
-            action = "❌ حذف شد"
+            action_msg = "❌ غیرفعال شد"
         else:
             current_nodes.append(target_code)
-            action = "✅ اضافه شد"
+            action_msg = "✅ فعال شد"
             
         panel_access[panel_id] = current_nodes
         settings['panel_access'] = panel_access
@@ -1863,6 +1839,6 @@ async def handle_user_access_toggle(call, params):
         
         await session.commit()
     
-    # رفرش منو
-    await handle_user_access_nodes_menu(call, [identifier, panel_id])
-    await bot.answer_callback_query(call.id, f"{target_code}: {action}")
+    # نکته مهم: نمایش پیام کوتاه و رفرش همان منوی اصلی
+    await bot.answer_callback_query(call.id, action_msg)
+    await handle_user_access_panel_list(call, [identifier])

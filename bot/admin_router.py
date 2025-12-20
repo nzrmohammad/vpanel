@@ -212,8 +212,10 @@ ADMIN_CALLBACK_HANDLERS = {
     'p_node_tog': panel_management.handle_node_toggle,
     'p_node_del': panel_management.handle_node_delete,
     'us_acc_p_list': user_management.handle_user_access_panel_list,
-    'us_acc_n_list': user_management.handle_user_access_nodes_menu,
     'us_acc_tgl': user_management.handle_user_access_toggle,
+    'tgl_acc': user_management.handle_user_access_toggle,
+    'tgl_p_acc': user_management.handle_toggle_panel_access,  # تغییر وضعیت کل پنل
+    'tgl_n_acc': user_management.handle_toggle_node_access,   # تغییر وضعیت یک نود
 
     # Marzban Mapping
     "mapping_menu": user_management.handle_mapping_menu,
