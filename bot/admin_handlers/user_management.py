@@ -922,27 +922,25 @@ async def _toggle_panel_user_status(handler, panel_type, identifier, action):
     """
     try:
         if panel_type == 'marzban':
-            # در مرزبان وضعیت status باید تغییر کند
-            # active | disabled
             status_val = "active" if action == 'enable' else "disabled"
             payload = {"status": status_val}
-            # استفاده از متد داخلی modify_user یا ارسال مستقیم ریکوئست
-            # چون modify_user استاندارد معمولا فقط حجم/روز دارد، اینجا مستقیم می‌زنیم
             return await handler._request("PUT", f"user/{identifier}", json=payload) is not None
 
         elif panel_type == 'hiddify':
-            # در هیدیفای معمولاً enable: true/false یا is_active استفاده می‌شود
-            # برای اطمینان از عدم حذف، فقط وضعیت را پچ می‌کنیم
             is_enable = (action == 'enable')
-            # نکته: برخی نسخه‌های هیدیفای enable و برخی is_active می‌پذیرند
-            # هر دو را می‌فرستیم تا روی نسخه‌های مختلف کار کند
             payload = {
                 "enable": is_enable, 
                 "is_active": is_enable,
-                "mode": "no_reset" # جلوگیری از ریست شدن حجم هنگام ادیت
+                "mode": "no_reset"
             }
             return await handler._request("PATCH", f"user/{identifier}", json=payload) is not None
+
+        elif panel_type == 'remnawave':
+            status_val = "ACTIVE" if action == 'enable' else "DISABLED"
+            payload = {"status": status_val}
             
+            return await handler._request("PATCH", f"api/users/{identifier}", json=payload) is not None
+
     except Exception as e:
         logger.error(f"Failed to toggle status API: {e}")
         return False

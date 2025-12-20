@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
+from bot.keyboards import user
 from bot.utils import validate_uuid
 
 logger = logging.getLogger(__name__)
@@ -13,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 async def _get_handler_for_panel(panel_name: str):
     """یک نمونه API handler (Async) از فکتوری می‌گیرد."""
-    # ایمپورت در داخل تابع برای جلوگیری از ایمپورت چرخشی
     from bot.services.panels.factory import PanelFactory
     try:
         return await PanelFactory.get_panel(panel_name)
@@ -86,6 +86,9 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
             
             # استخراج شناسه بر اساس نوع پنل
             if panel_type == 'hiddify':
+                uuid = user.get('uuid')
+                identifier = uuid
+            elif panel_type == 'remnawave':
                 uuid = user.get('uuid')
                 identifier = uuid
             elif panel_type == 'marzban':
@@ -189,13 +192,125 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
         panel_type = panel_config['panel_type']
         
         try:
+            # --- منطق Hiddify ---
             if panel_type == 'hiddify' and hiddify_uuid_to_query:
+                logger.info(f"🔎 Querying Hiddify '{panel_config['name']}' for {hiddify_uuid_to_query}...")
+                user_info = await handler.get_user(hiddify_uuid_to_query)
+
+            # --- منطق Remnawave ---
+            elif panel_type == 'remnawave' and hiddify_uuid_to_query:
+                logger.info(f"🔎 Querying Remnawave '{panel_config['name']}' for {hiddify_uuid_to_query}...")
+                user_info = await handler.get_user(hiddify_uuid_to_query)
+
+            # --- منطق Marzban ---
+            elif panel_type == 'marzban' and marzban_username_to_query:
+                logger.info(f"🔎 Querying Marzban '{panel_config['name']}' for {marzban_username_to_query}...")
+                user_info = await handler.get_user(marzban_username_to_query)
+            
+            # لاگ وضعیت پیدا شدن یا نشدن
+            if user_info:
+                logger.info(f"✅ Found user in '{panel_config['name']}'")
+            else:
+                logger.info(f"❌ User Not Found in '{panel_config['name']}' (Result is None)")
+
+        except Exception as e:
+            logger.error(f"❌ Exception querying '{panel_config['name']}': {e}")
+            pass
+
+        if user_info:
+            # استانداردسازی خروجی پنل‌ها
+            limit_gb = 0
+            current_gb = 0
+            if 'usage_limit_GB' in user_info:
+                limit_gb = float(user_info['usage_limit_GB'] or 0)
+                current_gb = float(user_info.get('current_usage_GB', 0) or 0)
+            elif 'data_limit' in user_info:
+                limit_gb = float(user_info['data_limit']) / (1024**3) if user_info['data_limit'] else 0
+                current_gb = float(user_info.get('used_traffic', 0)) / (1024**3) if user_info.get('used_traffic') else 0
+            
+            user_data_map[panel_config['name']] = {
+                "data": {**user_info, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
+                "type": panel_type,"category": panel_config.get('category')
+            }
+
+    if not user_data_map:
+        return None
+    
+    # تجمیع داده‌ها
+    total_usage = sum(p['data'].get('current_usage_GB', 0) for p in user_data_map.values())
+    total_limit = sum(p['data'].get('usage_limit_GB', 0) for p in user_data_map.values())
+    
+    # پیدا کردن وضعیت فعال بودن (اگر حداقل در یک پنل فعال باشد)
+    is_active = any(
+        (p['data'].get('status') == 'active' or p['data'].get('is_active') == True) 
+        for p in user_data_map.values()
+    )
+
+    final_info = {
+        'breakdown': user_data_map,
+        'is_active': is_active,
+        'last_online': None,
+        'current_usage_GB': total_usage,
+        'usage_limit_GB': total_limit,
+        'expire': None,
+        'uuid': hiddify_uuid_to_query,
+        'name': identifier
+    }
+    
+    # محاسبه expire و name
+    expires = []
+    names = []
+    for p in user_data_map.values():
+        if p['data'].get('expire'): expires.append(p['data']['expire'])
+        if p['data'].get('username'): names.append(p['data']['username'])
+        elif p['data'].get('name'): names.append(p['data']['name'])
+    
+    if expires:
+        valid_expires = [e for e in expires if e > 0]
+        if valid_expires:
+            final_info['expire'] = min(valid_expires)
+            
+    if names:
+        final_info['name'] = names[0]
+
+    # محاسبات نهایی
+    final_info['remaining_GB'] = max(0, total_limit - total_usage)
+    final_info['usage_percentage'] = (total_usage / total_limit * 100) if total_limit > 0 else 0
+    
+    return final_info
+    from bot.database import db # Local import
+    
+    is_uuid = validate_uuid(identifier)
+    all_panels = await db.get_active_panels()
+    
+    hiddify_uuid_to_query = None
+    marzban_username_to_query = None
+
+    if is_uuid:
+        hiddify_uuid_to_query = identifier
+        marzban_username_to_query = await db.get_marzban_username_by_uuid(identifier)
+    else:
+        marzban_username_to_query = identifier
+        hiddify_uuid_to_query = await db.get_uuid_by_marzban_username(identifier)
+
+    user_data_map = {}
+
+    for panel_config in all_panels:
+        handler = await _get_handler_for_panel(panel_config['name'])
+        if not handler: continue
+
+        user_info = None
+        panel_type = panel_config['panel_type']
+        
+        try:
+            if panel_type == 'hiddify' and hiddify_uuid_to_query:
+                user_info = await handler.get_user(hiddify_uuid_to_query)
+            elif panel_type == 'remnawave' and hiddify_uuid_to_query:
                 user_info = await handler.get_user(hiddify_uuid_to_query)
             elif panel_type == 'marzban' and marzban_username_to_query:
                 user_info = await handler.get_user(marzban_username_to_query)
-        except Exception:
-            # کاربر در این پنل نیست
-            pass
+        except Exception as e:
+            logger.error(f"❌ Error fetching from {panel_config['name']}: {e}")
 
         if user_info:
             # استانداردسازی خروجی پنل‌ها
@@ -331,6 +446,16 @@ async def modify_user_on_all_panels(
             except Exception as e:
                 logger.error(f"Error modifying Hiddify: {e}")
 
+        # --- Remnawave Logic ---
+        elif panel_type == 'remnawave' and uuid:
+            try:
+                success = await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days)
+                if success:
+                    any_success = True
+                    logger.info(f"✅ Modified on Remnawave '{panel_name}'")
+            except Exception as e:
+                logger.error(f"Error modifying Remnawave: {e}")
+
         # --- Marzban Logic ---
         elif panel_type == 'marzban' and marzban_username:
             try:
@@ -373,6 +498,9 @@ async def delete_user_from_all_panels(identifier: str) -> bool:
 
         try:
             if panel_type == 'hiddify' and user_panel_data.get('uuid'):
+                if not await handler.delete_user(user_panel_data['uuid']):
+                    all_success = False
+            elif panel_type == 'remnawave' and user_panel_data.get('uuid'):
                 if not await handler.delete_user(user_panel_data['uuid']):
                     all_success = False
             elif panel_type == 'marzban' and user_panel_data.get('username'):

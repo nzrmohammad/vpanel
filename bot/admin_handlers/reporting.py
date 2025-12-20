@@ -282,9 +282,16 @@ async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = 
 # ---------------------------------------------------------
 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
+    """
+    نمایش لیست‌های صفحه‌بندی شده (کاربران آنلاین، فعال، غیرفعال و ...).
+    """
     list_type = params[0]
+    
+    # تعیین پارامترهای پنل یا پلن
     target_panel_id = int(params[1]) if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users'] else None
     plan_id = int(params[1]) if list_type == 'by_plan' else None
+    
+    # تعیین شماره صفحه
     page = int(params[2]) if (target_panel_id or plan_id is not None) else int(params[1])
 
     PAGE_SIZE = 34
@@ -292,14 +299,58 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
     items, total_count, title = [], 0, "گزارش"
 
     async with db.get_session() as session:
-        # ۱. انتخاب کوئری مناسب از فایل queries.py
+        # ---------------------------------------------------------
+        # ۱. انتخاب کوئری مناسب بر اساس نوع لیست
+        # ---------------------------------------------------------
         if list_type == 'online_users':
             panel_obj = await session.get(Panel, target_panel_id)
-            title = f"📡 آنلاین‌های پنل: {panel_obj.name}"
-            # دریافت از API
-            panel_service = await PanelFactory.get_panel(panel_obj.name)
-            online_data = await panel_service.get_all_users()
-            online_ids = [u.get('username') or u.get('uuid') for u in online_data if u.get('status') == 'active']
+            title = f"📡 آنلاین‌های لحظه‌ای (۱۰ دقیقه): {panel_obj.name}"
+            
+            # دریافت لیست همه کاربران از API پنل
+            try:
+                panel_service = await PanelFactory.get_panel(panel_obj.name)
+                online_data = await panel_service.get_all_users()
+            except Exception as e:
+                logger.error(f"Error fetching users from panel: {e}")
+                online_data = []
+            
+            online_ids = []
+            
+            # تنظیم بازه زمانی (۱۰ دقیقه اخیر)
+            limit_minutes = 10
+            now_utc = datetime.utcnow()
+            
+            for u in online_data:
+                # تلاش برای یافتن فیلد زمان اتصال (نام فیلد در پنل‌های مختلف متفاوت است)
+                # Marzban: 'online_at', Hiddify/Others: 'last_connection', 'last_seen', 'last_online'
+                last_seen_raw = u.get('online_at') or u.get('last_online') or u.get('last_connection')
+                
+                if last_seen_raw:
+                    try:
+                        last_seen_dt = None
+                        
+                        # حالت ۱: اگر زمان به صورت Timestamp (عدد) باشد
+                        if isinstance(last_seen_raw, (int, float)):
+                            last_seen_dt = datetime.utcfromtimestamp(float(last_seen_raw))
+                            
+                        # حالت ۲: اگر زمان به صورت رشته (ISO Format) باشد (مثل مرزبان)
+                        elif isinstance(last_seen_raw, str):
+                            # تمیز کردن رشته زمان (حذف Z و میلی‌ثانیه اضافی)
+                            clean_time = last_seen_raw.replace('Z', '')
+                            if '.' in clean_time:
+                                clean_time = clean_time.split('.')[0]
+                            last_seen_dt = datetime.fromisoformat(clean_time)
+
+                        # مقایسه زمان
+                        if last_seen_dt:
+                            # اگر اختلاف زمان کمتر از حد مجاز باشد (کاربر آنلاین است)
+                            if (now_utc - last_seen_dt) < timedelta(minutes=limit_minutes):
+                                online_ids.append(u.get('username') or u.get('uuid'))
+                                
+                    except Exception:
+                        pass # در صورت فرمت نامعتبر، نادیده بگیر
+
+            # دریافت کوئری دیتابیس برای این لیست از شناسه‌ها
             stmt = queries.get_online_users_query(target_panel_id, online_ids)
             
         elif list_type == 'active_users':
@@ -318,23 +369,32 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
             title = "👥 کل کاربران ربات"
             stmt = select(User).order_by(User.user_id.desc())
         else:
-            stmt = select(User) # پیش‌فرض
+            # پیش‌فرض
+            title = "لیست کاربران"
+            stmt = select(User)
 
+        # ---------------------------------------------------------
         # ۲. اجرای کوئری با پجینیشن
+        # ---------------------------------------------------------
+        # شمارش کل نتایج برای محاسبه صفحات
         total_count = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        
+        # دریافت داده‌های صفحه جاری
         result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
         
         for user in result.scalars():
             u_name = user.first_name or "بدون نام"
             u_user = f" (@{user.username})" if user.username else ""
+            # نمایش آیدی عددی و نام
             items.append(f"• {u_name}{u_user} [<code>{user.user_id}</code>] |")
 
-    # ۳. ساخت متن و محاسبات صفحات
+    # ---------------------------------------------------------
+    # ۳. ساخت متن خروجی و دکمه‌ها
+    # ---------------------------------------------------------
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
     text = f"<b>{title}</b>\n(صفحه {page + 1} از {max(1, total_pages)} | کل: {total_count})\n\n"
     text += "\n".join(items) if items else "❌ موردی یافت نشد."
 
-    # ۴. ساخت دکمه‌های ناوبری (ناوبری کامل)
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
@@ -353,9 +413,14 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
 
     if nav_btns: kb.add(*nav_btns)
 
-    # ۵. دکمه بازگشت هوشمند
-    back_cb = f"admin:panel_report:{target_panel_id}" if target_panel_id else \
-              ("admin:user_analysis_menu" if list_type == 'by_plan' else "admin:reports_menu")
+    # دکمه بازگشت هوشمند
+    if list_type == 'by_plan':
+        back_cb = "admin:user_analysis_menu" # منوی انتخاب پلن
+    elif target_panel_id:
+        back_cb = f"admin:panel_report:{target_panel_id}" # منوی گزارش پنل
+    else:
+        back_cb = "admin:reports_menu" # منوی اصلی گزارشات
+
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
 
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
