@@ -85,6 +85,18 @@ class Panel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     allowed_uuids: Mapped[List["UserUUID"]] = relationship("UserUUID", secondary="uuid_panel_access", back_populates="allowed_panels")
 
+class PanelNode(Base):
+    """نودهای متصل به هر پنل (برای پنل‌های چند سروره مثل Remnawave یا Hiddify چند نود)"""
+    __tablename__ = "panel_nodes"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    panel_id: Mapped[int] = mapped_column(Integer, ForeignKey("panels.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(100))
+    country_code: Mapped[str] = mapped_column(String(20))
+    flag: Mapped[str] = mapped_column(String(20))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class UUIDPanelAccess(Base):
     __tablename__ = "uuid_panel_access"

@@ -202,6 +202,18 @@ ADMIN_CALLBACK_HANDLERS = {
     "churn_contact_user": user_management.handle_churn_contact_user,
     "churn_send_offer": user_management.handle_churn_send_offer,
     "skip_telegram_id": user_management.skip_telegram_id,
+    'panel_add_node_start': panel_management.handle_panel_add_node_start,
+    'panel_node_save': panel_management.handle_panel_node_save,
+    'panel_ch_ren': panel_management.handle_panel_choice_rename,
+    'panel_ch_del': panel_management.handle_panel_choice_delete,
+    'panel_ch_tog': panel_management.handle_panel_choice_toggle,
+    'panel_node_sel': panel_management.handle_panel_node_selection,
+    'p_node_ren_st': panel_management.handle_node_rename_start,
+    'p_node_tog': panel_management.handle_node_toggle,
+    'p_node_del': panel_management.handle_node_delete,
+    'us_acc_p_list': user_management.handle_user_access_panel_list,
+    'us_acc_n_list': user_management.handle_user_access_nodes_menu,
+    'us_acc_tgl': user_management.handle_user_access_toggle,
 
     # Marzban Mapping
     "mapping_menu": user_management.handle_mapping_menu,

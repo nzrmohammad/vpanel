@@ -58,34 +58,55 @@ class UserFormatter:
     تمام متدها به صورت یکپارچه در این کلاس قرار دارند.
     """
     async def profile_info(self, info: dict, lang_code: str) -> str:
-        """
-        نمایش اطلاعات دقیق سرویس با فیکس ساعت هیدیفای، چیدمان فارسی و حل مشکل پرچم و اسکیپ.
-        """
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
+
+        # --- دریافت اطلاعات دیتابیس (پنل‌ها و نودها) ---
+        # ما باید بدانیم کدام پنل چه نودهایی دارد و کاربر چه دسترسی‌هایی
+        
+        panel_map = {} # { "نام پنل": {id: 1, nodes: [...], main_flag: "🇩🇪"} }
+        
+        async with db.get_session() as session:
+            from bot.db.base import Panel, PanelNode
+            from sqlalchemy import select
+            
+            # دریافت همه پنل‌ها
+            panels_res = await session.execute(select(Panel))
+            all_panels = panels_res.scalars().all()
+            
+            # دریافت همه نودهای فعال
+            nodes_res = await session.execute(select(PanelNode).where(PanelNode.is_active == True))
+            all_nodes = nodes_res.scalars().all()
+            
+            # دریافت مپینگ ایموجی‌ها
+            cat_emoji_map = await _get_category_map()
+            
+            for p in all_panels:
+                p_nodes = [n for n in all_nodes if n.panel_id == p.id]
+                main_flag = cat_emoji_map.get(p.category, "")
+                
+                # نگاشت نام پنل به اطلاعاتش (برای دسترسی سریع در حلقه)
+                panel_map[p.name] = {
+                    "id": str(p.id),
+                    "nodes": p_nodes,
+                    "main_flag": main_flag,
+                    "category": p.category
+                }
+
+        # دریافت تنظیمات دسترسی کاربر
+        user_settings = info.get('settings') or {}
+        panel_access_settings = user_settings.get('panel_access', {})
+        # -----------------------------------------------
 
         # دریافت مصرف روزانه
         daily_usage_dict = {} 
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
 
-        # 1. دریافت نقشه کد به ایموجی
-        cat_emoji_map = await _get_category_map()
-
-        # 2. دریافت نقشه نام پنل به کد کشور
-        panel_name_to_cat = {}
-        async with db.get_session() as session:
-            stmt = select(Panel)
-            result = await session.execute(stmt)
-            for p in result.scalars():
-                if p.category:
-                    panel_name_to_cat[p.name] = p.category
-
         raw_name = info.get("name", get_string('unknown_user', lang_code))
         is_active_overall = info.get("is_active", False)
         status_emoji = get_string("fmt_status_active", lang_code) if is_active_overall else get_string("fmt_status_inactive", lang_code)
         
-        # هدر با اسکیپ صحیح
         header_raw = f"{get_string('fmt_user_name_header', lang_code)} : {raw_name} ({EMOJIS['success'] if is_active_overall else EMOJIS['error']} {status_emoji})"
         header_line = f"*{escape_markdown(header_raw)}*"
 
@@ -94,23 +115,49 @@ class UserFormatter:
         report.append(separator)
         
         breakdown = info.get('breakdown', {})
-        
-        # کاراکتر اصلاح جهت متن
         LTR = "\u200e"
 
+        # --- تابع داخلی فرمت‌دهی ---
         def format_panel_section(panel_name, panel_details):
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
             
-            # تشخیص دسته
-            category_code = panel_details.get('category')
-            if not category_code:
-                category_code = panel_name_to_cat.get(panel_name)
+            # پیدا کردن اطلاعات پنل در مپ دیتابیس
+            # نکته: ممکن است نام در API با نام دیتابیس کمی فرق داشته باشد (تریم کردن)
+            db_info = panel_map.get(panel_name) or panel_map.get(panel_name.strip())
             
-            flag = cat_emoji_map.get(category_code, "") if category_code else ""
-            if not flag: flag = "🏳️"
+            # متغیر برای جمع‌آوری پرچم‌ها
+            flags_set = set()
+            
+            if db_info:
+                # 1. افزودن پرچم اصلی پنل (اگر وجود دارد)
+                if db_info['main_flag']:
+                    flags_set.add(db_info['main_flag'])
+                
+                # 2. بررسی نودهای فرعی
+                # لیست کدهای مجاز کاربر برای این پنل (مثلاً ['de', 'tr'])
+                user_allowed_codes = panel_access_settings.get(db_info['id'], [])
+                
+                if user_allowed_codes:
+                    # چک کردن تک تک نودهای این پنل
+                    for node in db_info['nodes']:
+                        # اگر کد نود (tr) در لیست مجاز کاربر بود
+                        if node.country_code in user_allowed_codes:
+                            flags_set.add(node.flag)
+            else:
+                # اگر پنل در دیتابیس پیدا نشد (حالت خاص)، تلاش برای گرفتن از متادیتا
+                cat = panel_details.get('category')
+                if cat:
+                    f = cat_emoji_map.get(cat, "")
+                    if f: flags_set.add(f)
 
-            # تشخیص وضعیت سرور (✅ یا ❌)
+            # تبدیل مجموعه پرچم‌ها به رشته (مرتب شده)
+            if flags_set:
+                final_flag_str = "".join(sorted(list(flags_set)))
+            else:
+                final_flag_str = "🏳️" # پرچم سفید اگر هیچ چیزی پیدا نشد
+
+            # --- ادامه کدهای نمایش ---
             raw_status = p_data.get('status')
             is_enabled = p_data.get('enable')
             is_active_flag = p_data.get('is_active')
@@ -118,17 +165,14 @@ class UserFormatter:
             is_panel_active = (raw_status == 'active') or (is_enabled is True) or (is_active_flag is True)
             panel_status_icon = "✅" if is_panel_active else "❌"
 
-            # مقادیر مصرف
             limit = p_data.get("usage_limit_GB", 0.0)
             usage = p_data.get("current_usage_GB", 0.0)
             remaining_gb = max(0, limit - usage)
             this_usage = daily_usage_dict.get(p_type, 0.0)
 
-            # محاسبه انقضا
             expire_val = p_data.get('expire')
             package_days = p_data.get('package_days')
             start_date = p_data.get('start_date')
-            
             expire_str = get_string("fmt_expire_unlimited", lang_code)
 
             if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
@@ -155,7 +199,6 @@ class UserFormatter:
                         expire_str = get_string("fmt_expire_days", lang_code).format(days=int(package_days))
                 except: pass
 
-            # فیکس ساعت
             raw_last_online = p_data.get('last_online') or p_data.get('online_at')
             fixed_last_online = raw_last_online
 
@@ -175,9 +218,8 @@ class UserFormatter:
             remaining_fmt = f"{LTR}{remaining_gb:.2f} GB"
             daily_fmt = f"{LTR}{format_daily_usage(this_usage)}"
 
-            # ✅ اصلاح اصلی اینجاست: افزودن \ قبل از پرانتزها
             return [
-                f"*سرور {flag} \({panel_status_icon}\)*",
+                f"*سرور {final_flag_str} \({panel_status_icon}\)*",
                 f"{EMOJIS['database']} {escape_markdown('حجم کل :')} {escape_markdown(limit_fmt)}",
                 f"{EMOJIS['fire']} {escape_markdown('حجم مصرف شده :')} {escape_markdown(usage_fmt)}",
                 f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_fmt)}",
@@ -190,34 +232,10 @@ class UserFormatter:
         for p_name, p_details in breakdown.items():
             report.extend(format_panel_section(p_name, p_details))
 
-        uuid_str = info.get('uuid')
-        safe_uuid_str = str(uuid_str) if uuid_str else ""
-        
-        user_id = None
-        if safe_uuid_str:
-             user_id = await db.get_user_id_by_uuid(safe_uuid_str)
-
-        if safe_uuid_str and user_id:
-            uuid_id_db = await db.get_uuid_id_by_uuid(safe_uuid_str)
-            if uuid_id_db:
-                user_agents = await db.get_user_agents_for_uuid(uuid_id_db)
-                if user_agents:
-                    report.append("📱 *دستگاه‌های شما*")
-                    for agent in user_agents[:6]: 
-                        parsed = parse_user_agent(agent['user_agent'])
-                        if parsed:
-                            client_name = escape_markdown(parsed.get('client', 'Unknown'))
-                            last_seen = escape_markdown(to_shamsi(agent['last_seen'], include_time=True))
-                            # پرانتزهای اینجا هم اسکیپ می‌شوند توسط escape_markdown در last_seen یا دستی
-                            report.append(f"` `└─ 💻 *{client_name}* \\(_{last_seen}_\\)")
-                    report.append(separator)
-
-        report.extend([
-            f'*{get_string("fmt_uuid_new", lang_code)} :* `{escape_markdown(safe_uuid_str)}`',
-            "",
-            f'*{get_string("fmt_status_bar_new", lang_code)} :* {create_progress_bar(info.get("usage_percentage", 0))}'
-        ])
-        
+        uuid_val = info.get('uuid')
+        if uuid_val:
+            report.append(f"🔑 {escape_markdown('شناسه یکتا :')} `{escape_markdown(uuid_val)}`")
+            
         return "\n".join(report)
 
     async def quick_stats(self, uuid_rows: list, page: int, lang_code: str) -> tuple[str, dict]:

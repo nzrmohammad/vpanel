@@ -28,27 +28,41 @@ class RemnawavePanel(BasePanel):
         if not data: return {}
         new_data = data.copy()
         
-        # 1. تبدیل زمان انقضا (datetime یا int)
+        # 1. تبدیل زمان انقضا
         expire_val = new_data.get('expire_at') or new_data.get('expireAt')
         if expire_val:
             if isinstance(expire_val, datetime):
                 new_data['expire'] = int(expire_val.timestamp())
             else:
-                try: new_data['expire'] = int(expire_val)
+                try: 
+                    # هندل کردن فرمت متنی ISO مثل 2025-12-20T12:07:53.473Z
+                    if isinstance(expire_val, str) and "T" in expire_val:
+                        dt = datetime.strptime(expire_val.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+                        new_data['expire'] = int(dt.timestamp())
+                    else:
+                        new_data['expire'] = int(expire_val)
                 except: new_data['expire'] = None
         
-        # 2. تبدیل حجم کل (traffic_limit_bytes به گیگابایت)
-        limit_bytes = new_data.get('traffic_limit_bytes') or new_data.get('traffic_limit') or new_data.get('trafficLimit')
+        # 2. تبدیل حجم کل (trafficLimitBytes)
+        limit_bytes = new_data.get('trafficLimitBytes') or new_data.get('traffic_limit_bytes')
         if limit_bytes:
             new_data['usage_limit_GB'] = float(limit_bytes) / (1024**3)
             new_data['data_limit'] = limit_bytes
         else:
             new_data['usage_limit_GB'] = 0
             
-        # 3. تبدیل حجم مصرفی
-        used_bytes = new_data.get('traffic_used_bytes') or new_data.get('traffic_used') or new_data.get('trafficUsed')
-        if not used_bytes and 'user_traffic' in new_data and isinstance(new_data['user_traffic'], dict):
-             used_bytes = new_data['user_traffic'].get('used_traffic_bytes')
+        # 3. تبدیل حجم مصرفی (userTraffic -> usedTrafficBytes)
+        used_bytes = 0
+        
+        # بررسی userTraffic (فرمت جدید شما)
+        if 'userTraffic' in new_data and isinstance(new_data['userTraffic'], dict):
+            used_bytes = new_data['userTraffic'].get('usedTrafficBytes', 0)
+        # بررسی user_traffic (فرمت احتمالی دیگر)
+        elif 'user_traffic' in new_data and isinstance(new_data['user_traffic'], dict):
+            used_bytes = new_data['user_traffic'].get('used_traffic_bytes', 0)
+        # بررسی مستقیم در روت
+        elif 'trafficUsed' in new_data:
+             used_bytes = new_data['trafficUsed']
         
         if used_bytes:
             new_data['current_usage_GB'] = float(used_bytes) / (1024**3)
@@ -245,10 +259,35 @@ class RemnawavePanel(BasePanel):
         
     # سایر متدها...
     async def get_user(self, identifier: str) -> Optional[dict]:
+        # روش اول: تلاش با استفاده از SDK
         try:
             user = await self.client.users.get_user(identifier)
             return self._normalize(user.model_dump())
-        except: return None
+        except Exception:
+            # روش دوم: اگر SDK کار نکرد، درخواست مستقیم (Fallback)
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    url = f"{self.api_url}/api/users/{identifier}"
+                    headers = {
+                        "Authorization": f"Bearer {self.api_token}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
+                    resp = await client.get(url, headers=headers, timeout=10)
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # هندل کردن ساختار response wrapper
+                        if "response" in data:
+                            data = data["response"]
+                        return self._normalize(data)
+                    else:
+                        logger.error(f"Direct get_user failed: {resp.status_code} | {resp.text}")
+            except Exception as e:
+                logger.error(f"Direct get_user exception: {e}")
+            
+            return None
 
     async def get_all_users(self) -> List[dict]:
         try:

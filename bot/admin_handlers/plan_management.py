@@ -430,29 +430,6 @@ async def handle_category_management_menu(call, params):
     
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
 
-async def handle_category_management_menu(call, params):
-    """منوی لیست کشورها (دو ستونه)"""
-    categories = await db.get_server_categories()
-    
-    text = "🌍 **مدیریت کشورها (لوکیشن‌ها)**\n\nبرای ویرایش یا حذف، روی نام کشور کلیک کنید:"
-    
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    
-    buttons = []
-    for cat in categories:
-        btn_text = f"{cat['emoji']} {cat['name']}"
-        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:cat_detail:{cat['code']}"))
-    
-    if buttons:
-        kb.add(*buttons)
-        
-    kb.row(
-        types.InlineKeyboardButton("➕ افزودن کشور", callback_data="admin:cat_add_start"),
-        types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")
-    )
-    
-    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
-
 async def handle_category_details(call, params):
     """منوی جزئیات کشور (ویرایش/حذف)"""
     code = params[0]
@@ -550,11 +527,9 @@ async def handle_category_delete_execute(call, params):
     code = params[0]
     await db.delete_server_category(code)
     await bot.answer_callback_query(call.id, "✅ کشور با موفقیت حذف شد.")
-    # بازگشت به لیست
     await handle_category_management_menu(call, [])
 
 # --- پروسه افزودن کشور ---
-
 # ==========================================
 # 1. بخش مدیریت دسته‌بندی‌ها (کشورها)
 # ==========================================

@@ -176,9 +176,13 @@ class AdminMenu(BaseMenu):
         """منوی انتخاب کشور برای پنل (دو ستونه)"""
         kb = self.create_markup(row_width=2) 
         
+        buttons = []
         for cat in categories:
             button_text = f"{cat['emoji']} {cat['name']}"
-            kb.add(self.btn(button_text, f"admin:panel_set_cat:{cat['code']}"))
+            buttons.append(self.btn(button_text, f"admin:panel_set_cat:{cat['code']}"))
+        
+        if buttons:
+            kb.add(*buttons)
         
         kb.row(self.btn("🔙 انصراف", "admin:panel_manage"))
         return kb
@@ -247,6 +251,9 @@ class AdminMenu(BaseMenu):
             self.btn("♻️ تنظیمات ریست", f"admin:us_reset_menu:{base}:x"),
             self.btn("⚠️ ارسال هشدار", f"admin:us_warn_menu:{base}:x")
         )
+
+        kb.add(self.btn("🌍 مدیریت دسترسی نودها", f"admin:us_acc_p_list:{identifier}"))
+
         kb.add(
             self.btn("🔄 تمدید اشتراک", f"admin:renew_sub_menu:{base}"),
             self.btn("🗑 حذف کامل", f"admin:us_delc:{base}")
@@ -494,4 +501,109 @@ class AdminMenu(BaseMenu):
         )
         
         kb.add(self.btn("🔙 بازگشت", back_callback))
+        return kb
+    
+    async def user_country_access_menu(self, identifier: str, all_categories: list, user_allowed: list) -> types.InlineKeyboardMarkup:
+        """منوی تیک زدن کشورهای مجاز برای کاربر"""
+        kb = self.create_markup(row_width=2)
+        
+        buttons = []
+        for cat in all_categories:
+            code = cat['code']
+            name = cat['name']
+            emoji = cat['emoji']
+            
+            # اگر در لیست مجاز بود، تیک سبز، وگرنه ضربدر
+            is_allowed = code in user_allowed
+            status_icon = "✅" if is_allowed else "❌"
+            
+            btn_text = f"{status_icon} {emoji} {name}"
+            callback = f"admin:us_access_toggle:{identifier}:{code}"
+            
+            buttons.append(self.btn(btn_text, callback))
+            
+        if buttons:
+            kb.add(*buttons)
+            
+        kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
+        return kb
+    
+# ---------------------------------------------------------
+    # بخش جدید: مدیریت دسترسی نودها (Node Access Management)
+    # ---------------------------------------------------------
+
+    async def user_access_panel_list_menu(self, identifier: str, panels: list, panel_access: dict = None, cat_map: dict = None) -> types.InlineKeyboardMarkup:
+        """
+        نمایش لیست پنل‌ها به صورت دو ستونه + نوع پنل + وضعیت نودها
+        """
+        # ✅ درخواست شما: دو ستونه شدن لیست (row_width=2)
+        kb = self.create_markup(row_width=2)
+        
+        if panel_access is None: panel_access = {}
+        if cat_map is None: cat_map = {}
+        
+        if not panels:
+            kb.add(self.btn("⚠️ هیچ پنلی یافت نشد", "noop"))
+            kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
+            return kb
+
+        buttons = []
+        for p in panels:
+            p_id = str(p['id'])
+            # لیست کدهای مجاز کاربر برای این پنل
+            allowed_codes = panel_access.get(p_id, [])
+            
+            # ساخت استرینگ پرچم‌ها (نودهای فعال کاربر)
+            flags = ""
+            if allowed_codes:
+                shown_flags = [cat_map.get(code, code) for code in allowed_codes[:2]] # فقط 2 تا برای شلوغ نشدن
+                flags = "".join(shown_flags)
+                if len(allowed_codes) > 2: flags += "+"
+                flags = f" {flags}"
+            
+            # ✅ درخواست شما: نمایش نام + نوع پنل + پرچم
+            # مثال: 📂 سرور 1 (Hiddify) 🇩🇪
+            p_type_short = p.get('panel_type', '')[:3].upper() # سه حرف اول نوع پنل (HID, MAR, REM)
+            btn_text = f"📂 {p['name']} ({p_type_short}){flags}"
+            
+            callback = f"admin:us_acc_n_list:{identifier}:{p['id']}"
+            buttons.append(self.btn(btn_text, callback))
+
+        # افزودن دکمه‌ها به صورت شبکه
+        kb.add(*buttons)
+        
+        kb.row(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
+        return kb
+
+    async def user_access_nodes_menu(self, identifier: str, panel_id: int, panel_name: str, nodes: list, allowed_nodes: list) -> types.InlineKeyboardMarkup:
+        """
+        نمایش لیست نودهای اختصاصی آن پنل (از جدول PanelNode)
+        """
+        kb = self.create_markup(row_width=2)
+        
+        buttons = []
+        # ✅ درخواست شما: نمایش نودهای پنل (نه همه کشورها)
+        for node in nodes:
+            # node یک دیکشنری شامل name, code, flag است
+            code = node['code']   # مثلا de
+            flag = node['flag']   # مثلا 🇩🇪
+            name = node['name']   # مثلا سرور دانلود
+            
+            # بررسی تیک خوردن
+            is_allowed = code in allowed_nodes
+            status = "✅" if is_allowed else "❌"
+            
+            # متن دکمه: ✅ 🇩🇪 سرور دانلود
+            text = f"{status} {flag} {name}"
+            # کال‌بک: تغییر وضعیت این کد خاص برای این پنل
+            cb = f"admin:us_acc_tgl:{identifier}:{panel_id}:{code}"
+            buttons.append(self.btn(text, cb))
+            
+        if buttons:
+            kb.add(*buttons)
+        else:
+            kb.add(self.btn("⚠️ هیچ نودی برای این پنل تعریف نشده است", "noop"))
+            
+        # بازگشت به لیست پنل‌ها
+        kb.row(self.btn("🔙 بازگشت به لیست پنل‌ها", f"admin:us_acc_p_list:{identifier}"))
         return kb

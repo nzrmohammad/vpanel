@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 # وارد کردن مدل‌ها
 from .base import (
-    Panel, MarzbanMapping, ConfigTemplate, UserUUID, 
+    Panel, PanelNode, MarzbanMapping, ConfigTemplate, UserUUID, 
     UserGeneratedConfig, UUIDPanelAccess
 )
 
@@ -118,6 +118,66 @@ class PanelDB:
                 return result.rowcount > 0
             except IntegrityError:
                 return False
+
+
+# ---------------------------------------------------------
+    # مدیریت نودهای پنل (Panel Nodes)
+    # ---------------------------------------------------------
+
+    async def add_panel_node(self, panel_id: int, name: str, country_code: str, flag: str) -> bool:
+        """افزودن یک نود جدید به پنل"""
+        async with self.get_session() as session:
+            node = PanelNode(
+                panel_id=panel_id,
+                name=name,
+                country_code=country_code,
+                flag=flag
+            )
+            session.add(node)
+            await session.commit()
+            return True
+
+    async def get_panel_nodes(self, panel_id: int) -> List[Dict[str, Any]]:
+        """دریافت لیست نودهای یک پنل"""
+        async with self.get_session() as session:
+            stmt = select(PanelNode).where(PanelNode.panel_id == panel_id).order_by(PanelNode.id.asc())
+            result = await session.execute(stmt)
+            return [
+                {"id": n.id, "name": n.name, "code": n.country_code, "flag": n.flag} 
+                for n in result.scalars().all()
+            ]
+
+    async def delete_panel_node(self, node_id: int) -> bool:
+        """حذف یک نود"""
+        async with self.get_session() as session:
+            stmt = delete(PanelNode).where(PanelNode.id == node_id)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    async def get_panel_node_by_id(self, node_id: int) -> Optional[Dict[str, Any]]:
+        """دریافت اطلاعات یک نود خاص"""
+        async with self.get_session() as session:
+            node = await session.get(PanelNode, node_id)
+            if node:
+                return {"id": node.id, "panel_id": node.panel_id, "name": node.name, "code": node.country_code, "flag": node.flag, "is_active": node.is_active}
+            return None
+
+    async def update_panel_node_name(self, node_id: int, new_name: str) -> bool:
+        """تغییر نام نود"""
+        async with self.get_session() as session:
+            stmt = update(PanelNode).where(PanelNode.id == node_id).values(name=new_name)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    async def toggle_panel_node_status(self, node_id: int) -> bool:
+        """تغییر وضعیت فعال/غیرفعال نود"""
+        async with self.get_session() as session:
+            stmt = update(PanelNode).where(PanelNode.id == node_id).values(is_active=not_(PanelNode.is_active))
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
 
     # --- مدیریت دسترسی‌ها (Access Management) ---
 
