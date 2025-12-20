@@ -211,11 +211,17 @@ ADMIN_CALLBACK_HANDLERS = {
     'p_node_ren_st': panel_management.handle_node_rename_start,
     'p_node_tog': panel_management.handle_node_toggle,
     'p_node_del': panel_management.handle_node_delete,
+    
+    # --- Fix Node/Panel Access Handlers ---
     'us_acc_p_list': user_management.handle_user_access_panel_list,
     'us_acc_tgl': user_management.handle_user_access_toggle,
     'tgl_acc': user_management.handle_user_access_toggle,
-    'tgl_p_acc': user_management.handle_toggle_panel_access,  # تغییر وضعیت کل پنل
-    'tgl_n_acc': user_management.handle_toggle_node_access,   # تغییر وضعیت یک نود
+    
+    # اصلاح نام تابع تغییر وضعیت نود
+    'tgl_n_acc': getattr(user_management, 'handle_user_access_toggle', None),
+    
+    # تابع تغییر وضعیت کل پنل (فعلاً غیرفعال یا با هندلر نود جایگزین شده)
+    'tgl_p_acc': getattr(user_management, 'handle_user_access_toggle', None),
 
     # Marzban Mapping
     "mapping_menu": user_management.handle_mapping_menu,
@@ -323,6 +329,10 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
         
     action = parts[1]
     params = parts[2:]
+    
+    if action == "none":
+        await bot.answer_callback_query(call.id)
+        return
     
     # Special handling for single_panel navigation if no specific handler
     if action == "manage_single_panel":
