@@ -327,13 +327,17 @@ class UserMenu(BaseMenu):
         منوی انتخاب روش پرداخت (پویا از دیتابیس)
         payment_methods: لیستی از دیکشنری‌های روش پرداخت
         """
-        kb = self.create_markup(row_width=1)
+        kb = self.create_markup(row_width=2)
         
+        buttons = []
         for pm in payment_methods:            
             emoji = "💳" if pm['type'] == 'card' else "💎"
             title = pm.get('title', 'روش پرداخت')
             
-            kb.add(self.btn(f"{emoji} {title}", f"payment:select:{pm['id']}"))
+            buttons.append(self.btn(f"{emoji} {title}", f"payment:select:{pm['id']}"))
+
+        if buttons:
+            kb.add(*buttons)
 
         kb.add(self.back_btn(back_callback, lang_code))
         return kb

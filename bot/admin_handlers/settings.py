@@ -20,32 +20,42 @@ def initialize_settings_handlers(bot_instance, state_dict):
 
 # --- 1. منوی اصلی تنظیمات ---
 async def settings_main_panel(call: types.CallbackQuery, params: list):
-    """نمایش منوی اصلی تنظیمات یا زیرمنوی روش‌های پرداخت"""
+    """نمایش منوی اصلی تنظیمات با چیدمان دو ستونه"""
+    
+    user_id = call.from_user.id
+    if user_id in admin_conversations:
+        del admin_conversations[user_id]
+
     mode = params[0] if params else 'main'
     
     if mode == 'wallet':
-        # === زیرمنوی مدیریت روش‌های پرداخت ===
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("💳 کارت‌های بانکی", callback_data="admin:pay_methods:card"),
-            types.InlineKeyboardButton("💎 کریپتو (Crypto)", callback_data="admin:pay_methods:crypto")
+            types.InlineKeyboardButton("💎 کریپتو (Crypto)", callback_data="admin:pay_methods:crypto"),
+            types.InlineKeyboardButton("💳 کارت‌های بانکی", callback_data="admin:pay_methods:card")
+            
         )
         markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:settings:main"))
         
         text = "💰 *مدیریت روش‌های پرداخت*\n\nلطفاً نوع روش پرداخت مورد نظر را انتخاب کنید:"
         
     else:
-        # === منوی اصلی تنظیمات سیستم ===
         markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(types.InlineKeyboardButton("💰 مدیریت کیف پول و پرداخت", callback_data="admin:settings:wallet"))
         
+        # ردیف اول: کیف پول | پشتیبانی
+        markup.add(
+            types.InlineKeyboardButton("☎️ اکانت پشتیبانی", callback_data="admin:set_chan:support"),
+            types.InlineKeyboardButton("💰 مدیریت کیف پول", callback_data="admin:settings:wallet")
+            
+        )
+        
+        # ردیف دوم: کانال گزارشات | کانال رسیدها
         markup.add(
             types.InlineKeyboardButton("📢 کانال گزارشات", callback_data="admin:set_chan:log"),
             types.InlineKeyboardButton("🧾 کانال رسیدها", callback_data="admin:set_chan:proof")
         )
-        # دکمه جدید برای تنظیم اکانت پشتیبانی
-        markup.add(types.InlineKeyboardButton("☎️ اکانت پشتیبانی", callback_data="admin:set_chan:support"))
         
+        # ردیف سوم: بازگشت
         markup.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
         
         text = (
@@ -58,6 +68,13 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
 # --- 2. نمایش لیست کارت‌ها/ولت‌ها ---
 async def list_payment_methods(call: types.CallbackQuery, params: list):
     """نمایش لیست روش‌های پرداخت فعال و غیرفعال"""
+    
+    # === 🛠 FIX: پاک کردن وضعیت‌های قبلی ===
+    user_id = call.from_user.id
+    if user_id in admin_conversations:
+        del admin_conversations[user_id]
+    # ======================================
+
     if not params: return
     method_type = params[0]
     
@@ -341,41 +358,89 @@ async def save_payment_method(user_id, state, method_type, data):
 
 # --- 6. تنظیم کانال‌ها و اکانت پشتیبانی ---
 async def set_channel_start(call: types.CallbackQuery, params: list):
-    """شروع پروسه تنظیم کانال یا اکانت پشتیبانی"""
+    """شروع پروسه تنظیم کانال با خروجی مینیمال و دقیق برای پشتیبانی"""
     chan_type = params[0]
     user_id = call.from_user.id
     msg_id = call.message.message_id
     
-    # تعیین نوع تنظیم
+    # 1. تعیین تنظیمات
     if chan_type == 'log':
         type_name = "گزارشات ادمین"
         config_key = "admin_group_id"
-        help_text = r"آیدی عددی کانال/گروه \(مثال: `-1001234567890`\)"
+        help_text = "آیدی عددی کانال/گروه \\(مثال: `\u200e-1001234567890`\\)"
     elif chan_type == 'proof':
         type_name = "رسیدهای واریزی"
         config_key = "proof_channel_id"
-        help_text = r"آیدی عددی کانال \(مثال: `-1001234567890`\)"
+        help_text = "آیدی عددی کانال \\(مثال: `\u200e-1001234567890`\\)"
     else: # support
         type_name = "اکانت پشتیبانی"
-        config_key = "support_id"
-        help_text = r"یوزرنیم اکانت پشتیبانی \(مثال: `@admin` یا `support`\)"
+        config_key = "support_username"
+        help_text = "یوزرنیم اکانت پشتیبانی \\(مثال: `@admin` یا `support`\\)"
 
+    # 2. دریافت مقدار فعلی
     current_val = await db.get_config(config_key)
     
+    status_section = ""
+    
     if current_val:
-        current_display = f"✅ `{current_val}`"
-    else:
-        current_display = r"❌ \(تنظیم نشده\)"
+        raw_val = str(current_val).strip()
+        safe_val = f"\u200e{raw_val}".replace("_", "\\_").replace("*", "\\*")
+        
+        # === تنظیمات اختصاصی پشتیبانی ===
+        if chan_type == 'support':
+            # تمیزکردن یوزرنیم برای لینک
+            clean_username = raw_val.replace('@', '')
+            # افزودن @ برای نمایش (اگر ندارد)
+            display_text = raw_val if raw_val.startswith('@') else f"@{raw_val}"
+            safe_display = escape_markdown(display_text)
+            
+            # ساخت بخش وضعیت دقیقاً طبق نمونه درخواستی
+            # نکته: فاصله \n بعد از "فعال" باعث می‌شود "لینک" در خط بعد قرار گیرد
+            status_section = (
+                f"✅ *فعال*\n"
+                f"🔗 *لینک:* [{safe_display}](https://t.me/{clean_username})"
+            )
 
+        # === تنظیمات کانال‌ها (مثل قبل) ===
+        else:
+            try:
+                chat_id = int(raw_val) if raw_val.lstrip('-').isdigit() else raw_val
+                chat_obj = await bot.get_chat(chat_id)
+                title = chat_obj.title or "بدون نام"
+                
+                if chat_obj.username:
+                    link_txt = f"[@{escape_markdown(chat_obj.username)}]"
+                elif chat_obj.invite_link:
+                    link_txt = f"[لینک]({escape_markdown(chat_obj.invite_link)})"
+                else:
+                    link_txt = "_(خصوصی)_"
+                
+                status_section = (
+                    f"✅ *فعال*\n"
+                    f"📢 *کانال:* {escape_markdown(title)}\n"
+                    f"🔗 *آدرس:* {link_txt}\n"
+                    f"🔢 *آیدی:* `{safe_val}`"
+                )
+            except:
+                status_section = (
+                    f"⚠️ *ثبت شده (عدم دسترسی)*\n"
+                    f"🔢 *آیدی:* `{safe_val}`"
+                )
+    else:
+        status_section = "❌ *غیرفعال*"
+
+    # 4. چیدمان نهایی پیام
     text = (
-        f"📢 *تنظیم {type_name}*\n\n"
-        f"🔻 *وضعیت فعلی:* {current_display}\n\n"
-        f"👇 *لطفاً مقدار جدید را ارسال کنید:*\n"
+        f"⚙️ *تنظیمات {type_name}*\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"🔻 *وضعیت فعلی:* {status_section}\n" 
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"👇 *برای تغییر، مقدار جدید را ارسال کنید:*\n"
         f"{help_text}"
     )
     
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:settings:main"))
+    markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:settings:main"))
     
     await _safe_edit(user_id, msg_id, text, reply_markup=markup, parse_mode='MarkdownV2')
 
@@ -406,7 +471,7 @@ async def process_channel_id(message: types.Message):
              await _safe_edit(user_id, state['msg_id'], "❌ یوزرنیم خیلی کوتاه است.", reply_markup=None)
              return
     else:
-        # برای کانال‌ها باید حتما عدد باشد
+        # برای کانال‌ها باید حتما عدد باشد (مثبت یا منفی)
         if not (text.startswith("-") and text[1:].isdigit()) and not text.isdigit():
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:settings:main"))
@@ -419,18 +484,23 @@ async def process_channel_id(message: types.Message):
     elif chan_type == 'proof':
         config_key = "proof_channel_id"
     else:
-        config_key = "support_id"
+        config_key = "support_username" # ✅ اصلاح شده: هماهنگ با wallet.py
     
     # ذخیره در دیتابیس
     await db.set_config(config_key, text)
     
-    del admin_conversations[user_id]
+    # پاک کردن وضعیت
+    if user_id in admin_conversations:
+        del admin_conversations[user_id]
     
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 بازگشت به تنظیمات", callback_data="admin:settings:main"))
     
+    # اسکیپ کردن متن برای نمایش صحیح
+    safe_text = text.replace("_", "\\_").replace("*", "\\*")
+    
     await _safe_edit(
         user_id, state['msg_id'], 
-        f"✅ *{state.get('chan_type')} با موفقیت ثبت شد\\.*\nمقدار: `{text}`", 
+        f"✅ *{state.get('chan_type')} با موفقیت ثبت شد\\.*\nمقدار: `{safe_text}`", 
         reply_markup=markup, parse_mode='MarkdownV2'
     )
