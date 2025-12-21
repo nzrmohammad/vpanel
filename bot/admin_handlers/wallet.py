@@ -59,7 +59,7 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
         lang_code = user.lang_code if user else 'fa'
 
         try:
-            if decision == 'charge_confirm':
+            if decision == 'confirm':
                 success = await db.update_wallet_balance(
                     user_id, amount, 'deposit', 
                     f"شارژ توسط مدیریت (درخواست #{request_id})",
@@ -100,7 +100,7 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                 else:
                     await bot.answer_callback_query(call.id, "❌ خطا در عملیات دیتابیس.", show_alert=True)
 
-            elif decision == 'charge_reject':
+            elif decision == 'reject':
                 charge_req.is_pending = False
                 await session.commit()
                 

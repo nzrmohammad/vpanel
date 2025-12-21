@@ -301,7 +301,7 @@ async def send_receipt_to_admin(message: types.Message, req_id: int, amount: int
     
     caption = (
         f"💸 *درخواست شارژ جدید*\n"
-        f"🆔 شناسه درخواست: `{req_id}`\n\n"
+        f"\u200f🆔 شناسه درخواست: `{req_id}`\n"
         f"👤 کاربر: {escape_markdown(name)}\n"
         f"🔢 آیدی عددی: `{user_id}`\n"
         f"🔗 یوزرنیم: @{escape_markdown(username)}\n"
