@@ -418,39 +418,6 @@ class UserFormatter:
         ]
         return "\n".join(lines)
 
-    def wallet_page(self, balance: float, transactions: list, lang_code: str) -> str:
-        """صفحه اصلی کیف پول با فرمت جدید."""        
-        header = f"💰 <b>{get_string('wallet', lang_code)}</b>\n💵 موجودی: {int(balance):,} تومان\n\n"
-        
-        if not transactions:
-            return header + "📜 <b>تاریخچه تراکنش‌ها</b>\n──────────────────\nتراکنشی یافت نشد"
-
-        tx_lines = ["📜 <b>تاریخچه تراکنش‌ها</b>", "──────────────────"]
-        
-        for t in transactions:
-            amount = t.get('amount', 0)
-            desc = t.get('description') or t.get('type', '')
-            
-            dt_str = to_shamsi(t.get('transaction_date'), include_time=True)
-            
-            if amount > 0:
-                icon = "➕"
-                amt_str = f"{int(amount):,} تومان"
-            else:
-                icon = "➖"
-                amt_str = f"{int(abs(amount)):,} تومان"
-            
-            block = (
-                f"{icon} {amt_str}\n"
-                f" {desc}\n"
-                f" {dt_str}"
-            )
-            tx_lines.append(block)
-            tx_lines.append("──────────────────")
-            
-        return header + "\n".join(tx_lines)
-
-
     def purchase_confirmation(self, plan_name: str, price: float, current_balance: float, lang_code: str) -> str:
         """متن تایید خرید."""
         return (

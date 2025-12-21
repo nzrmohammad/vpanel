@@ -7,6 +7,7 @@ from bot.database import db
 from bot.language import get_string
 from bot.config import CARD_PAYMENT_INFO
 from bot.services.panels import PanelFactory
+from bot.utils import escape_markdown, to_shamsi
 import logging
 import uuid as uuid_lib
 
@@ -16,19 +17,13 @@ logger = logging.getLogger(__name__)
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:main")
 async def wallet_main_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
-    # ✅ اصلاح نام متد و افزودن await
     lang = await db.get_user_language(user_id)
     
-    # ✅ دریافت موجودی از متد user (چون get_user_balance وجود نداشت)
     user_data = await db.user(user_id)
     balance = user_data.get('wallet_balance', 0) if user_data else 0
     
-    # ✅ اصلاح نام متد تراکنش‌ها
-    transactions = await db.get_wallet_history(user_id, limit=5)
+    text = "💰 *کیف پول*"
     
-    text = user_formatter.wallet_page(balance, transactions, lang)
-    
-    # ✅ افزودن await برای منوی async
     markup = await user_menu.wallet_main_menu(balance, lang)
     
     await bot.edit_message_text(
@@ -36,7 +31,7 @@ async def wallet_main_handler(call: types.CallbackQuery):
         user_id,
         call.message.message_id,
         reply_markup=markup,
-        parse_mode='HTML'
+        parse_mode='MarkdownV2'
     )
 
 # --- شارژ حساب ---
@@ -119,7 +114,7 @@ async def execute_purchase(call: types.CallbackQuery):
     try:
         plan_id = int(call.data.split(':')[2])
         user_id = call.from_user.id
-        lang = await db.get_user_language(user_id) # ✅ await
+        lang = await db.get_user_language(user_id)
         
         plan = await db.get_plan_by_id(plan_id)
         if not plan: return
@@ -133,7 +128,7 @@ async def execute_purchase(call: types.CallbackQuery):
 
         await bot.edit_message_text("⏳ در حال فعال‌سازی سرویس...", user_id, call.message.message_id)
 
-        target_panel_name = "server1" # باید منطق انتخاب سرور را بعداً تکمیل کنید
+        target_panel_name = "server1"
         
         panel_api = await PanelFactory.get_panel(target_panel_name)
         
@@ -175,22 +170,38 @@ async def wallet_history_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # دریافت لیست تراکنش‌ها (مثلاً 10 تای آخر)
     transactions = await db.get_wallet_history(user_id, limit=10)
     
+    # هدر بولد شده
+    header = "📜 *تاریخچه تراکنش‌ها*\n"
+    text = header
+    
     if not transactions:
-        text = "📜 **تاریخچه تراکنش‌ها**\n\nهنوز هیچ تراکنشی ثبت نشده است."
+        text += "──────────────────\nتراکنشی یافت نشد"
     else:
-        text = "📜 **تاریخچه ۱۰ تراکنش آخر:**\n\n"
         for t in transactions:
             amount = t.get('amount', 0)
-            desc = t.get('description', t.get('type', 'Unknown'))
-            date_str = user_formatter.format_date(t.get('transaction_date'))
+            raw_desc = t.get('description') or t.get('type', 'Unknown')
+            raw_date = user_formatter.to_shamsi(t.get('transaction_date'), include_time=True)
             
-            icon = "🟢" if amount > 0 else "🔴"
-            amount_str = f"{int(abs(amount)):,} تومان"
+            # اسکیپ کردن مقادیر متغیر برای جلوگیری از بهم ریختن فرمت
+            desc = escape_markdown(raw_desc)
+            date_str = escape_markdown(raw_date)
             
-            text += f"{icon} **{amount_str}**\n📅 {date_str}\n📝 {desc}\n──────────────────\n"
+            amount_val = f"{int(abs(amount)):,}"
+            amount_str = escape_markdown(amount_val) + " تومان"
+            
+            if amount > 0:
+                icon = "➕"
+            else:
+                icon = "➖"
+            
+            text += (
+                "──────────────────\n"
+                f"{icon} {amount_str} \n"
+                f" {desc} \n"
+                f" {date_str}\n"
+            )
 
     kb = types.InlineKeyboardMarkup()
     kb.add(user_menu.back_btn("wallet:main", lang))
@@ -200,7 +211,7 @@ async def wallet_history_handler(call: types.CallbackQuery):
         user_id,
         call.message.message_id,
         reply_markup=kb,
-        parse_mode='Markdown'
+        parse_mode='MarkdownV2'
     )
 
 # --- 2. تنظیمات تمدید خودکار ---
@@ -272,7 +283,6 @@ async def view_plans_categories(call: types.CallbackQuery):
         reply_markup=markup
     )
 
-# تابع show_plans_list را به این صورت آپدیت کنید:
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_plans:"))
 async def show_plans_list(call: types.CallbackQuery):
