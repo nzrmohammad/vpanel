@@ -172,6 +172,14 @@ class PaymentMethod(Base):
     details: Mapped[dict] = mapped_column(JSONB)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+class SystemConfig(Base):
+    """جدول تنظیمات عمومی سیستم (مثل آیدی کانال‌ها)"""
+    __tablename__ = 'system_config'
+    
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
 class Tutorial(Base):
     """🔥 جدید: مدیریت آموزش‌ها"""
     __tablename__ = "tutorials"

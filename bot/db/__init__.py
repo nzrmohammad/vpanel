@@ -13,13 +13,12 @@ from .notifications import NotificationsDB
 from .achievement import AchievementDB
 from .feedback import FeedbackDB
 from .admin_log import AdminLogDB
+from .settings import SettingsDB
 
-# کلاس نهایی باید از همه این‌ها ارث‌بری کند
 class BotDatabase(DatabaseManager, UserDB, UsageDB, FinancialsDB, PanelDB, 
                   ProductDB, SupportDB, TransferDB, WalletDB, NotificationsDB, 
-                  AchievementDB, FeedbackDB, AdminLogDB):
+                  AchievementDB, FeedbackDB, AdminLogDB, SettingsDB):
     
     def __init__(self, db_url: str = None):
         super().__init__(db_url)
-        # این کش برای user.py حیاتی است
         self._user_cache = {}

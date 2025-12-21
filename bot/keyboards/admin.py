@@ -8,12 +8,11 @@ from bot.database import db
 class AdminMenu(BaseMenu):
     """
     کلاس مدیریت کیبوردهای پنل ادمین.
-    تمام منوها به صورت Async و داینامیک طراحی شده‌اند.
     """
-
     async def main(self) -> types.InlineKeyboardMarkup:
         """منوی اصلی مدیریت"""
         kb = self.create_markup(row_width=2)
+        
         layout = [
             [("📊 داشبورد سریع", "admin:quick_dashboard")],
             [("🔎 جستجوی کاربر", "admin:search_menu"), ("👥 مدیریت کاربران", "admin:management_menu")],
@@ -21,11 +20,18 @@ class AdminMenu(BaseMenu):
             [("💾 پشتیبان‌گیری", "admin:backup_menu"), ("📣 پیام همگانی", "admin:broadcast")],
             [("⏰ کارهای زمان‌بندی", "admin:scheduled_tasks"), ("🗂️ مدیریت پلن‌ها", "admin:plan_manage")],
             [("⚙️ تنظیمات پنل‌ها", "admin:panel_manage"), ("🛠️ ابزارهای سیستمی", "admin:system_tools_menu")],
-            [("🔗 مدیریت اتصال مرزبان", "admin:mapping_menu")],
+            [("⚙️ تنظیمات سیستم", "admin:settings:main"), ("🔗 مدیریت اتصال مرزبان", "admin:mapping_menu")],
             [("🔙 بازگشت به منوی اصلی", "back")]
         ]
+        
         for row in layout:
-            kb.row(*[self.btn(t, cb) for t, cb in row])
+            btns = []
+            for item in row:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    btns.append(self.btn(item[0], item[1]))
+            if btns:
+                kb.row(*btns)
+                
         return kb
 
     # ---------------------------------------------------------
@@ -80,7 +86,7 @@ class AdminMenu(BaseMenu):
         # دکمه‌های گزارش اختصاصی برای هر پنل
         panel_buttons = []
         for p in panels:
-            btn_text = f"{p['name']} ({p['panel_type']})" # فرمت درخواستی شما
+            btn_text = f"{p['name']} ({p['panel_type']})"
             panel_buttons.append(self.btn(btn_text, f"admin:panel_report_detail:{p['id']}"))
 
         if panel_buttons:
@@ -122,15 +128,10 @@ class AdminMenu(BaseMenu):
     # ---------------------------------------------------------
 
     async def plan_management_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """
-        منوی مدیریت پلن‌ها.
-        لیست پلن‌های موجود را نمایش می‌دهد + دکمه افزودن.
-        """
+        """منوی مدیریت پلن‌ها"""
         kb = self.create_markup(row_width=2)
         
-        # لیست پلن‌های موجود
         for plan in plans:
-            # نمایش نام و قیمت
             btn_text = f"{plan['name']} ({int(plan['price']):,} T)"
             kb.add(self.btn(btn_text, f"admin:plan_details:{plan['id']}"))
 
@@ -144,7 +145,7 @@ class AdminMenu(BaseMenu):
     # ---------------------------------------------------------
 
     async def panel_list_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """لیست پنل‌های متصل برای ویرایش/حذف (دو ستونه + پرچم)"""
+        """لیست پنل‌های متصل برای ویرایش/حذف"""
         kb = self.create_markup(row_width=2)
         
         categories = await db.get_server_categories()
@@ -173,7 +174,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def panel_category_selection_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب کشور برای پنل (دو ستونه)"""
+        """منوی انتخاب کشور برای پنل"""
         kb = self.create_markup(row_width=2) 
         
         buttons = []
@@ -188,7 +189,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     # ---------------------------------------------------------
-    # سایر منوها (جستجو، ابزارها، بکاپ و ...)
+    # سایر منوها
     # ---------------------------------------------------------
 
     async def search_menu(self) -> types.InlineKeyboardMarkup:
@@ -225,7 +226,7 @@ class AdminMenu(BaseMenu):
         return kb
 
     async def user_interactive_menu(self, identifier: str, is_active: bool, panel_type: str, back_callback: str = None) -> types.InlineKeyboardMarkup:
-        """منوی مدیریت تکی کاربر با حفظ کانتکست (سرچ/مدیریت)"""
+        """منوی مدیریت تکی کاربر"""
         kb = self.create_markup(row_width=2)
         base = f"{identifier}"
         
@@ -307,17 +308,13 @@ class AdminMenu(BaseMenu):
 
     async def select_plan_for_report_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
-        
         kb.row(self.btn("👤 کاربران بدون پلن", "admin:list_by_plan:0:0"))
         
-        # ساخت لیست دکمه‌های پلن‌ها
         plan_btns = []
         for plan in plans:
             plan_btns.append(self.btn(f"📦 {plan['name']}", f"admin:list_by_plan:{plan['id']}:0"))
         
-        # اضافه کردن دکمه‌ها به صورت دو تایی در هر ردیف
         kb.add(*plan_btns)
-        
         kb.row(self.btn("🔙 بازگشت", "admin:reports_menu"))
         return kb
 
@@ -397,13 +394,13 @@ class AdminMenu(BaseMenu):
         kb = self.create_markup(row_width=2)
         kb.add(
             self.btn("✅ بله، حذف کن", f"admin:del_map_exec:{uuid_str}:{page}"),
-            self.btn("❌ انصراف", f"admin:mapping_list:{page}") # برگشت به لیست، نه پنل اصلی
+            self.btn("❌ انصراف", f"admin:mapping_list:{page}") 
         )
         return kb
 
 
     async def mapping_main_menu(self) -> types.InlineKeyboardMarkup:
-        """منوی اصلی انتخاب عملیات مپینگ (دکمه‌ها کنار هم)"""
+        """منوی اصلی انتخاب عملیات مپینگ"""
         kb = self.create_markup(row_width=2)
         
         kb.add(
@@ -411,12 +408,11 @@ class AdminMenu(BaseMenu):
             self.btn("📋 لیست اتصالات موجود", "admin:mapping_list:0")
         )
         
-        # دکمه بازگشت در ردیف جداگانه
         kb.add(self.btn("🔙 بازگشت به پنل", "admin:panel"))
         return kb
 
     async def mapping_list_menu(self, mappings: list, page: int, total_count: int, page_size: int) -> types.InlineKeyboardMarkup:
-        """منوی لیست اتصالات (با دکمه ایجاد در بالا)"""
+        """منوی لیست اتصالات"""
         kb = self.create_markup(row_width=2)  
         
         if not mappings:
@@ -428,7 +424,6 @@ class AdminMenu(BaseMenu):
             btn_text = f"🗑 {m['marzban_username']} ({uuid_short})"
             map_buttons.append(self.btn(btn_text, f"admin:del_map_conf:{m['hiddify_uuid']}:{page}"))
         
-        # افزودن دکمه‌ها
         kb.add(*map_buttons)
             
         nav_buttons = []
@@ -441,17 +436,11 @@ class AdminMenu(BaseMenu):
         if nav_buttons:
             kb.row(*nav_buttons)
             
-        # بازگشت به منوی مپینگ (نه پنل اصلی)
         kb.add(self.btn("🔙 بازگشت", "admin:mapping_menu"))
         return kb
 
-    # ---------------------------------------------------------
-    # متدهای جدید برای بخش ویرایش کاربر
-    # ---------------------------------------------------------
     async def edit_user_panel_select_menu(self, identifier: str, panels: list) -> types.InlineKeyboardMarkup:
-        """
-        منوی انتخاب پنل برای ویرایش کاربر.
-        """
+        """منوی انتخاب پنل برای ویرایش کاربر"""
         kb = self.create_markup(row_width=2)
         
         all_panel_btn = None
@@ -484,15 +473,8 @@ class AdminMenu(BaseMenu):
         )
 
     async def _create_resource_action_menu(self, base_callback: str, args: list, back_callback: str) -> types.InlineKeyboardMarkup:
-        """
-        یک تابع عمومی برای ساخت منوی افزودن حجم و روز.
-        base_callback: مثل 'admin:ae' یا 'admin:ga_ask_value'
-        args: لیست پارامترهایی که باید به کالبک چسبانده شوند (مثل [panel_name, uuid])
-        back_callback: کالبک دکمه بازگشت
-        """
+        """یک تابع عمومی برای ساخت منوی افزودن حجم و روز"""
         kb = self.create_markup(row_width=2)
-        
-        # آرگومان‌ها را با : به هم وصل می‌کنیم
         suffix = ":".join(map(str, args))
         
         kb.add(
@@ -513,7 +495,6 @@ class AdminMenu(BaseMenu):
             name = cat['name']
             emoji = cat['emoji']
             
-            # اگر در لیست مجاز بود، تیک سبز، وگرنه ضربدر
             is_allowed = code in user_allowed
             status_icon = "✅" if is_allowed else "❌"
             
@@ -528,15 +509,8 @@ class AdminMenu(BaseMenu):
         kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
         return kb
     
-# ---------------------------------------------------------
-    # بخش جدید: مدیریت دسترسی نودها (Node Access Management)
-    # ---------------------------------------------------------
-
     async def user_access_panel_list_menu(self, identifier: str, panels: list, panel_access: dict = None, cat_map: dict = None) -> types.InlineKeyboardMarkup:
-        """
-        نمایش لیست پنل‌ها به صورت دو ستونه + نوع پنل + وضعیت نودها
-        """
-        # ✅ درخواست شما: دو ستونه شدن لیست (row_width=2)
+        """نمایش لیست پنل‌ها به صورت دو ستونه + نوع پنل + وضعیت نودها"""
         kb = self.create_markup(row_width=2)
         
         if panel_access is None: panel_access = {}
@@ -550,52 +524,39 @@ class AdminMenu(BaseMenu):
         buttons = []
         for p in panels:
             p_id = str(p['id'])
-            # لیست کدهای مجاز کاربر برای این پنل
             allowed_codes = panel_access.get(p_id, [])
             
-            # ساخت استرینگ پرچم‌ها (نودهای فعال کاربر)
             flags = ""
             if allowed_codes:
-                shown_flags = [cat_map.get(code, code) for code in allowed_codes[:2]] # فقط 2 تا برای شلوغ نشدن
+                shown_flags = [cat_map.get(code, code) for code in allowed_codes[:2]] 
                 flags = "".join(shown_flags)
                 if len(allowed_codes) > 2: flags += "+"
                 flags = f" {flags}"
             
-            # ✅ درخواست شما: نمایش نام + نوع پنل + پرچم
-            # مثال: 📂 سرور 1 (Hiddify) 🇩🇪
-            p_type_short = p.get('panel_type', '')[:3].upper() # سه حرف اول نوع پنل (HID, MAR, REM)
+            p_type_short = p.get('panel_type', '')[:3].upper()
             btn_text = f"📂 {p['name']} ({p_type_short}){flags}"
             
             callback = f"admin:us_acc_n_list:{identifier}:{p['id']}"
             buttons.append(self.btn(btn_text, callback))
 
-        # افزودن دکمه‌ها به صورت شبکه
         kb.add(*buttons)
-        
         kb.row(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
         return kb
 
     async def user_access_nodes_menu(self, identifier: str, panel_id: int, panel_name: str, nodes: list, allowed_nodes: list) -> types.InlineKeyboardMarkup:
-        """
-        نمایش لیست نودهای اختصاصی آن پنل (از جدول PanelNode)
-        """
+        """نمایش لیست نودهای اختصاصی آن پنل"""
         kb = self.create_markup(row_width=2)
         
         buttons = []
-        # ✅ درخواست شما: نمایش نودهای پنل (نه همه کشورها)
         for node in nodes:
-            # node یک دیکشنری شامل name, code, flag است
-            code = node['code']   # مثلا de
-            flag = node['flag']   # مثلا 🇩🇪
-            name = node['name']   # مثلا سرور دانلود
+            code = node['code']
+            flag = node['flag']
+            name = node['name']
             
-            # بررسی تیک خوردن
             is_allowed = code in allowed_nodes
             status = "✅" if is_allowed else "❌"
             
-            # متن دکمه: ✅ 🇩🇪 سرور دانلود
             text = f"{status} {flag} {name}"
-            # کال‌بک: تغییر وضعیت این کد خاص برای این پنل
             cb = f"admin:us_acc_tgl:{identifier}:{panel_id}:{code}"
             buttons.append(self.btn(text, cb))
             
@@ -604,15 +565,12 @@ class AdminMenu(BaseMenu):
         else:
             kb.add(self.btn("⚠️ هیچ نودی برای این پنل تعریف نشده است", "noop"))
             
-        # بازگشت به لیست پنل‌ها
         kb.row(self.btn("🔙 بازگشت به لیست پنل‌ها", f"admin:us_acc_p_list:{identifier}"))
         return kb
     
 
     async def user_access_aggregated_menu(self, target_id, panels_data, user_panel_access):
-        """
-        منوی تجمیعی مدیریت دسترسی (پنل غیرقابل کلیک، نودها شامل سرور اصلی)
-        """
+        """منوی تجمیعی مدیریت دسترسی"""
         markup = types.InlineKeyboardMarkup(row_width=2)
 
         for item in panels_data:
@@ -623,26 +581,19 @@ class AdminMenu(BaseMenu):
             
             current_access = user_panel_access.get(panel_id, [])
 
-            # ۱. هدر پنل (فقط نمایش نام - غیرقابل کلیک)
             header_text = f"📂 {panel['name']} ({panel['panel_type']}) {flag}"
             markup.add(types.InlineKeyboardButton(header_text, callback_data="admin:none"))
 
-            # ۲. لیست نودها (شامل سرور اصلی و نودهای فرعی)
             node_btns = []
             for node in nodes:
-                # بررسی فعال بودن نود
                 is_enabled = node['code'] in current_access
                 status_icon = "✅" if is_enabled else "❌"
                 
-                # متن دکمه: وضعیت + پرچم + نام نود
                 btn_text = f"{status_icon} {node['flag']} {node['name']}"
-                
-                # کالبک تغییر وضعیت نود
                 callback = f"admin:tgl_n_acc:{target_id}:{panel['id']}:{node['code']}"
                 
                 node_btns.append(types.InlineKeyboardButton(btn_text, callback_data=callback))
             
-            # چیدمان نودها
             if node_btns:
                 markup.add(*node_btns)
 

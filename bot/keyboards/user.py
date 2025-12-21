@@ -322,23 +322,19 @@ class UserMenu(BaseMenu):
         kb.add(self.back_btn("wallet:main", lang_code))
         return kb
     
-    async def payment_options_menu(self, lang_code: str, online_link: str = None, card_info: dict = None, back_callback: str = "wallet:main") -> types.InlineKeyboardMarkup:
-        """منوی انتخاب روش پرداخت (اصلاح چیدمان و دکمه بازگشت)"""
-        kb = self.create_markup(row_width=2)
-        buttons = []
+    async def payment_options_menu(self, lang_code: str, payment_methods: list, back_callback: str = "wallet:main") -> types.InlineKeyboardMarkup:
+        """
+        منوی انتخاب روش پرداخت (پویا از دیتابیس)
+        payment_methods: لیستی از دیکشنری‌های روش پرداخت
+        """
+        kb = self.create_markup(row_width=1)
         
-        link = online_link or ONLINE_PAYMENT_LINK
-        if link:
-            buttons.append(self.btn("💳 پرداخت آنلاین", "noop", url=link))
+        for pm in payment_methods:            
+            emoji = "💳" if pm['type'] == 'card' else "💎"
+            title = pm.get('title', 'روش پرداخت')
             
-        card = card_info or CARD_PAYMENT_INFO
-        if card and card.get("card_number"):
-            bank_name = card.get("bank_name", "کارت به کارت")
-            buttons.append(self.btn(f"📄 {bank_name}", "show_card_details"))
-            
-        buttons.append(self.btn(get_string('btn_crypto_payment', lang_code), "coming_soon"))
-        kb.add(*buttons)
-        
+            kb.add(self.btn(f"{emoji} {title}", f"payment:select:{pm['id']}"))
+
         kb.add(self.back_btn(back_callback, lang_code))
         return kb
 

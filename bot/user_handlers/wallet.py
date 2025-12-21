@@ -1,17 +1,47 @@
 # bot/user_handlers/wallet.py
+
 from telebot import types
 from bot.bot_instance import bot
 from bot.keyboards import user as user_menu
 from bot.formatters import user_formatter
 from bot.database import db
 from bot.language import get_string
-from bot.config import CARD_PAYMENT_INFO
 from bot.services.panels import PanelFactory
-from bot.utils import escape_markdown, to_shamsi
+from bot.utils import escape_markdown
 import logging
 import uuid as uuid_lib
 
 logger = logging.getLogger(__name__)
+
+# دیکشنری برای ذخیره وضعیت پرداخت کاربر
+# format: {user_id: {'step': 'waiting_amount', 'msg_id': 123, 'amount': 0}}
+user_payment_states = {}
+
+# ==========================================
+# 1. هندلر توزیع‌کننده (Dispatcher)
+# ==========================================
+@bot.message_handler(content_types=['text', 'photo'], func=lambda m: m.from_user.id in user_payment_states)
+async def wallet_input_handler(message: types.Message):
+    """
+    این تابع تمام پیام‌های کاربرانی که در پروسه شارژ هستند را دریافت می‌کند
+    و به تابع مناسب هدایت می‌کند.
+    """
+    user_id = message.from_user.id
+    state = user_payment_states.get(user_id)
+    
+    if not state: 
+        return
+
+    step = state.get('step')
+
+    if step == 'waiting_amount':
+        await process_charge_amount(message)
+    elif step == 'waiting_receipt':
+        await process_receipt_upload(message)
+
+# ==========================================
+# 2. منوی اصلی و شارژ
+# ==========================================
 
 # --- منوی اصلی کیف پول ---
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:main")
@@ -19,70 +49,252 @@ async def wallet_main_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
+    # پاک کردن وضعیت قبلی اگر وجود داشت
+    if user_id in user_payment_states:
+        del user_payment_states[user_id]
+
     user_data = await db.user(user_id)
     balance = user_data.get('wallet_balance', 0) if user_data else 0
     
     text = "💰 *کیف پول*"
-    
     markup = await user_menu.wallet_main_menu(balance, lang)
     
+    try:
+        await bot.edit_message_text(
+            text, user_id, call.message.message_id,
+            reply_markup=markup, parse_mode='MarkdownV2'
+        )
+    except:
+        await bot.send_message(user_id, text, reply_markup=markup, parse_mode='MarkdownV2')
+
+# --- شروع شارژ: دریافت مبلغ ---
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:charge")
+async def wallet_charge_start(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    # بررسی روش‌های پرداخت فعال
+    methods = await db.get_payment_methods(active_only=True)
+    if not methods:
+        await bot.answer_callback_query(call.id, "❌ در حال حاضر روش پرداختی فعال نیست.", show_alert=True)
+        return
+
+    text = (
+        "💰 *شارژ کیف پول*\n\n"
+        "لطفاً مبلغ مورد نظر خود را به تومان وارد کنید:\n"
+        "مثال: `50000`"
+    )
+    
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+    
+    msg = await bot.edit_message_text(
+        text, user_id, call.message.message_id, 
+        reply_markup=kb, parse_mode='MarkdownV2'
+    )
+    
+    user_payment_states[user_id] = {
+        'step': 'waiting_amount', 
+        'msg_id': msg.message_id
+    }
+
+async def process_charge_amount(message: types.Message):
+    user_id = message.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    if user_id not in user_payment_states: return
+
+    try:
+        # حذف پیام کاربر
+        try:
+            await bot.delete_message(user_id, message.message_id)
+        except: pass
+        
+        amount_str = message.text.replace(',', '').replace(' ', '').strip()
+        
+        if not amount_str.isdigit():
+            error_msg = await bot.send_message(user_id, "⚠️ لطفاً فقط عدد وارد کنید (به تومان).")
+            # در اینجا استیت تغییر نمی‌کند تا کاربر دوباره تلاش کند
+            return
+            
+        amount = int(amount_str)
+        if amount < 5000:
+            error_msg = await bot.send_message(user_id, "⚠️ حداقل مبلغ شارژ ۵,۰۰۰ تومان است.")
+            return
+
+        # ذخیره مبلغ و رفتن به مرحله انتخاب روش
+        state = user_payment_states[user_id]
+        state['amount'] = amount
+        state['step'] = 'select_method'
+        prev_msg_id = state['msg_id']
+        
+        methods = await db.get_payment_methods(active_only=True)
+        markup = await user_menu.payment_options_menu(lang, methods, back_callback="wallet:charge")
+        
+        text = f"💳 مبلغ قابل پرداخت: *{amount:,} تومان*\n\nلطفاً روش پرداخت را انتخاب کنید:"
+        
+        await bot.edit_message_text(text, user_id, prev_msg_id, reply_markup=markup, parse_mode='MarkdownV2')
+        
+    except Exception as e:
+        logger.error(f"Error in charge amount: {e}")
+        if user_id in user_payment_states: del user_payment_states[user_id]
+        await bot.send_message(user_id, "❌ خطای غیرمنتظره. لطفاً مجدد تلاش کنید.")
+
+# --- نمایش اطلاعات پرداخت ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("payment:select:"))
+async def show_payment_details(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    if user_id not in user_payment_states:
+        await bot.answer_callback_query(call.id, "نشست منقضی شده. مجدد تلاش کنید.")
+        return
+
+    try:
+        method_id = int(call.data.split(":")[2])
+    except:
+        return
+    
+    methods = await db.get_payment_methods(active_only=True)
+    selected_method = next((m for m in methods if m['id'] == method_id), None)
+    
+    if not selected_method:
+        await bot.answer_callback_query(call.id, "این روش پرداخت دیگر فعال نیست.", show_alert=True)
+        return
+
+    amount = user_payment_states[user_id]['amount']
+    details = selected_method['details']
+    
+    info_text = ""
+    if selected_method['type'] == 'card':
+        info_text = (
+            f"📝 *اطلاعات کارت*\n\n"
+            f"🏦 بانک: {escape_markdown(details.get('bank_name', ''))}\n"
+            f"👤 صاحب کارت: {escape_markdown(details.get('card_holder', ''))}\n"
+            f"💳 شماره کارت:\n`{details.get('card_number', '')}`"
+        )
+    else:
+        global_rate = await db.get_config('usdt_rate', '60000')
+        rate = int(global_rate)
+        usdt_amount = round(amount / rate, 2) if rate > 0 else 0
+        
+        info_text = (
+            f"📝 *اطلاعات کیف پول*\n\n"
+            f"💎 شبکه: {escape_markdown(details.get('network', ''))}\n"
+            f"💵 نرخ تبدیل: {rate:,} تومان\n"
+            f"💰 مبلغ تتر: `{usdt_amount} USDT`\n\n"
+            f"🔗 آدرس ولت:\n`{details.get('address', '')}`"
+        )
+
+    text = (
+        f"{info_text}\n\n"
+        f"💵 مبلغ قابل پرداخت: *{amount:,} تومان*\n\n"
+        "📸 *لطفاً پس از واریز، تصویر رسید را در همین صفحه ارسال کنید\\.*"
+    )
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+
     await bot.edit_message_text(
-        text,
-        user_id,
-        call.message.message_id,
+        text, user_id, call.message.message_id,
+        reply_markup=kb, parse_mode='MarkdownV2'
+    )
+    
+    # تغییر وضعیت به انتظار دریافت رسید
+    user_payment_states[user_id]['step'] = 'waiting_receipt'
+
+# --- پردازش رسید (با متن جدید و حذف عکس) ---
+async def process_receipt_upload(message: types.Message):
+    user_id = message.from_user.id
+    lang = await db.get_user_language(user_id)
+    
+    state = user_payment_states.get(user_id)
+    
+    # 1. حذف عکس رسید برای تمیزی چت
+    try:
+        await bot.delete_message(user_id, message.message_id)
+    except Exception as e:
+        logger.warning(f"Could not delete receipt message: {e}")
+
+    if message.content_type != 'photo':
+        await bot.send_message(user_id, "⚠️ لطفاً فقط تصویر رسید را ارسال کنید.")
+        return
+
+    amount = state['amount']
+    prev_msg_id = state['msg_id']
+    
+    # --- متن اصلاح شده ---
+    wait_text = "✅ رسید شما دریافت شد\\. پس از تایید توسط ادمین، حساب شما شارژ خواهد شد\\."
+    
+    kb = types.InlineKeyboardMarkup()
+    kb.add(user_menu.back_btn("wallet:main", lang))
+    
+    try:
+        await bot.edit_message_text(
+            wait_text, user_id, prev_msg_id,
+            reply_markup=kb, parse_mode='MarkdownV2'
+        )
+    except:
+        await bot.send_message(user_id, wait_text, reply_markup=kb, parse_mode='MarkdownV2')
+    
+    # ثبت درخواست
+    req_id = await db.create_charge_request(user_id, amount, prev_msg_id)
+    
+    # ارسال به کانال ادمین
+    admin_group_id = await db.get_config('admin_group_id')
+    
+    if admin_group_id:
+        try:
+            await send_receipt_to_admin(message, req_id, amount, user_id, int(admin_group_id))
+        except Exception as e:
+            logger.error(f"Failed to send to admin: {e}")
+    else:
+        logger.warning("Admin group ID not set.")
+    
+    # پایان کار: حذف استیت
+    if user_id in user_payment_states:
+        del user_payment_states[user_id]
+
+async def send_receipt_to_admin(message: types.Message, req_id: int, amount: int, user_id: int, chat_id: int):
+    """ارسال رسید به گروه مدیریت"""
+    user_data = await db.user(user_id)
+    username = user_data.get('username', 'Unknown')
+    name = user_data.get('first_name', 'Unknown')
+    
+    caption = (
+        f"💸 *درخواست شارژ جدید*\n"
+        f"🆔 شناسه: `{req_id}`\n\n"
+        f"👤 کاربر: {escape_markdown(name)}\n"
+        f"🆔 آیدی عددی: `{user_id}`\n"
+        f"🔗 یوزرنیم: @{escape_markdown(username)}\n"
+        f"💳 مبلغ: *{amount:,} تومان*"
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ تایید شارژ", callback_data=f"admin_charge:confirm:{req_id}"),
+        types.InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin_charge:reject:{req_id}")
+    )
+    
+    photo_id = message.photo[-1].file_id
+    
+    await bot.send_photo(
+        chat_id=chat_id,
+        photo=photo_id,
+        caption=caption,
         reply_markup=markup,
         parse_mode='MarkdownV2'
     )
 
-# --- شارژ حساب ---
-@bot.callback_query_handler(func=lambda call: call.data == "wallet:charge")
-async def wallet_charge_methods(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    lang = await db.get_user_language(user_id)
-    
-    markup = await user_menu.payment_options_menu(lang, back_callback="wallet:main")
-    
-    await bot.edit_message_text(
-        get_string('prompt_select_payment_method', lang),
-        user_id,
-        call.message.message_id,
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "show_card_details")
-async def show_card_details(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    lang = await db.get_user_language(user_id) # ✅ await
-    
-    info = CARD_PAYMENT_INFO
-    text = (
-        f"💳 <b>{get_string('payment_card_details_title', lang)}</b>\n\n"
-        f"🏦 <b>{info.get('bank_name')}</b>\n"
-        f"👤 <b>{info.get('card_holder')}</b>\n"
-        f"🔢 <code>{info.get('card_number')}</code>\n\n"
-        f"⚠️ {get_string('payment_card_instructions', lang)}"
-    )
-    
-    await bot.edit_message_text(
-        text,
-        user_id,
-        call.message.message_id,
-        reply_markup=user_menu.back_btn("wallet:charge", lang),
-        parse_mode='HTML'
-    )
-
 # --- خرید سرویس (Buy Plan) ---
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('wallet:buy_confirm:'))
 async def buy_plan_confirm(call: types.CallbackQuery):
     try:
         plan_id = int(call.data.split(':')[2])
-    except (IndexError, ValueError):
-        await bot.answer_callback_query(call.id, "❌ خطای سیستمی.")
-        return
+    except: return
 
     user_id = call.from_user.id
-    lang = await db.get_user_language(user_id) # ✅ await
+    lang = await db.get_user_language(user_id)
 
     selected_plan = await db.get_plan_by_id(plan_id)
     if not selected_plan:
@@ -90,7 +302,7 @@ async def buy_plan_confirm(call: types.CallbackQuery):
         return
 
     user_data = await db.user(user_id)
-    balance = user_data.get('wallet_balance', 0) if user_data else 0
+    balance = user_data.get('wallet_balance', 0)
     
     text = user_formatter.purchase_confirmation(
         plan_name=selected_plan['name'],
@@ -127,11 +339,15 @@ async def execute_purchase(call: types.CallbackQuery):
             return
 
         await bot.edit_message_text("⏳ در حال فعال‌سازی سرویس...", user_id, call.message.message_id)
-
-        target_panel_name = "server1"
+        
+        # انتخاب پنل پیش‌فرض (قابل توسعه)
+        target_panel_name = "server1" 
         
         panel_api = await PanelFactory.get_panel(target_panel_name)
-        
+        if not panel_api:
+             await bot.send_message(user_id, "❌ خطای اتصال به سرور.")
+             return
+
         random_suffix = str(uuid_lib.uuid4())[:8]
         username = f"u{user_id}_{random_suffix}"
         
@@ -141,7 +357,6 @@ async def execute_purchase(call: types.CallbackQuery):
             await db.update_wallet_balance(user_id, -plan['price'], 'purchase', f"خرید پلن {plan['name']}")
             
             service_uuid = new_service.get('uuid') or username 
-            
             await db.add_uuid(user_id=user_id, uuid_str=service_uuid, name=username)
             
             # ثبت دسترسی‌ها
@@ -149,7 +364,7 @@ async def execute_purchase(call: types.CallbackQuery):
             if uuid_id and plan.get('allowed_categories'):
                 await db.grant_access_by_category(uuid_id, plan['allowed_categories'])
 
-            markup = await user_menu.post_charge_menu(lang) # ✅ await
+            markup = await user_menu.post_charge_menu(lang) 
             await bot.edit_message_text(
                 f"✅ <b>خرید موفقیت‌آمیز بود!</b>\n\nنام کاربری: <code>{username}</code>",
                 user_id, 
@@ -164,7 +379,7 @@ async def execute_purchase(call: types.CallbackQuery):
         logger.error(f"Purchase Error: {e}")
         await bot.send_message(user_id, "❌ خطای غیرمنتظره.")
 
-# --- 1. تاریخچه تراکنش‌ها ---
+# --- تاریخچه تراکنش‌ها ---
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:history")
 async def wallet_history_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -172,7 +387,6 @@ async def wallet_history_handler(call: types.CallbackQuery):
     
     transactions = await db.get_wallet_history(user_id, limit=10)
     
-    # هدر بولد شده
     header = "📜 *تاریخچه تراکنش‌ها*\n"
     text = header
     
@@ -184,18 +398,13 @@ async def wallet_history_handler(call: types.CallbackQuery):
             raw_desc = t.get('description') or t.get('type', 'Unknown')
             raw_date = user_formatter.to_shamsi(t.get('transaction_date'), include_time=True)
             
-            # اسکیپ کردن مقادیر متغیر برای جلوگیری از بهم ریختن فرمت
             desc = escape_markdown(raw_desc)
             date_str = escape_markdown(raw_date)
             
             amount_val = f"{int(abs(amount)):,}"
             amount_str = escape_markdown(amount_val) + " تومان"
             
-            if amount > 0:
-                icon = "➕"
-            else:
-                icon = "➖"
-            
+            icon = "➕" if amount > 0 else "➖"
             text += (
                 "──────────────────\n"
                 f"{icon} {amount_str} \n"
@@ -206,83 +415,36 @@ async def wallet_history_handler(call: types.CallbackQuery):
     kb = types.InlineKeyboardMarkup()
     kb.add(user_menu.back_btn("wallet:main", lang))
     
-    await bot.edit_message_text(
-        text,
-        user_id,
-        call.message.message_id,
-        reply_markup=kb,
-        parse_mode='MarkdownV2'
-    )
+    await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
 
-# --- 2. تنظیمات تمدید خودکار ---
+# --- تنظیمات و سایر موارد ---
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:settings")
 async def wallet_settings_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
-    
     user_data = await db.user(user_id)
     auto_renew = user_data.get('auto_renew', False)
     
     markup = await user_menu.wallet_settings_menu(auto_renew, lang)
-    
-    text = (
-        "⚙️ **تنظیمات تمدید خودکار**\n\n"
-        "با فعال‌سازی این گزینه، سرویس‌های شما در صورت داشتن موجودی کافی، به صورت خودکار تمدید خواهند شد."
-    )
-    
-    await bot.edit_message_text(
-        text,
-        user_id,
-        call.message.message_id,
-        reply_markup=markup,
-        parse_mode='Markdown'
-    )
+    text = "⚙️ **تنظیمات تمدید خودکار**\n\nبا فعال‌سازی این گزینه..."
+    await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:toggle_auto_renew")
 async def toggle_auto_renew_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
-    
-    # تغییر وضعیت در دیتابیس
     user_data = await db.user(user_id)
-    current_status = user_data.get('auto_renew', False)
-    new_status = not current_status
-    
+    new_status = not user_data.get('auto_renew', False)
     await db.update_auto_renew_setting(user_id, new_status)
-    
-    # رفرش منو
     await wallet_settings_handler(call)
-    
     status_msg = "✅ فعال شد" if new_status else "❌ غیرفعال شد"
     await bot.answer_callback_query(call.id, f"تمدید خودکار {status_msg}")
 
-# --- 3. انتقال موجودی ---
-@bot.callback_query_handler(func=lambda call: call.data == "wallet:transfer_start")
-async def transfer_balance_start(call: types.CallbackQuery):
-    # فعلاً پیام "به زودی" یا لاجیک ساده
-    await bot.answer_callback_query(call.id, "🔜 قابلیت انتقال موجودی به زودی فعال می‌شود.", show_alert=True)
-
-# --- 4. خرید هدیه ---
-@bot.callback_query_handler(func=lambda call: call.data == "wallet:gift_start")
-async def gift_purchase_start(call: types.CallbackQuery):
-    # فعلاً پیام "به زودی"
-    await bot.answer_callback_query(call.id, "🔜 قابلیت خرید هدیه به زودی فعال می‌شود.", show_alert=True)
-
-# --- 5. مشاهده سرویس‌ها (انتخاب دسته) ---
 @bot.callback_query_handler(func=lambda call: call.data == "view_plans")
 async def view_plans_categories(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
-    
-    # نمایش منوی دسته‌بندی‌ها
     markup = await user_menu.plan_categories_menu(lang)
-    
-    await bot.edit_message_text(
-        get_string('prompt_select_plan_category', lang),
-        user_id,
-        call.message.message_id,
-        reply_markup=markup
-    )
-
+    await bot.edit_message_text(get_string('prompt_select_plan_category', lang), user_id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_plans:"))
 async def show_plans_list(call: types.CallbackQuery):
@@ -290,69 +452,45 @@ async def show_plans_list(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
-    # 1. چک کردن توضیحات (Alert)
-    # ابتدا لیست کتگوری‌ها را می‌گیریم تا توضیحات این یکی را پیدا کنیم
     categories = await db.get_server_categories()
     selected_cat = next((c for c in categories if c['code'] == category), None)
-    
     if selected_cat and selected_cat.get('description'):
-        # نمایش هشدار به کاربر
         await bot.answer_callback_query(call.id, selected_cat['description'], show_alert=True)
-        # مکث کوتاه برای اینکه کاربر پیام را ببیند (اختیاری است، تلگرام خودش هندل می‌کند)
     
-    # 2. ادامه فرآیند دریافت موجودی و پلن‌ها...
     user_data = await db.user(user_id)
-    balance = user_data.get('wallet_balance', 0) if user_data else 0
-    
+    balance = user_data.get('wallet_balance', 0)
     all_plans = await db.get_all_plans(active_only=True)
     
     filtered_plans = []
     for plan in all_plans:
         cats = plan.get('allowed_categories') or []
         if category == 'combined':
-            if len(cats) > 1 or not cats:
-                filtered_plans.append(plan)
+            if len(cats) > 1 or not cats: filtered_plans.append(plan)
         else:
-            if category in cats and len(cats) == 1:
-                filtered_plans.append(plan)
+            if category in cats and len(cats) == 1: filtered_plans.append(plan)
     
     if not filtered_plans:
-        # اگر پلنی نبود فقط یک پیام ساده بده، آلرت توضیحات قبلا نمایش داده شده
-        # اگر آلرت بالا اجرا شده باشد، این یکی اجرا نمی‌شود چون هر کالبک یک answer دارد
-        # پس اینجا شرط می‌گذاریم
-        try:
-            await bot.answer_callback_query(call.id, get_string('fmt_plans_none_in_category', lang), show_alert=True)
-        except:
-            pass # قبلا answer شده
+        try: await bot.answer_callback_query(call.id, get_string('fmt_plans_none_in_category', lang), show_alert=True)
+        except: pass
         return
 
     markup = await user_menu.plan_category_menu(lang, balance, filtered_plans)
-    
     cat_title = category.upper() if category != 'combined' else get_string('btn_cat_combined', lang)
     text = get_string('fmt_plans_title', lang).format(type_title=cat_title)
-    
-    await bot.edit_message_text(
-        text,
-        user_id,
-        call.message.message_id,
-        reply_markup=markup
-    )
+    await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup)
 
-# --- 7. دکمه‌های جانبی (حجم اضافه و روش پرداخت از منوی پلن) ---
 @bot.callback_query_handler(func=lambda call: call.data == "show_addons")
 async def show_addons_handler(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 بسته‌های حجم و زمان اضافه به زودی فعال می‌شوند.", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_payment_options")
 async def redirect_to_payment(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    lang = await db.get_user_language(user_id)
-    
-    markup = await user_menu.payment_options_menu(lang, back_callback="view_plans")
-    
-    await bot.edit_message_text(
-        get_string('prompt_select_payment_method', lang),
-        user_id,
-        call.message.message_id,
-        reply_markup=markup
-    )
+    await wallet_charge_start(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:transfer_start")
+async def transfer_balance_start(call: types.CallbackQuery):
+    await bot.answer_callback_query(call.id, "🔜 قابلیت انتقال موجودی به زودی فعال می‌شود.", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == "wallet:gift_start")
+async def gift_purchase_start(call: types.CallbackQuery):
+    await bot.answer_callback_query(call.id, "🔜 قابلیت خرید هدیه به زودی فعال می‌شود.", show_alert=True)

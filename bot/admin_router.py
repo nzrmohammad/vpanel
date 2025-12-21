@@ -15,7 +15,7 @@ from .config import ADMIN_IDS
 from .admin_handlers import (
     user_management, reporting, broadcast, backup, group_actions,
     plan_management, panel_management, support, wallet as wallet_admin,
-    navigation, debug
+    navigation, debug, settings
 )
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ def register_admin_handlers(bot_instance, scheduler_instance):
     # Modules that need access to state
     modules_to_init = [
         user_management, plan_management, panel_management,
-        wallet_admin, support
+        wallet_admin, support, settings
     ]
     
     # Pass bot.context_state as the shared dictionary
@@ -274,6 +274,15 @@ ADMIN_CALLBACK_HANDLERS = {
     "broadcast_confirm": broadcast.broadcast_confirm,
     "backup_menu": backup.backup_menu_handler,
     "backup": backup.backup_panel_data,
+
+    # --- Settings Handlers ---
+    "settings": settings.settings_main_panel,      # admin:settings:main
+    "pay_methods": settings.list_payment_methods,  # admin:pay_methods:card
+    "add_method": settings.start_add_method,       # admin:add_method:card
+    "del_method": settings.delete_payment_method_handler, # admin:del_method:ID:type
+    "set_chan": settings.set_channel_start,        # admin:set_chan:log
+    "toggle_method": settings.toggle_payment_method_handler,
+    "edit_usdt_rate": settings.edit_usdt_rate_start,
 }
 
 # ===================================================================
