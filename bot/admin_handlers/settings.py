@@ -350,22 +350,22 @@ async def set_channel_start(call: types.CallbackQuery, params: list):
     if chan_type == 'log':
         type_name = "گزارشات ادمین"
         config_key = "admin_group_id"
-        help_text = "آیدی عددی کانال/گروه (مثال: `-1001234567890`)"
+        help_text = r"آیدی عددی کانال/گروه \(مثال: `-1001234567890`\)"
     elif chan_type == 'proof':
         type_name = "رسیدهای واریزی"
         config_key = "proof_channel_id"
-        help_text = "آیدی عددی کانال (مثال: `-1001234567890`)"
+        help_text = r"آیدی عددی کانال \(مثال: `-1001234567890`\)"
     else: # support
         type_name = "اکانت پشتیبانی"
         config_key = "support_id"
-        help_text = "یوزرنیم اکانت پشتیبانی (مثال: `@admin` یا `support`)"
+        help_text = r"یوزرنیم اکانت پشتیبانی \(مثال: `@admin` یا `support`\)"
 
     current_val = await db.get_config(config_key)
     
     if current_val:
         current_display = f"✅ `{current_val}`"
     else:
-        current_display = "❌ (تنظیم نشده)"
+        current_display = r"❌ \(تنظیم نشده\)"
 
     text = (
         f"📢 *تنظیم {type_name}*\n\n"

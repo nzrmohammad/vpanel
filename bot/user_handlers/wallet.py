@@ -7,7 +7,7 @@ from bot.formatters import user_formatter
 from bot.database import db
 from bot.language import get_string
 from bot.services.panels import PanelFactory
-from bot.utils import escape_markdown
+from bot.utils import escape_markdown, to_shamsi
 import logging
 import uuid as uuid_lib
 
@@ -434,7 +434,7 @@ async def wallet_history_handler(call: types.CallbackQuery):
         for t in transactions:
             amount = t.get('amount', 0)
             raw_desc = t.get('description') or t.get('type', 'Unknown')
-            raw_date = user_formatter.to_shamsi(t.get('transaction_date'), include_time=True)
+            raw_date = to_shamsi(t.get('transaction_date'), include_time=True)
             
             desc = escape_markdown(raw_desc)
             date_str = escape_markdown(raw_date)
