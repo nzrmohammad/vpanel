@@ -23,47 +23,43 @@ def initialize_wallet_handlers(b, conv_dict):
 # ---------------------------------------------------------
 
 async def handle_charge_request_callback(call: types.CallbackQuery, params: list):
-    """
-    پاسخ ادمین به درخواست شارژ.
-    Format: admin:charge_req:<decision>:<request_id>
-    """
+    """پاسخ ادمین به درخواست شارژ (رسید ارسالی کاربر) را مدیریت می‌کند."""
     admin_id = call.from_user.id
+    original_caption = call.message.caption or ""
     
     try:
-        # params: [decision, request_id]
-        if len(params) < 2: raise ValueError
-        decision = params[0] # 'confirm' or 'reject'
+        decision = params[0] # charge_confirm or charge_reject
         request_id = int(params[1])
-    except:
+    except (IndexError, ValueError):
         await bot.answer_callback_query(call.id, "خطا در پارامترها.", show_alert=True)
         return
 
     async with db.get_session() as session:
-        # قفل کردن ردیف برای جلوگیری از تداخل
-        stmt = select(ChargeRequest).where(ChargeRequest.id == request_id).with_for_update()
+        # دریافت درخواست شارژ
+        stmt = select(ChargeRequest).where(ChargeRequest.id == request_id)
         result = await session.execute(stmt)
         charge_req = result.scalar_one_or_none()
 
-        if not charge_req:
-            await bot.answer_callback_query(call.id, "❌ درخواست یافت نشد.", show_alert=True)
-            return
-
-        if not charge_req.is_pending:
-            await bot.answer_callback_query(call.id, "⚠️ قبلاً پردازش شده است.", show_alert=True)
-            await _update_admin_message_status(call, "⚠️ قبلاً پردازش شده")
+        if not charge_req or not charge_req.is_pending:
+            await bot.answer_callback_query(call.id, "این درخواست قبلاً پردازش شده است.", show_alert=True)
+            try:
+                # اصلاح: استفاده از escape_markdown برای جلوگیری از خطا در کپشن
+                new_caption = escape_markdown(f"{original_caption}\n\n⚠️ این درخواست قبلا پردازش شده است.")
+                await bot.edit_message_caption(caption=new_caption, chat_id=admin_id, message_id=call.message.message_id, parse_mode='MarkdownV2')
+            except:
+                pass
             return
 
         user_id = charge_req.user_id
         amount = charge_req.amount
         user_message_id = charge_req.message_id
         
+        # دریافت اطلاعات کاربر برای تشخیص زبان
         user = await session.get(User, user_id)
-        if not user: return
-        lang_code = user.lang_code or 'fa'
+        lang_code = user.lang_code if user else 'fa'
 
         try:
-            if decision == 'confirm':
-                # --- تایید شارژ ---
+            if decision == 'charge_confirm':
                 success = await db.update_wallet_balance(
                     user_id, amount, 'deposit', 
                     f"شارژ توسط مدیریت (درخواست #{request_id})",
@@ -71,68 +67,67 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                 )
                 
                 if success:
+                    # آپدیت وضعیت درخواست
                     charge_req.is_pending = False
                     await session.commit()
                     
                     amount_str = f"{amount:,.0f}"
+                    # نکته: در اینجا متن دستی فرمت‌دهی شده، پس کاراکترهای رزرو شده مثل نقطه باید دستی اسکیپ شوند (\.)
                     success_text = (
-                        f"✅ حساب شما به مبلغ *{amount_str} تومان* شارژ شد\\.\n\n"
-                        f"هم‌اکنون می‌توانید سرویس مورد نظر را خریداری کنید\\."
+                        f"✅ حساب شما به مبلغ *{amount_str} تومان* با موفقیت شارژ شد\\.\n\n"
+                        f"حالا می‌توانید سرویس مورد نظر خود را خریداری کنید\\."
                     )
                     
-                    # ✅ نمایش منوی کامل شامل دکمه "مشاهده سرویس‌ها"
+                    # اطلاع به کاربر
                     try:
                         post_charge_kb = await user_menu.post_charge_menu(lang_code)
+                        # متن success_text بالا دستی اسکیپ شده است، پس نیازی به escape_markdown نیست
                         await _safe_edit(user_id, user_message_id, success_text, reply_markup=post_charge_kb)
                     except Exception:
                         try:
-                            post_charge_kb = await user_menu.post_charge_menu(lang_code)
-                            await bot.send_message(user_id, success_text, reply_markup=post_charge_kb, parse_mode="MarkdownV2")
+                            await bot.send_message(user_id, success_text, parse_mode="MarkdownV2")
                         except: pass
                     
-                    await bot.answer_callback_query(call.id, "✅ تایید شد.", show_alert=False)
-                    await _update_admin_message_status(call, f"✅ تایید شد توسط {call.from_user.first_name}")
+                    # اصلاح: اسکیپ کردن کپشن ادمین
+                    admin_caption = escape_markdown(f"{original_caption}\n\n✅ تایید شد توسط شما.")
+                    await bot.edit_message_caption(
+                        caption=admin_caption,
+                        chat_id=admin_id, 
+                        message_id=call.message.message_id,
+                        parse_mode='MarkdownV2'
+                    )
+                    await bot.answer_callback_query(call.id, "شارژ حساب کاربر تایید شد.", show_alert=True)
                 else:
-                    await session.rollback()
-                    await bot.answer_callback_query(call.id, "❌ خطا در دیتابیس.", show_alert=True)
+                    await bot.answer_callback_query(call.id, "❌ خطا در عملیات دیتابیس.", show_alert=True)
 
-            elif decision == 'reject':
-                # --- رد درخواست ---
+            elif decision == 'charge_reject':
                 charge_req.is_pending = False
                 await session.commit()
                 
-                # ✅ دریافت آیدی پشتیبانی از تنظیمات
-                support_id = await db.get_config('support_id')
+                reject_text = "❌ درخواست شارژ حساب شما توسط ادمین رد شد. لطفاً با پشتیبانی تماس بگیرید."
                 
-                reject_text = (
-                    "❌ درخواست شارژ حساب شما توسط ادمین رد شد.\n"
-                    "لطفاً در صورت اشتباه با پشتیبانی تماس بگیرید."
-                )
-                
-                # ساخت کیبورد اختصاصی
-                kb = types.InlineKeyboardMarkup()
-                
-                # اگر آیدی پشتیبانی تنظیم شده باشد، دکمه نمایش داده می‌شود
-                if support_id:
-                    clean_id = support_id.replace('@', '').strip()
-                    kb.add(types.InlineKeyboardButton("📞 تماس با پشتیبانی", url=f"https://t.me/{clean_id}"))
-                
-                kb.add(types.InlineKeyboardButton("✖️ بازگشت به کیف پول", callback_data="wallet:main"))
-
                 try:
-                    await _safe_edit(user_id, user_message_id, reject_text, reply_markup=kb)
+                    cancel_kb = await user_menu.user_cancel_action("wallet:main", lang_code)
+                    # ✅ اصلاح اصلی اینجاست: استفاده از escape_markdown
+                    await _safe_edit(user_id, user_message_id, escape_markdown(reject_text), reply_markup=cancel_kb)
                 except:
                     try:
-                        await bot.send_message(user_id, reject_text, reply_markup=kb)
+                        await bot.send_message(user_id, reject_text)
                     except: pass
 
-                await bot.answer_callback_query(call.id, "❌ رد شد.", show_alert=False)
-                await _update_admin_message_status(call, f"❌ رد شد توسط {call.from_user.first_name}")
+                # اصلاح: اسکیپ کردن کپشن ادمین
+                admin_caption = escape_markdown(f"{original_caption}\n\n❌ توسط شما رد شد.")
+                await bot.edit_message_caption(
+                    caption=admin_caption,
+                    chat_id=admin_id,
+                    message_id=call.message.message_id,
+                    parse_mode='MarkdownV2'
+                )
+                await bot.answer_callback_query(call.id, "درخواست شارژ کاربر رد شد.", show_alert=True)
                 
         except Exception as e:
-            logger.error(f"Error handling charge request {request_id}: {e}", exc_info=True)
-            await session.rollback()
-            await bot.answer_callback_query(call.id, "خطای سیستمی.", show_alert=False)
+            logger.error(f"Error handling charge request {request_id}: {e}")
+            await bot.answer_callback_query(call.id, "خطای سیستمی رخ داد.", show_alert=False)
 
 async def _update_admin_message_status(call: types.CallbackQuery, status_text: str):
     """آپدیت کپشن پیام ادمین و حذف دکمه‌ها"""
