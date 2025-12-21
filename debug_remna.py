@@ -3,13 +3,13 @@ import httpx
 
 # ================= تنظیمات (اینجا را پر کنید) =================
 # آدرس پنل (مثال: https://panel.example.com)
-PANEL_URL = "https://dashboard.cloudvibe.ir" 
+PANEL_URL = "" 
 
 # توکن ادمین (API Token)
-API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiYThlZTFhNjgtMjYxZC00M2Y5LThhNTYtZWQyNjliMjdhYzQ3IiwidXNlcm5hbWUiOm51bGwsInJvbGUiOiJBUEkiLCJpYXQiOjE3NjU3ODY1NzIsImV4cCI6MTA0MDU3MDAxNzJ9.67o3-zCQScxh7E-lxI9QRGnhBWIhiPdqB33J9A7MQSs"
+API_TOKEN = ""
 
 # آن UUID که ربات می‌گوید پیدا نمی‌کند
-TARGET_UUID = "2e1919a7-e929-4e11-99eb-d0e988d25aa7"
+TARGET_UUID = ""
 # ==============================================================
 
 async def debug_panel():
