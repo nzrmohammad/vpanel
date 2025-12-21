@@ -242,8 +242,7 @@ ADMIN_CALLBACK_HANDLERS = {
     "us_wdrw": wallet_admin.handle_manual_withdraw_request,
     "manual_withdraw_exec": wallet_admin.handle_manual_withdraw_execution,
     "manual_withdraw_cancel": wallet_admin.handle_manual_withdraw_cancel,
-    "charge_confirm": wallet_admin.handle_charge_request_callback,
-    "charge_reject": wallet_admin.handle_charge_request_callback,
+    "charge_req": wallet_admin.handle_charge_request_callback,
     "reset_all_balances_confirm": user_management.handle_reset_all_balances_confirm,
     "reset_all_balances_exec": user_management.handle_reset_all_balances_execute,
 

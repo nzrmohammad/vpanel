@@ -8,17 +8,19 @@ from bot.utils import _safe_edit, escape_markdown
 
 logger = logging.getLogger(__name__)
 
-# متغیرهای گلوبال
+# متغیرهای گلوبال برای ذخیره وضعیت ربات و مکالمات ادمین
 bot = None
 admin_conversations = {}
 
 def initialize_settings_handlers(bot_instance, state_dict):
+    """مقداردهی اولیه و دریافت نمونه ربات و دیکشنری وضعیت‌ها"""
     global bot, admin_conversations
     bot = bot_instance
     admin_conversations = state_dict
 
 # --- 1. منوی اصلی تنظیمات ---
 async def settings_main_panel(call: types.CallbackQuery, params: list):
+    """نمایش منوی اصلی تنظیمات یا زیرمنوی روش‌های پرداخت"""
     mode = params[0] if params else 'main'
     
     if mode == 'wallet':
@@ -41,6 +43,9 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
             types.InlineKeyboardButton("📢 کانال گزارشات", callback_data="admin:set_chan:log"),
             types.InlineKeyboardButton("🧾 کانال رسیدها", callback_data="admin:set_chan:proof")
         )
+        # دکمه جدید برای تنظیم اکانت پشتیبانی
+        markup.add(types.InlineKeyboardButton("☎️ اکانت پشتیبانی", callback_data="admin:set_chan:support"))
+        
         markup.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
         
         text = (
@@ -52,25 +57,23 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
 
 # --- 2. نمایش لیست کارت‌ها/ولت‌ها ---
 async def list_payment_methods(call: types.CallbackQuery, params: list):
+    """نمایش لیست روش‌های پرداخت فعال و غیرفعال"""
     if not params: return
     method_type = params[0]
     
     markup = types.InlineKeyboardMarkup(row_width=1)
     header_text = ""
 
-    # === بخش جدید: مدیریت نرخ تتر (فقط برای کریپتو) ===
+    # === بخش مدیریت نرخ تتر (فقط برای کریپتو) ===
     if method_type == 'crypto':
-        # دریافت نرخ فعلی از دیتابیس (تنظیمات سراسری)
         current_rate = await db.get_config('usdt_rate', '60000')
-        
-        # دکمه ویرایش نرخ در بالای لیست
         markup.add(types.InlineKeyboardButton(
             f"💰 نرخ تتر: {int(current_rate):,} تومان (ویرایش)", 
             callback_data="admin:edit_usdt_rate"
         ))
         header_text = f"💵 **نرخ فعلی تتر:** `{int(current_rate):,}` تومان\n\n"
 
-    # دریافت لیست متدها
+    # دریافت لیست متدها از دیتابیس
     methods = await db.get_payment_methods(method_type, active_only=False)
     
     type_title = "کارت‌های بانکی" if method_type == 'card' else "کیف پول‌های کریپتو"
@@ -131,7 +134,7 @@ async def toggle_payment_method_handler(call: types.CallbackQuery, params: list)
     await bot.answer_callback_query(call.id, "✅ وضعیت تغییر کرد.")
     await list_payment_methods(call, [method_type])
 
-# --- 4. هندلر تغییر نرخ تتر (سراسری) ---
+# --- 4. هندلر تغییر نرخ تتر ---
 async def edit_usdt_rate_start(call: types.CallbackQuery, params: list):
     user_id = call.from_user.id
     msg_id = call.message.message_id
@@ -145,7 +148,7 @@ async def edit_usdt_rate_start(call: types.CallbackQuery, params: list):
         f"💰 **ویرایش نرخ تتر**\n\n"
         f"نرخ فعلی: `{int(current_rate):,}` تومان\n\n"
         "لطفاً نرخ جدید تتر را به تومان وارد کنید:\n"
-        "مثال: `62000`"
+        "مثال: `100000`"
     )
     
     await _safe_edit(user_id, msg_id, text, reply_markup=markup, parse_mode='Markdown')
@@ -187,7 +190,7 @@ async def process_usdt_rate_input(message: types.Message):
     )
 
 
-# --- 5. شروع افزودن روش جدید ---
+# --- 5. شروع افزودن روش جدید (کارت/کریپتو) ---
 async def start_add_method(call: types.CallbackQuery, params: list):
     method_type = params[0]
     user_id = call.from_user.id
@@ -228,7 +231,7 @@ async def start_add_method(call: types.CallbackQuery, params: list):
             'timestamp': time.time()
         }
 
-# --- هندلرهای کارت (بدون تغییر) ---
+# --- هندلرهای کارت (مراحل) ---
 async def process_card_step_1_bank(message: types.Message):
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
@@ -274,10 +277,9 @@ async def process_card_step_3_holder(message: types.Message):
     
     await save_payment_method(user_id, state, 'card', data)
 
-# --- هندلرهای کریپتو (فقط ۲ مرحله: آدرس و شبکه) ---
+# --- هندلرهای کریپتو (مراحل) ---
 
 async def process_crypto_step_1_address(message: types.Message):
-    """مرحله ۱: دریافت آدرس ولت"""
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
@@ -299,7 +301,6 @@ async def process_crypto_step_1_address(message: types.Message):
     state['next_handler'] = process_crypto_step_2_network
 
 async def process_crypto_step_2_network(message: types.Message):
-    """مرحله ۲: دریافت شبکه و ذخیره نهایی (نرخ دیگر پرسیده نمی‌شود)"""
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
@@ -310,12 +311,9 @@ async def process_crypto_step_2_network(message: types.Message):
     network = message.text.strip().upper()
     state['data']['network'] = network
     
-    # اینجا دیگر مرحله بعد نداریم، ذخیره می‌کنیم
-    # نرخ در system_config ذخیره شده است، در متد پرداخت فقط اطلاعات ولت مهم است
-    
     await save_payment_method(user_id, state, 'crypto', state['data'])
 
-# --- ذخیره نهایی ---
+# --- ذخیره نهایی روش پرداخت ---
 async def save_payment_method(user_id, state, method_type, data):
     try:
         title = ""
@@ -341,45 +339,39 @@ async def save_payment_method(user_id, state, method_type, data):
         markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:settings:wallet"))
         await _safe_edit(user_id, state['msg_id'], "❌ خطا در ذخیره‌سازی.", reply_markup=markup)
 
-# --- 5. تنظیم کانال‌ها ---
+# --- 6. تنظیم کانال‌ها و اکانت پشتیبانی ---
 async def set_channel_start(call: types.CallbackQuery, params: list):
+    """شروع پروسه تنظیم کانال یا اکانت پشتیبانی"""
     chan_type = params[0]
     user_id = call.from_user.id
     msg_id = call.message.message_id
     
+    # تعیین نوع تنظیم
     if chan_type == 'log':
         type_name = "گزارشات ادمین"
         config_key = "admin_group_id"
-    else:
+        help_text = "آیدی عددی کانال/گروه (مثال: `-1001234567890`)"
+    elif chan_type == 'proof':
         type_name = "رسیدهای واریزی"
         config_key = "proof_channel_id"
+        help_text = "آیدی عددی کانال (مثال: `-1001234567890`)"
+    else: # support
+        type_name = "اکانت پشتیبانی"
+        config_key = "support_id"
+        help_text = "یوزرنیم اکانت پشتیبانی (مثال: `@admin` یا `support`)"
 
-    current_id = await db.get_config(config_key)
-    ltr_mark = "\u200e" 
+    current_val = await db.get_config(config_key)
     
-    current_display = "❌ \\(تنظیم نشده\\)"
-    
-    if current_id:
-        safe_id = str(current_id).replace("-", "\\-")
-        
-        try:
-            chat_info = await bot.get_chat(current_id)
-            safe_title = escape_markdown(chat_info.title)
-            
-            current_display = f"✅ *{safe_title}*\n🆔 `{ltr_mark}{safe_id}`"
-            
-        except Exception as e:
-            current_display = f"⚠️ `{ltr_mark}{safe_id}`\n\\(ربات نام کانال را نمی‌بیند، بررسی کنید ادمین باشد\\)"
+    if current_val:
+        current_display = f"✅ `{current_val}`"
+    else:
+        current_display = "❌ (تنظیم نشده)"
 
     text = (
-        f"📢 *تنظیم کانال {type_name}*\n\n"
-        f"🔻 *وضعیت فعلی:*\n{current_display}\n"
-        "➖➖➖➖➖➖➖➖\n"
-        "💡 *راهنمای دریافت آیدی:*\n"
-        "۱\\. یک پیام از کانال خود را به ربات `@getidsbot` فوروارد کنید\\.\n"
-        "۲\\. مقدار `Chat ID` را کپی کنید \\(باید با `\\-100` شروع شود\\)\\.\n\n"
-        "👇 *لطفاً آیدی عددی کانال یا گروه جدید را ارسال کنید:*\n"
-        "مثال: `\\-1001234567890`"
+        f"📢 *تنظیم {type_name}*\n\n"
+        f"🔻 *وضعیت فعلی:* {current_display}\n\n"
+        f"👇 *لطفاً مقدار جدید را ارسال کنید:*\n"
+        f"{help_text}"
     )
     
     markup = types.InlineKeyboardMarkup()
@@ -400,7 +392,6 @@ async def process_channel_id(message: types.Message):
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
     
-    # دریافت نوع کانال از وضعیت ذخیره شده
     chan_type = state.get('chan_type')
     
     try: await bot.delete_message(user_id, message.message_id)
@@ -408,20 +399,31 @@ async def process_channel_id(message: types.Message):
     
     text = message.text.strip()
     
-    # اعتبارسنجی آیدی
-    if not (text.startswith("-") and text[1:].isdigit()) and not text.isdigit():
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:settings:main"))
-        await _safe_edit(user_id, state['msg_id'], "❌ آیدی نامعتبر است. باید عدد باشد (مثلاً -100...)", reply_markup=markup)
-        return
+    # اعتبارسنجی ورودی
+    if chan_type == 'support':
+        # برای پشتیبانی هر متنی (مثل یوزرنیم) قابل قبول است
+        if len(text) < 3:
+             await _safe_edit(user_id, state['msg_id'], "❌ یوزرنیم خیلی کوتاه است.", reply_markup=None)
+             return
+    else:
+        # برای کانال‌ها باید حتما عدد باشد
+        if not (text.startswith("-") and text[1:].isdigit()) and not text.isdigit():
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:settings:main"))
+            await _safe_edit(user_id, state['msg_id'], "❌ آیدی نامعتبر است. باید عدد باشد (مثلاً -100...)", reply_markup=markup)
+            return
 
     # انتخاب کلید مناسب برای دیتابیس
-    config_key = "admin_group_id" if chan_type == 'log' else "proof_channel_id"
+    if chan_type == 'log':
+        config_key = "admin_group_id"
+    elif chan_type == 'proof':
+        config_key = "proof_channel_id"
+    else:
+        config_key = "support_id"
     
     # ذخیره در دیتابیس
     await db.set_config(config_key, text)
     
-    # پایان مکالمه
     del admin_conversations[user_id]
     
     markup = types.InlineKeyboardMarkup()
@@ -429,6 +431,6 @@ async def process_channel_id(message: types.Message):
     
     await _safe_edit(
         user_id, state['msg_id'], 
-        f"✅ *کانال با موفقیت ثبت شد\\.*\nآیدی: `{text}`", 
+        f"✅ *{state.get('chan_type')} با موفقیت ثبت شد\\.*\nمقدار: `{text}`", 
         reply_markup=markup, parse_mode='MarkdownV2'
     )

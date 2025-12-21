@@ -104,29 +104,66 @@ async def process_charge_amount(message: types.Message):
     
     if user_id not in user_payment_states: return
 
+    state = user_payment_states[user_id]
+    prev_msg_id = state['msg_id']
+
     try:
-        # حذف پیام کاربر
+        # 1. حذف پیام ارسالی کاربر (چه متن چه عکس) برای تمیز ماندن چت
         try:
             await bot.delete_message(user_id, message.message_id)
         except: pass
         
+        # 2. بررسی اینکه آیا پیام حاوی متن است یا خیر (جلوگیری از ارور NoneType)
+        if not message.text:
+            error_text = (
+                "💰 *شارژ کیف پول*\n\n"
+                "⛔ *خطا: فرمت پیام نامعتبر است*\n"
+                "لطفاً فقط مبلغ را به صورت *عدد* (به تومان) ارسال کنید، نه عکس یا فایل\\.\n\n"
+                "مثال: `50000`"
+            )
+            kb = types.InlineKeyboardMarkup()
+            kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+            
+            # ویرایش پیام قبلی (منو) به جای ارسال پیام جدید
+            try:
+                await bot.edit_message_text(error_text, user_id, prev_msg_id, reply_markup=kb, parse_mode='MarkdownV2')
+            except: pass
+            return
+
+        # 3. پردازش متن ارسال شده
         amount_str = message.text.replace(',', '').replace(' ', '').strip()
         
+        # بررسی اینکه آیا فقط عدد وارد شده است
         if not amount_str.isdigit():
-            error_msg = await bot.send_message(user_id, "⚠️ لطفاً فقط عدد وارد کنید (به تومان).")
-            # در اینجا استیت تغییر نمی‌کند تا کاربر دوباره تلاش کند
+            error_text = (
+                "💰 *شارژ کیف پول*\n\n"
+                "⚠️ *خطا: مقدار وارد شده عدد نیست*\n"
+                "لطفاً فقط عدد انگلیسی یا فارسی وارد کنید (بدون حروف):\n\n"
+                "مثال: `50000`"
+            )
+            kb = types.InlineKeyboardMarkup()
+            kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+            
+            await bot.edit_message_text(error_text, user_id, prev_msg_id, reply_markup=kb, parse_mode='MarkdownV2')
             return
             
         amount = int(amount_str)
         if amount < 5000:
-            error_msg = await bot.send_message(user_id, "⚠️ حداقل مبلغ شارژ ۵,۰۰۰ تومان است.")
+            error_text = (
+                "💰 *شارژ کیف پول*\n\n"
+                "⚠️ *خطا: مبلغ کمتر از حد مجاز*\n"
+                "حداقل مبلغ شارژ ۵,۰۰۰ تومان است\\.\n\n"
+                "لطفاً مبلغ بیشتری وارد کنید:"
+            )
+            kb = types.InlineKeyboardMarkup()
+            kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+            
+            await bot.edit_message_text(error_text, user_id, prev_msg_id, reply_markup=kb, parse_mode='MarkdownV2')
             return
 
-        # ذخیره مبلغ و رفتن به مرحله انتخاب روش
-        state = user_payment_states[user_id]
+        # 4. همه چیز درست است، ذخیره مبلغ و رفتن به مرحله بعد
         state['amount'] = amount
         state['step'] = 'select_method'
-        prev_msg_id = state['msg_id']
         
         methods = await db.get_payment_methods(active_only=True)
         markup = await user_menu.payment_options_menu(lang, methods, back_callback="wallet:charge")
@@ -137,6 +174,7 @@ async def process_charge_amount(message: types.Message):
         
     except Exception as e:
         logger.error(f"Error in charge amount: {e}")
+        # در صورت بروز خطای پیش‌بینی نشده، استیت را پاک می‌کنیم
         if user_id in user_payment_states: del user_payment_states[user_id]
         await bot.send_message(user_id, "❌ خطای غیرمنتظره. لطفاً مجدد تلاش کنید.")
 
@@ -256,24 +294,24 @@ async def process_receipt_upload(message: types.Message):
         del user_payment_states[user_id]
 
 async def send_receipt_to_admin(message: types.Message, req_id: int, amount: int, user_id: int, chat_id: int):
-    """ارسال رسید به گروه مدیریت"""
+    """ارسال رسید به گروه مدیریت با فرمت استاندارد"""
     user_data = await db.user(user_id)
     username = user_data.get('username', 'Unknown')
     name = user_data.get('first_name', 'Unknown')
     
     caption = (
         f"💸 *درخواست شارژ جدید*\n"
-        f"🆔 شناسه: `{req_id}`\n\n"
+        f"🆔 شناسه درخواست: `{req_id}`\n\n"
         f"👤 کاربر: {escape_markdown(name)}\n"
-        f"🆔 آیدی عددی: `{user_id}`\n"
+        f"🔢 آیدی عددی: `{user_id}`\n"
         f"🔗 یوزرنیم: @{escape_markdown(username)}\n"
         f"💳 مبلغ: *{amount:,} تومان*"
     )
     
     markup = types.InlineKeyboardMarkup()
     markup.add(
-        types.InlineKeyboardButton("✅ تایید شارژ", callback_data=f"admin_charge:confirm:{req_id}"),
-        types.InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin_charge:reject:{req_id}")
+        types.InlineKeyboardButton("✅ تایید شارژ", callback_data=f"admin:charge_req:confirm:{req_id}"),
+        types.InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin:charge_req:reject:{req_id}")
     )
     
     photo_id = message.photo[-1].file_id
