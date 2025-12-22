@@ -52,39 +52,50 @@ def _process_and_merge_user_data(all_users_map: dict) -> List[Dict[str, Any]]:
         processed_list.append(data)
     return processed_list
 
-# --- توابع اصلی (Async) ---
+# --- توابع اصلی (Async & Concurrent) ---
 
 async def get_all_users_combined() -> List[Dict[str, Any]]:
-    """اطلاعات کاربران را از تمام پنل‌های فعال دریافت و ترکیب می‌کند."""
-    from bot.database import db # Local import
+    """اطلاعات کاربران را از تمام پنل‌های فعال به صورت همزمان دریافت و ترکیب می‌کند."""
+    from bot.database import db
     
-    logger.info("COMBINED_HANDLER: Fetching users from all active panels.")
+    logger.info("COMBINED_HANDLER: Fetching users from all active panels concurrently.")
     all_users_map = {}
     
-    # دریافت پنل‌های فعال از دیتابیس (Async)
     active_panels = await db.get_active_panels()
 
-    for panel_config in active_panels:
+    # تابع داخلی برای دریافت لیست کاربران از یک پنل
+    async def fetch_users_from_panel(panel_config):
         panel_name = panel_config['name']
         panel_type = panel_config['panel_type']
         
         handler = await _get_handler_for_panel(panel_name)
         if not handler:
-            continue
+            return None
 
         try:
-            # فراخوانی متد Async پنل
-            panel_users = await handler.get_all_users() or []
-            logger.info(f"Fetched {len(panel_users)} users from '{panel_name}'.")
+            users = await handler.get_all_users() or []
+            return {"users": users, "panel_name": panel_name, "panel_type": panel_type}
         except Exception as e:
             logger.error(f"Could not fetch users from panel '{panel_name}': {e}")
-            continue
+            return None
+
+    # اجرای همزمان
+    tasks = [fetch_users_from_panel(p) for p in active_panels]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # پردازش نتایج
+    for res in results:
+        if not res or isinstance(res, Exception): continue
+        
+        panel_users = res['users']
+        panel_name = res['panel_name']
+        panel_type = res['panel_type']
 
         for user in panel_users:
             identifier = None
             uuid = None
             
-            # استخراج شناسه بر اساس نوع پنل
+            # استخراج شناسه
             if panel_type == 'hiddify':
                 uuid = user.get('uuid')
                 identifier = uuid
@@ -93,19 +104,12 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
                 identifier = uuid
             elif panel_type == 'marzban':
                 marzban_username = user.get('username')
-                # جستجو در دیتابیس برای یافتن UUID متصل (Async)
-                linked_uuid = await db.get_uuid_by_marzban_username(marzban_username)
-                if linked_uuid:
-                    identifier = linked_uuid
-                    uuid = linked_uuid
-                else:
-                    identifier = f"marzban_{marzban_username}"
-                    uuid = None
+                # استفاده از نام کاربری به عنوان شناسه موقت برای سرعت
+                identifier = f"marzban_{marzban_username}" 
+                uuid = None 
+
+            if not identifier: continue
             
-            if not identifier:
-                continue
-            
-            # مقداردهی اولیه در دیکشنری تجمیعی
             if identifier not in all_users_map:
                 all_users_map[identifier] = {
                     'uuid': uuid,
@@ -115,24 +119,21 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
                     'breakdown': {},
                     'panels': set()
                 }
-
+            
             if uuid and not all_users_map[identifier].get('uuid'):
                  all_users_map[identifier]['uuid'] = uuid
 
-            # نرمال‌سازی داده‌های یوزر برای ذخیره در breakdown
-            # پنل‌های شما ممکن است کلیدهای متفاوتی داشته باشند، اینجا یکسان‌سازی می‌کنیم
+            # نرمال‌سازی حجم
             limit_gb = 0
             current_gb = 0
-            
-            # منطق استخراج حجم بسته به خروجی پنل
-            if 'usage_limit_GB' in user: # Hiddify Standard
+            if 'usage_limit_GB' in user:
                 limit_gb = float(user['usage_limit_GB'] or 0)
                 current_gb = float(user.get('current_usage_GB', 0) or 0)
-            elif 'data_limit' in user: # Marzban (bytes)
+            elif 'data_limit' in user:
                 limit_gb = float(user['data_limit']) / (1024**3) if user['data_limit'] else 0
                 current_gb = float(user.get('used_traffic', 0)) / (1024**3) if user.get('used_traffic') else 0
 
-            # ذخیره جزئیات
+            # ذخیره breakdown
             all_users_map[identifier]['breakdown'][panel_name] = {
                 "data": {
                     **user, 
@@ -143,10 +144,7 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
             }
             all_users_map[identifier]['panels'].add(panel_name)
             
-            # ترکیب وضعیت‌ها
-            user_last_online = user.get('last_online') # Timestamp or String
-            # (تبدیل تاریخ را ساده فرض می‌کنیم یا توسط utils انجام می‌شود)
-            
+            # تجمیع آمار
             status = user.get('status', '').lower()
             is_active = status == 'active' or user.get('is_active', False)
             
@@ -154,11 +152,10 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
             all_users_map[identifier]['current_usage_GB'] += current_gb
             all_users_map[identifier]['usage_limit_GB'] += limit_gb
 
-            # مدیریت تاریخ انقضا (کمترین تاریخ = زودترین انقضا)
+            # مدیریت تاریخ انقضا
             new_expire = user.get('expire')
             if new_expire is not None:
                 current_expire = all_users_map[identifier]['expire']
-                # اگر expire timestamp است، باید منطق مقایسه عدد باشد
                 if current_expire is None or (new_expire > 0 and new_expire < current_expire):
                     all_users_map[identifier]['expire'] = new_expire
     
@@ -166,8 +163,8 @@ async def get_all_users_combined() -> List[Dict[str, Any]]:
 
 
 async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
-    """اطلاعات یک کاربر خاص را از تمام پنل‌های فعال دریافت می‌کند (Async)."""
-    from bot.database import db # Local import
+    """اطلاعات یک کاربر خاص را از تمام پنل‌های فعال به صورت همزمان دریافت می‌کند."""
+    from bot.database import db
     
     is_uuid = validate_uuid(identifier)
     all_panels = await db.get_active_panels()
@@ -184,41 +181,28 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
 
     user_data_map = {}
 
-    for panel_config in all_panels:
-        handler = await _get_handler_for_panel(panel_config['name'])
-        if not handler: continue
-
-        user_info = None
+    # تابع داخلی درخواست تکی
+    async def fetch_single_panel(panel_config):
+        panel_name = panel_config['name']
         panel_type = panel_config['panel_type']
         
+        handler = await _get_handler_for_panel(panel_name)
+        if not handler: 
+            return None
+
+        user_info = None
         try:
-            # --- منطق Hiddify ---
             if panel_type == 'hiddify' and hiddify_uuid_to_query:
-                logger.info(f"🔎 Querying Hiddify '{panel_config['name']}' for {hiddify_uuid_to_query}...")
                 user_info = await handler.get_user(hiddify_uuid_to_query)
-
-            # --- منطق Remnawave ---
             elif panel_type == 'remnawave' and hiddify_uuid_to_query:
-                logger.info(f"🔎 Querying Remnawave '{panel_config['name']}' for {hiddify_uuid_to_query}...")
                 user_info = await handler.get_user(hiddify_uuid_to_query)
-
-            # --- منطق Marzban ---
             elif panel_type == 'marzban' and marzban_username_to_query:
-                logger.info(f"🔎 Querying Marzban '{panel_config['name']}' for {marzban_username_to_query}...")
                 user_info = await handler.get_user(marzban_username_to_query)
-            
-            # لاگ وضعیت پیدا شدن یا نشدن
-            if user_info:
-                logger.info(f"✅ Found user in '{panel_config['name']}'")
-            else:
-                logger.info(f"❌ User Not Found in '{panel_config['name']}' (Result is None)")
-
         except Exception as e:
-            logger.error(f"❌ Exception querying '{panel_config['name']}': {e}")
-            pass
+            logger.error(f"❌ Error fetching from {panel_name}: {e}")
+            return None
 
         if user_info:
-            # استانداردسازی خروجی پنل‌ها
             limit_gb = 0
             current_gb = 0
             if 'usage_limit_GB' in user_info:
@@ -228,19 +212,33 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
                 limit_gb = float(user_info['data_limit']) / (1024**3) if user_info['data_limit'] else 0
                 current_gb = float(user_info.get('used_traffic', 0)) / (1024**3) if user_info.get('used_traffic') else 0
             
-            user_data_map[panel_config['name']] = {
-                "data": {**user_info, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
-                "type": panel_type,"category": panel_config.get('category')
+            return {
+                "name": panel_name,
+                "info": {
+                    "data": {**user_info, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
+                    "type": panel_type,
+                    "category": panel_config.get('category')
+                }
             }
+        return None
+
+    # اجرای همزمان
+    tasks = [fetch_single_panel(p) for p in all_panels]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for res in results:
+        if isinstance(res, Exception):
+            logger.error(f"Unhandled exception during panel fetch: {res}")
+        elif res:
+            user_data_map[res['name']] = res['info']
 
     if not user_data_map:
         return None
     
-    # تجمیع داده‌ها
+    # تجمیع
     total_usage = sum(p['data'].get('current_usage_GB', 0) for p in user_data_map.values())
     total_limit = sum(p['data'].get('usage_limit_GB', 0) for p in user_data_map.values())
     
-    # پیدا کردن وضعیت فعال بودن (اگر حداقل در یک پنل فعال باشد)
     is_active = any(
         (p['data'].get('status') == 'active' or p['data'].get('is_active') == True) 
         for p in user_data_map.values()
@@ -257,7 +255,6 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
         'name': identifier
     }
     
-    # محاسبه expire و name
     expires = []
     names = []
     for p in user_data_map.values():
@@ -273,104 +270,6 @@ async def get_combined_user_info(identifier: str) -> Optional[Dict[str, Any]]:
     if names:
         final_info['name'] = names[0]
 
-    # محاسبات نهایی
-    final_info['remaining_GB'] = max(0, total_limit - total_usage)
-    final_info['usage_percentage'] = (total_usage / total_limit * 100) if total_limit > 0 else 0
-    
-    return final_info
-    from bot.database import db # Local import
-    
-    is_uuid = validate_uuid(identifier)
-    all_panels = await db.get_active_panels()
-    
-    hiddify_uuid_to_query = None
-    marzban_username_to_query = None
-
-    if is_uuid:
-        hiddify_uuid_to_query = identifier
-        marzban_username_to_query = await db.get_marzban_username_by_uuid(identifier)
-    else:
-        marzban_username_to_query = identifier
-        hiddify_uuid_to_query = await db.get_uuid_by_marzban_username(identifier)
-
-    user_data_map = {}
-
-    for panel_config in all_panels:
-        handler = await _get_handler_for_panel(panel_config['name'])
-        if not handler: continue
-
-        user_info = None
-        panel_type = panel_config['panel_type']
-        
-        try:
-            if panel_type == 'hiddify' and hiddify_uuid_to_query:
-                user_info = await handler.get_user(hiddify_uuid_to_query)
-            elif panel_type == 'remnawave' and hiddify_uuid_to_query:
-                user_info = await handler.get_user(hiddify_uuid_to_query)
-            elif panel_type == 'marzban' and marzban_username_to_query:
-                user_info = await handler.get_user(marzban_username_to_query)
-        except Exception as e:
-            logger.error(f"❌ Error fetching from {panel_config['name']}: {e}")
-
-        if user_info:
-            # استانداردسازی خروجی پنل‌ها
-            limit_gb = 0
-            current_gb = 0
-            if 'usage_limit_GB' in user_info:
-                limit_gb = float(user_info['usage_limit_GB'] or 0)
-                current_gb = float(user_info.get('current_usage_GB', 0) or 0)
-            elif 'data_limit' in user_info:
-                limit_gb = float(user_info['data_limit']) / (1024**3) if user_info['data_limit'] else 0
-                current_gb = float(user_info.get('used_traffic', 0)) / (1024**3) if user_info.get('used_traffic') else 0
-            
-            user_data_map[panel_config['name']] = {
-                "data": {**user_info, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
-                "type": panel_type,"category": panel_config.get('category')
-            }
-
-    if not user_data_map:
-        return None
-    
-    # تجمیع داده‌ها
-    total_usage = sum(p['data'].get('current_usage_GB', 0) for p in user_data_map.values())
-    total_limit = sum(p['data'].get('usage_limit_GB', 0) for p in user_data_map.values())
-    
-    # پیدا کردن وضعیت فعال بودن (اگر حداقل در یک پنل فعال باشد)
-    is_active = any(
-        (p['data'].get('status') == 'active' or p['data'].get('is_active') == True) 
-        for p in user_data_map.values()
-    )
-
-    final_info = {
-        'breakdown': user_data_map,
-        'is_active': is_active,
-        'last_online': None, # منطق last_online پیچیده است، فعلا رد می‌شویم یا باید هندل شود
-        'current_usage_GB': total_usage,
-        'usage_limit_GB': total_limit,
-        # پیدا کردن اولین تاریخ انقضا (مینیمم)
-        'expire': None, # باید محاسبه شود
-        'uuid': hiddify_uuid_to_query,
-        'name': identifier
-    }
-    
-    # محاسبه expire و name از روی داده‌های پنل‌ها
-    expires = []
-    names = []
-    for p in user_data_map.values():
-        if p['data'].get('expire'): expires.append(p['data']['expire'])
-        if p['data'].get('username'): names.append(p['data']['username'])
-        elif p['data'].get('name'): names.append(p['data']['name'])
-    
-    if expires:
-        # فیلتر کردن مقادیر null یا 0 اگر به معنی نامحدود نباشند
-        valid_expires = [e for e in expires if e > 0]
-        if valid_expires:
-            final_info['expire'] = min(valid_expires) # نزدیک‌ترین انقضا
-            
-    if names:
-        final_info['name'] = names[0] # اولین نام پیدا شده
-
-    # محاسبات نهایی
     final_info['remaining_GB'] = max(0, total_limit - total_usage)
     final_info['usage_percentage'] = (total_usage / total_limit * 100) if total_limit > 0 else 0
     
@@ -382,6 +281,7 @@ async def search_user(query: str) -> List[Dict[str, Any]]:
     query_lower = query.lower()
     results = []
     
+    # حالا که get_all_users_combined بهینه شده، این تابع هم سریع است
     all_users = await get_all_users_combined()
     
     for user in all_users:
@@ -404,9 +304,9 @@ async def modify_user_on_all_panels(
     target_panel_name: Optional[str] = None
 ) -> bool:
     """
-    تغییرات کاربر را اعمال می‌کند (با قابلیت انتخاب پنل خاص).
+    تغییرات کاربر را اعمال می‌کند (کاملاً همزمان و Async).
     """
-    from bot.database import db # Local import
+    from bot.database import db
     
     logger.info(f"║ Async Modification started for: {identifier} (Target: {target_panel_name or 'ALL'})")
 
@@ -418,53 +318,49 @@ async def modify_user_on_all_panels(
         logger.error(f"❌ User identifier '{identifier}' not resolved.")
         return False
         
-    any_success = False
     all_panels = await db.get_active_panels()
 
-    for panel_config in all_panels:
+    # تابع داخلی برای تغییر روی یک پنل خاص
+    async def modify_single_panel(panel_config):
         panel_type = panel_config['panel_type']
         panel_name = panel_config['name']
 
-        # فیلتر بر اساس نوع پنل (قدیمی)
-        if target_panel_type and panel_type != target_panel_type:
-            continue
-            
-        # فیلتر بر اساس نام دقیق پنل (جدید)
-        if target_panel_name and panel_name != target_panel_name:
-            continue
+        if target_panel_type and panel_type != target_panel_type: return False
+        if target_panel_name and panel_name != target_panel_name: return False
 
         handler = await _get_handler_for_panel(panel_name)
-        if not handler: continue
+        if not handler: return False
 
-        # --- Hiddify Logic ---
-        if panel_type == 'hiddify' and uuid:
-            try:
-                success = await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days)
-                if success:
-                    any_success = True
+        success = False
+        try:
+            if panel_type == 'hiddify' and uuid:
+                if await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days):
                     logger.info(f"✅ Modified on Hiddify '{panel_name}'")
-            except Exception as e:
-                logger.error(f"Error modifying Hiddify: {e}")
-
-        # --- Remnawave Logic ---
-        elif panel_type == 'remnawave' and uuid:
-            try:
-                success = await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days)
-                if success:
-                    any_success = True
+                    success = True
+            
+            elif panel_type == 'remnawave' and uuid:
+                if await handler.modify_user(uuid, add_gb=add_gb, add_days=add_days):
                     logger.info(f"✅ Modified on Remnawave '{panel_name}'")
-            except Exception as e:
-                logger.error(f"Error modifying Remnawave: {e}")
-
-        # --- Marzban Logic ---
-        elif panel_type == 'marzban' and marzban_username:
-            try:
-                success = await handler.modify_user(marzban_username, add_gb=add_gb, add_days=add_days)
-                if success:
-                    any_success = True
+                    success = True
+            
+            elif panel_type == 'marzban' and marzban_username:
+                if await handler.modify_user(marzban_username, add_gb=add_gb, add_days=add_days):
                     logger.info(f"✅ Modified on Marzban '{panel_name}'")
-            except Exception as e:
-                logger.error(f"Error modifying Marzban: {e}")
+                    success = True
+        except Exception as e:
+            logger.error(f"Error modifying on {panel_name}: {e}")
+        
+        return success
+
+    # اجرای همزمان
+    tasks = [modify_single_panel(p) for p in all_panels]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # بررسی اینکه آیا حداقل در یک پنل موفق بوده یا نه
+    any_success = False
+    for res in results:
+        if res is True:
+            any_success = True
 
     # ریست کردن فلگ یادآوری تمدید
     if any_success and (add_days > 0 or set_days is not None):
@@ -475,41 +371,50 @@ async def modify_user_on_all_panels(
     
     return any_success
 
+
 async def delete_user_from_all_panels(identifier: str) -> bool:
-    """کاربر را از تمام پنل‌هایی که در آن وجود دارد حذف می‌کند (Async)."""
-    from bot.database import db # Local import
+    """کاربر را از تمام پنل‌هایی که در آن وجود دارد حذف می‌کند (کاملاً همزمان)."""
+    from bot.database import db
     
     user_info = await get_combined_user_info(identifier)
     if not user_info: return False
 
     all_panels = await db.get_all_panels()
     all_panels_map = {p['name']: p for p in all_panels}
-    all_success = True
 
-    for panel_name, panel_details in user_info.get('breakdown', {}).items():
+    # تابع داخلی برای حذف از یک پنل
+    async def delete_single_panel(panel_name, panel_details):
         panel_config = all_panels_map.get(panel_name)
-        if not panel_config: continue
+        if not panel_config: return True # نادیده گرفتن پنل‌های حذف شده
         
         handler = await _get_handler_for_panel(panel_name)
-        if not handler: continue
+        if not handler: return True
 
         user_panel_data = panel_details.get('data', {})
         panel_type = panel_details.get('type')
-
+        
         try:
             if panel_type == 'hiddify' and user_panel_data.get('uuid'):
-                if not await handler.delete_user(user_panel_data['uuid']):
-                    all_success = False
+                return await handler.delete_user(user_panel_data['uuid'])
             elif panel_type == 'remnawave' and user_panel_data.get('uuid'):
-                if not await handler.delete_user(user_panel_data['uuid']):
-                    all_success = False
+                return await handler.delete_user(user_panel_data['uuid'])
             elif panel_type == 'marzban' and user_panel_data.get('username'):
-                if not await handler.delete_user(user_panel_data['username']):
-                    all_success = False
+                return await handler.delete_user(user_panel_data['username'])
         except Exception as e:
             logger.error(f"Error deleting user from {panel_name}: {e}")
+            return False
+        
+        return True
+
+    # اجرای همزمان حذف از همه پنل‌ها
+    tasks = [delete_single_panel(name, details) for name, details in user_info.get('breakdown', {}).items()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_success = True
+    for res in results:
+        if res is False or isinstance(res, Exception):
             all_success = False
-    
+
     # حذف از دیتابیس لوکال
     if user_info.get('uuid'):
         await db.delete_user_by_uuid(user_info['uuid'])

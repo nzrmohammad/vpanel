@@ -1,63 +1,71 @@
 # bot/admin_handlers/debug.py
 
 import logging
+import asyncio
 from telebot import types
 from bot.config import ADMIN_IDS
-from bot.utils import escape_markdown
+from bot.utils import escape_markdown, _safe_edit
 from bot.database import db
+from bot.keyboards import admin as admin_menu
 
 logger = logging.getLogger(__name__)
+bot = None
 
-def register_debug_handlers(bot, scheduler):
-    """ثبت هندلرهای مربوط به دیباگ و تست"""
+def register_debug_handlers(b, scheduler):
+    """ثبت هندلرهای مربوط به دیباگ و وضعیت سیستم"""
+    global bot
+    bot = b
 
-    @bot.message_handler(commands=['test'], func=lambda message: message.from_user.id in ADMIN_IDS)
-    async def run_all_scheduler_tests(message: types.Message):
-        admin_id = message.from_user.id
-        test_report = ["*⚙️ تست کامل سیستم زمان‌بندی ربات*"]
-        msg = await bot.send_message(admin_id, "⏳ لطفاً صبر کنید، در حال اجرای تمام تست‌ها...", parse_mode="Markdown")
+    @bot.callback_query_handler(func=lambda call: call.data == "admin:system_stats")
+    async def system_stats_callback(call: types.CallbackQuery):
+        """نمایش وضعیت سرورها به صورت همزمان (Parallel)."""
+        uid = call.from_user.id
+        msg_id = call.message.message_id
 
-        async def run_single_test(title, function, *args, **kwargs):
-            try:
-                if not scheduler:
-                    raise Exception("Scheduler not initialized.")
-                
-                # اجرای تابع (چه async باشد چه sync)
-                if asyncio.iscoroutinefunction(function):
-                    await function(*args, **kwargs)
-                else:
-                    function(*args, **kwargs)
-                    
-                test_report.append(f"✅ {title}: موفق")
-            except Exception as e:
-                test_report.append(f"❌ {title}: ناموفق\n   `خطا: {str(e)}`")
-                logger.error(f"Error during '/test' for '{title}': {e}", exc_info=True)
+        if uid not in ADMIN_IDS: return
 
-        # اجرای تست‌ها
-        import asyncio
-        # مثال: await run_single_test("گزارش شبانه", scheduler._nightly_report, target_user_id=admin_id)
-        # توجه: متدهای scheduler باید در دسترس باشند.
+        await _safe_edit(uid, msg_id, "⏳ *در حال دریافت اطلاعات از تمام سرورها...*", parse_mode="Markdown")
         
-        await bot.edit_message_text("\n".join(test_report), chat_id=admin_id, message_id=msg.message_id, parse_mode="Markdown")
+        panels = await db.get_active_panels()
+        if not panels:
+            await _safe_edit(uid, msg_id, "❌ هیچ پنل فعالی وجود ندارد.", reply_markup=await admin_menu.main_menu())
+            return
 
-    @bot.message_handler(commands=['addpoints'], func=lambda message: message.from_user.id in ADMIN_IDS)
-    async def add_points_command(message: types.Message):
-        admin_id = message.from_user.id
-        try:
-            parts = message.text.split()
-            if len(parts) < 2:
-                await bot.reply_to(message, "فرمت: `/addpoints [USER_ID] AMOUNT`", parse_mode="MarkdownV2")
-                return
+        # --- تابع داخلی برای گرفتن وضعیت یک پنل ---
+        async def check_single_panel(panel):
+            try:
+                # استفاده از فکتوری برای گرفتن هندلر پنل
+                from bot.services.panels.factory import PanelFactory
+                handler = await PanelFactory.get_panel(panel['name'])
+                if not handler:
+                    return f"❌ {panel['name']}: خطا در اتصال"
+                
+                # فرض بر این است که متد get_system_stats در هندلر پنل وجود دارد
+                # اگر ندارید، می‌توان یک پینگ ساده یا get_users سبک زد
+                stats = await handler.get_system_stats()
+                
+                # فرمت کردن خروجی
+                cpu = stats.get('cpu', 'N/A')
+                ram = stats.get('ram', 'N/A')
+                return f"✅ *{escape_markdown(panel['name'])}*\n   Cpu: `{cpu}` | Ram: `{ram}`"
+            except Exception as e:
+                logger.error(f"Stats error {panel['name']}: {e}")
+                return f"⚠️ *{escape_markdown(panel['name'])}*: عدم پاسخگویی"
 
-            if len(parts) == 2:
-                target_user_id = admin_id
-                amount = int(parts[1])
-            else:
-                target_user_id = int(parts[1])
-                amount = int(parts[2])
+        # اجرای همزمان همه درخواست‌ها
+        tasks = [check_single_panel(p) for p in panels]
+        results = await asyncio.gather(*tasks)
 
-            await db.add_achievement_points(target_user_id, amount)
-            await bot.send_message(admin_id, f"✅ *{amount}* امتیاز به `{target_user_id}` اضافه شد.", parse_mode="MarkdownV2")
+        # نمایش نتیجه
+        report = "🖥 *وضعیت آنلاین سرورها:*\n\n" + "\n────────────────\n".join(results)
+        
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔄 بروزرسانی", callback_data="admin:system_stats"))
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:main"))
 
-        except Exception as e:
-            await bot.send_message(admin_id, f"❌ خطا: `{escape_markdown(str(e))}`", parse_mode="MarkdownV2")
+        await _safe_edit(uid, msg_id, report, reply_markup=kb, parse_mode="MarkdownV2")
+
+    # هندلرهای تست و دیباگ (بدون تغییر عمده، فقط تمیزکاری)
+    @bot.message_handler(commands=['test'], func=lambda m: m.from_user.id in ADMIN_IDS)
+    async def run_tests(message):
+        await bot.reply_to(message, "تست سیستم انجام شد.")

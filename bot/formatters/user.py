@@ -1,13 +1,16 @@
+# bot/formatters/user.py
 import logging
 import jdatetime
 import pytz
+import asyncio
+import time
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from bot.config import EMOJIS, PAGE_SIZE, ACHIEVEMENTS 
 from bot.database import db
-from bot.db.base import UserUUID, User, Panel, ServerCategory
+from bot.db.base import UserUUID, User, Panel, ServerCategory, PanelNode
 from bot import combined_handler
 from bot.language import get_string
 from .utils import (
@@ -19,17 +22,61 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-# --- توابع کمکی داخلی (Private Helpers) ---
-# این توابع چون مستقیماً به دیتابیس وصل می‌شوند و مستقل هستند،
-# می‌توانند بیرون کلاس یا به عنوان متدهای استاتیک باقی بمانند.
+# --- مکانیزم کش ساده برای اطلاعات ثابت ---
+_CACHE = {
+    "cat_map": {"data": {}, "time": 0},
+    "panel_map": {"data": {}, "time": 0}
+}
+CACHE_TTL = 300  # کش کردن برای 5 دقیقه
 
 async def _get_category_map():
-    """نقشه کد به ایموجی را از دیتابیس می‌گیرد."""
+    """نقشه کد به ایموجی (با کش 5 دقیقه‌ای)."""
+    now = time.time()
+    if now - _CACHE["cat_map"]["time"] < CACHE_TTL:
+        return _CACHE["cat_map"]["data"]
+
     async with db.get_session() as session:
         stmt = select(ServerCategory)
         result = await session.execute(stmt)
         cats = result.scalars().all()
-        return {c.code: c.emoji for c in cats}
+        data = {c.code: c.emoji for c in cats}
+        
+        _CACHE["cat_map"] = {"data": data, "time": now}
+        return data
+
+async def _get_panel_map_data():
+    """دریافت اطلاعات پنل‌ها و نودها (با کش 5 دقیقه‌ای)."""
+    now = time.time()
+    if now - _CACHE["panel_map"]["time"] < CACHE_TTL:
+        return _CACHE["panel_map"]["data"]
+        
+    async with db.get_session() as session:
+        # دریافت همه پنل‌ها
+        panels_res = await session.execute(select(Panel))
+        all_panels = panels_res.scalars().all()
+        
+        # دریافت همه نودهای فعال
+        nodes_res = await session.execute(select(PanelNode).where(PanelNode.is_active == True))
+        all_nodes = nodes_res.scalars().all()
+        
+        cat_emoji_map = await _get_category_map()
+        
+        panel_map = {}
+        for p in all_panels:
+            p_nodes = [n for n in all_nodes if n.panel_id == p.id]
+            main_flag = cat_emoji_map.get(p.category, "")
+            
+            panel_map[p.name] = {
+                "id": str(p.id),
+                "nodes": p_nodes,
+                "main_flag": main_flag,
+                "category": p.category
+            }
+            # ذخیره نسخه trim شده برای اطمینان
+            panel_map[p.name.strip()] = panel_map[p.name]
+
+        _CACHE["panel_map"] = {"data": panel_map, "time": now}
+        return panel_map
 
 async def _get_user_context(uuid_str: str):
     """اطلاعات زمینه‌ای کاربر شامل ID و نقشه‌برداری پنل‌ها به دسته‌بندی."""
@@ -55,50 +102,20 @@ async def _get_user_context(uuid_str: str):
 class UserFormatter:
     """
     مسئول تولید متن‌ها و پیام‌های نمایشی برای کاربران.
-    تمام متدها به صورت یکپارچه در این کلاس قرار دارند.
     """
     async def profile_info(self, info: dict, lang_code: str) -> str:
         if not info:
             return escape_markdown(get_string("fmt_err_getting_info", lang_code))
 
-        # --- دریافت اطلاعات دیتابیس (پنل‌ها و نودها) ---
-        # ما باید بدانیم کدام پنل چه نودهایی دارد و کاربر چه دسترسی‌هایی
-        
-        panel_map = {} # { "نام پنل": {id: 1, nodes: [...], main_flag: "🇩🇪"} }
-        
-        async with db.get_session() as session:
-            from bot.db.base import Panel, PanelNode
-            from sqlalchemy import select
-            
-            # دریافت همه پنل‌ها
-            panels_res = await session.execute(select(Panel))
-            all_panels = panels_res.scalars().all()
-            
-            # دریافت همه نودهای فعال
-            nodes_res = await session.execute(select(PanelNode).where(PanelNode.is_active == True))
-            all_nodes = nodes_res.scalars().all()
-            
-            # دریافت مپینگ ایموجی‌ها
-            cat_emoji_map = await _get_category_map()
-            
-            for p in all_panels:
-                p_nodes = [n for n in all_nodes if n.panel_id == p.id]
-                main_flag = cat_emoji_map.get(p.category, "")
-                
-                # نگاشت نام پنل به اطلاعاتش (برای دسترسی سریع در حلقه)
-                panel_map[p.name] = {
-                    "id": str(p.id),
-                    "nodes": p_nodes,
-                    "main_flag": main_flag,
-                    "category": p.category
-                }
+        # 1. دریافت اطلاعات پنل‌ها از کش (بسیار سریع)
+        panel_map = await _get_panel_map_data()
+        cat_emoji_map = await _get_category_map()
 
         # دریافت تنظیمات دسترسی کاربر
         user_settings = info.get('settings') or {}
         panel_access_settings = user_settings.get('panel_access', {})
-        # -----------------------------------------------
 
-        # دریافت مصرف روزانه
+        # 2. دریافت مصرف روزانه (تنها درخواست دیتابیس که باقی می‌ماند)
         daily_usage_dict = {} 
         if 'db_id' in info and info['db_id']:
              daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
@@ -122,42 +139,30 @@ class UserFormatter:
             p_data = panel_details.get('data', {})
             p_type = panel_details.get('type')
             
-            # پیدا کردن اطلاعات پنل در مپ دیتابیس
-            # نکته: ممکن است نام در API با نام دیتابیس کمی فرق داشته باشد (تریم کردن)
             db_info = panel_map.get(panel_name) or panel_map.get(panel_name.strip())
             
-            # متغیر برای جمع‌آوری پرچم‌ها
             flags_set = set()
             
             if db_info:
-                # 1. افزودن پرچم اصلی پنل (اگر وجود دارد)
                 if db_info['main_flag']:
                     flags_set.add(db_info['main_flag'])
                 
-                # 2. بررسی نودهای فرعی
-                # لیست کدهای مجاز کاربر برای این پنل (مثلاً ['de', 'tr'])
                 user_allowed_codes = panel_access_settings.get(db_info['id'], [])
-                
                 if user_allowed_codes:
-                    # چک کردن تک تک نودهای این پنل
                     for node in db_info['nodes']:
-                        # اگر کد نود (tr) در لیست مجاز کاربر بود
                         if node.country_code in user_allowed_codes:
                             flags_set.add(node.flag)
             else:
-                # اگر پنل در دیتابیس پیدا نشد (حالت خاص)، تلاش برای گرفتن از متادیتا
                 cat = panel_details.get('category')
                 if cat:
                     f = cat_emoji_map.get(cat, "")
                     if f: flags_set.add(f)
 
-            # تبدیل مجموعه پرچم‌ها به رشته (مرتب شده)
             if flags_set:
                 final_flag_str = "".join(sorted(list(flags_set)))
             else:
-                final_flag_str = "🏳️" # پرچم سفید اگر هیچ چیزی پیدا نشد
+                final_flag_str = "🏳️"
 
-            # --- ادامه کدهای نمایش ---
             raw_status = p_data.get('status')
             is_enabled = p_data.get('enable')
             is_active_flag = p_data.get('is_active')
@@ -267,26 +272,36 @@ class UserFormatter:
         return report_text, menu_data
 
     async def nightly_report(self, user_infos: list, lang_code: str) -> str:
-        """گزارش شبانه (نام قبلی: fmt_user_report)."""
+        """گزارش شبانه بهینه شده (Concurrent)."""
         if not user_infos: return ""
         cat_emoji_map = await _get_category_map()
-        accounts_reports = []
-        total_daily_usage = 0.0
-
-        for info in user_infos:
+        
+        # --- تابع داخلی برای پردازش همزمان هر کاربر ---
+        async def process_single_user(info):
             try:
                 uuid_str = info.get("uuid", "")
-                user_id, panel_cat_map, user_categories = await _get_user_context(uuid_str)
-                name = info.get("name", get_string('unknown_user', lang_code))
-                account_lines = [f"👤 اکانت : {escape_markdown(name)}"]
-
-                daily_usage_dict = {}
-                if 'db_id' in info and info['db_id']:
-                    daily_usage_dict = await db.get_usage_since_midnight(info['db_id'])
                 
-                total_daily_usage += sum(daily_usage_dict.values())
+                # اجرای همزمان دریافت کانتکست و مصرف روزانه
+                tasks = []
+                tasks.append(_get_user_context(uuid_str))
+                if 'db_id' in info and info['db_id']:
+                    tasks.append(db.get_usage_since_midnight(info['db_id']))
+                else:
+                    tasks.append(asyncio.sleep(0)) # Placeholder return None
+                
+                results = await asyncio.gather(*tasks)
+                
+                user_id, panel_cat_map, user_categories = results[0]
+                daily_usage_dict = results[1] if isinstance(results[1], dict) else {}
+                
+                # محاسبات و تولید متن
+                name = info.get("name", get_string('unknown_user', lang_code))
+                lines = [f"👤 اکانت : {escape_markdown(name)}"]
+                
+                # جمع مصرف روزانه این کاربر
+                user_total_daily = sum(daily_usage_dict.values())
 
-                account_lines.append(f"📊 حجم‌کل : {escape_markdown(f'{info.get("usage_limit_GB", 0):.2f} GB')}")
+                lines.append(f"📊 حجم‌کل : {escape_markdown(f'{info.get("usage_limit_GB", 0):.2f} GB')}")
                 
                 breakdown = info.get('breakdown', {})
                 cat_limits = {} 
@@ -301,29 +316,42 @@ class UserFormatter:
 
                 for cat, limit in cat_limits.items():
                     emoji = cat_emoji_map.get(cat, cat.upper())
-                    account_lines.append(f" {emoji} : {escape_markdown(format_daily_usage(limit))}")
+                    lines.append(f" {emoji} : {escape_markdown(format_daily_usage(limit))}")
 
-                account_lines.append(f"🔥 مصرف شده : {escape_markdown(f'{info.get("current_usage_GB", 0):.2f} GB')}")
+                lines.append(f"🔥 مصرف شده : {escape_markdown(f'{info.get("current_usage_GB", 0):.2f} GB')}")
                 for cat, usage in cat_usages.items():
                     emoji = cat_emoji_map.get(cat, cat.upper())
-                    account_lines.append(f" {emoji} : {escape_markdown(format_daily_usage(usage))}")
+                    lines.append(f" {emoji} : {escape_markdown(format_daily_usage(usage))}")
 
                 rem_total = max(0, info.get("usage_limit_GB", 0) - info.get("current_usage_GB", 0))
-                account_lines.append(f"📥 باقیمانده : {escape_markdown(f'{rem_total:.2f} GB')}")
+                lines.append(f"📥 باقیمانده : {escape_markdown(f'{rem_total:.2f} GB')}")
 
                 expire_days = info.get("expire")
                 expire_str = "نامحدود"
                 if expire_days is not None:
                     expire_str = f"{expire_days} روز" if expire_days >= 0 else "منقضی"
-                account_lines.append(f"📅 انقضا : {escape_markdown(expire_str)}")
-
-                accounts_reports.append("\n".join(account_lines))
+                lines.append(f"📅 انقضا : {escape_markdown(expire_str)}")
+                
+                return "\n".join(lines), user_total_daily
 
             except Exception as e:
                 logger.error(f"Error formatting nightly report for {uuid_str}: {e}")
+                return None, 0
+
+        # اجرای همزمان همه کاربران
+        tasks = [process_single_user(u) for u in user_infos]
+        results = await asyncio.gather(*tasks)
+
+        accounts_reports = []
+        total_daily_usage_all = 0.0
+
+        for report_text, usage_val in results:
+            if report_text:
+                accounts_reports.append(report_text)
+                total_daily_usage_all += usage_val
 
         final_report = "\n\n".join(accounts_reports)
-        usage_footer = format_daily_usage(total_daily_usage)
+        usage_footer = format_daily_usage(total_daily_usage_all)
         final_report += f"\n\n⚡️ مجموع مصرف امروز کل کاربران : {escape_markdown(usage_footer)}"
         return final_report
 
@@ -482,10 +510,7 @@ class UserFormatter:
         ]
         return "\n".join(lines), "MarkdownV2"
 
-# --- توابع قدیمی که هنوز استفاده نشده‌اند ولی شاید نیاز شوند ---
-# این‌ها را هم می‌توان به کلاس اضافه کرد یا اگر استفاده نمی‌شوند حذف کرد.
-# فعلاً برای سازگاری حذف نمی‌کنیم اما به کلاس اضافه نکردیم چون context دیتابیس ندارند.
-
+# --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:
     return f"*{escape_markdown(panel_name)}*\n\nمصرف: {stats}" 
 
