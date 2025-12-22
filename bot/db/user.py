@@ -859,34 +859,31 @@ class UserDB:
             
             return {"status": "success", "streak": new_streak, "points": points}
 
-    async def update_user_single_panel_access(self, uuid_id: int, panel_id: int, status: bool) -> bool:
-        """
-        دسترسی کاربر به یک پنل خاص (مشخص شده با ID) را قطع یا وصل می‌کند.
-        """
-        async with self.get_session() as session:
-            from .base import UserUUID, Panel
-            
-            uuid_obj = await session.get(UserUUID, uuid_id)
-            target_panel = await session.get(Panel, panel_id)
-            
-            if not uuid_obj or not target_panel:
-                return False
-            
-            # لود کردن لیست فعلی
-            await session.refresh(uuid_obj, ["allowed_panels"])
-            
-            # بررسی اینکه آیا پنل الان در لیست هست یا نه
-            current_ids = [p.id for p in uuid_obj.allowed_panels]
-            
-            if status: # فعال کردن
-                if target_panel.id not in current_ids:
-                    uuid_obj.allowed_panels.append(target_panel)
-            else: # غیرفعال کردن
-                # حذف پنل با این ID از لیست
-                uuid_obj.allowed_panels = [p for p in uuid_obj.allowed_panels if p.id != target_panel.id]
-            
-            await session.commit()
-            return True
+    async def update_user_panel_access_by_id(self, uuid_id: int, panel_id: int, allow: bool) -> bool:
+        """آپدیت دسترسی پنل با استفاده از ID دقیق پنل"""
+        try:
+            async with self.get_session() as session:
+                from bot.db.base import UserUUID, Panel
+                
+                user_uuid = await session.get(UserUUID, uuid_id)
+                if not user_uuid: return False
+                
+                await session.refresh(user_uuid, ["allowed_panels"])
+                panel = await session.get(Panel, panel_id)
+                if not panel: return False
+                
+                if allow:
+                    if panel not in user_uuid.allowed_panels:
+                        user_uuid.allowed_panels.append(panel)
+                else:
+                    if panel in user_uuid.allowed_panels:
+                        user_uuid.allowed_panels.remove(panel)
+                
+                await session.commit()
+                return True
+        except Exception as e:
+            print(f"DB Error (update_user_panel_access_by_id): {e}")
+            return False
 
     async def set_uuid_access_categories(self, uuid: str, categories: List[str]) -> bool:
         """دسترسی‌های مجاز (کشورها) را برای یک UUID تنظیم می‌کند."""
