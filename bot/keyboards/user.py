@@ -208,16 +208,23 @@ class UserMenu(BaseMenu):
         )
         kb.add(self.btn(f"📆 {get_string('monthly_report', lang_code)} {status('monthly_reports')}", "toggle:monthly_reports"))
 
-        # بخش ۲: هشدارها (اصلاح شده برای نمایش همه کشورها)
+        # بخش ۲: هشدارها (فیلتر شده بر اساس دسترسی کاربر)
         kb.add(self.btn(f"🪫 {get_string('alerts_category', lang_code)}", "noop"))
         
         # دریافت لیست کامل کشورها از دیتابیس
         categories_list = await db.get_server_categories()
         
         alert_btns = []
-        # به جای بررسی دسترسی (access)، روی تمام کشورهای موجود حلقه می‌زنیم
         for cat in categories_list:
             cat_code = cat['code']
+            
+            # --- تغییر جدید: بررسی دسترسی کاربر ---
+            # اگر دیکشنری access وجود نداشت یا کلید دسترسی این کشور True نبود، از این مورد عبور کن
+            # مثال کلید: has_access_de
+            if not access or not access.get(f"has_access_{cat_code}"):
+                continue
+            # ---------------------------------------
+
             emoji = cat['emoji']
             
             # کلید تنظیمات برای این کشور
@@ -231,8 +238,8 @@ class UserMenu(BaseMenu):
             for i in range(0, len(alert_btns), 3):
                 kb.row(*alert_btns[i:i+3])
         else:
-            # اگر هیچ کشوری در ادمین تعریف نشده باشد
-            kb.add(self.btn("⚠️ هیچ کشوری تعریف نشده است", "noop"))
+            # اگر لیست خالی بود، یعنی کاربر به هیچ کشوری دسترسی ندارد (سرویس فعال ندارد)
+            kb.add(self.btn("⚠️ سرویس فعالی ندارید", "noop"))
 
         # بخش ۳: عمومی
         kb.add(self.btn(f"📢 {get_string('general_notifications_category', lang_code)}", "noop"))

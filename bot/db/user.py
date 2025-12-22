@@ -510,25 +510,47 @@ class UserDB:
             
     async def get_user_access_rights(self, user_id: int) -> dict:
         """
-        حقوق دسترسی کاربر را بر اساس دسته‌بندی پنل‌های مجاز برمی‌گرداند.
-        خروجی: {'has_access_de': True, 'has_access_fr': False, ...}
+        حقوق دسترسی کاربر را بر اساس دسته‌بندی پنل‌ها و نودهای مجاز در تمام اکانت‌هایش برمی‌گرداند.
         """
         access_rights = {}
         async with self.get_session() as session:
-            # دریافت اولین اکانت فعال و پنل‌هایش
-            stmt = (
-                select(UserUUID)
-                .where(and_(UserUUID.user_id == user_id, UserUUID.is_active == True))
-                .options(selectinload(UserUUID.allowed_panels))
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            uuid_obj = result.scalar_one_or_none()
+            from .base import UserUUID, Panel, PanelNode
             
-            if uuid_obj and uuid_obj.allowed_panels:
-                for panel in uuid_obj.allowed_panels:
-                    if panel.category:
-                        access_rights[f"has_access_{panel.category}"] = True
+            # ۱. استخراج دسته‌بندی خود پنل‌هایی که به کاربر متصل است
+            stmt_panels = (
+                select(Panel.category)
+                .join(UserUUID.allowed_panels)
+                .where(and_(
+                    UserUUID.user_id == user_id,
+                    UserUUID.is_active == True,
+                    Panel.is_active == True
+                ))
+                .distinct()
+            )
+            
+            res_panels = await session.execute(stmt_panels)
+            for cat in res_panels.scalars().all():
+                if cat:
+                    access_rights[f"has_access_{cat}"] = True
+
+            # ۲. استخراج دسته‌بندی نودهایی که در پنل‌های مجاز کاربر قرار دارند
+            stmt_nodes = (
+                select(PanelNode.country_code)
+                .join(Panel, Panel.id == PanelNode.panel_id)
+                .join(UserUUID.allowed_panels) # اتصال به پنل‌های مجاز کاربر
+                .where(and_(
+                    UserUUID.user_id == user_id,
+                    UserUUID.is_active == True,
+                    Panel.is_active == True,
+                    PanelNode.is_active == True
+                ))
+                .distinct()
+            )
+            
+            res_nodes = await session.execute(stmt_nodes)
+            for code in res_nodes.scalars().all():
+                if code:
+                    access_rights[f"has_access_{code}"] = True
                     
         return access_rights
 
