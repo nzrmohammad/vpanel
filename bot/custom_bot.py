@@ -13,7 +13,7 @@ from bot.admin_router import register_admin_handlers
 from bot.user_router import register_user_handlers
 
 # تنظیمات لاگینگ برای دیدن خطاها
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def main():

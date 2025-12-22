@@ -460,7 +460,6 @@ class DatabaseManager:
         self.session_maker = async_sessionmaker(
             bind=self.engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
         )
-        self._user_cache = {}
 
     @property
     def session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -547,7 +546,3 @@ class DatabaseManager:
         async with self.get_session() as temp_session:
             result = await temp_session.execute(stmt)
             return result.scalars().all()
-
-    def clear_user_cache(self, user_id: int):
-        if user_id in self._user_cache:
-            del self._user_cache[user_id]
