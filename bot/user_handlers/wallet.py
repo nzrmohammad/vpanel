@@ -521,10 +521,6 @@ async def show_plans_list(call: types.CallbackQuery):
 async def show_addons_handler(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 بسته‌های حجم و زمان اضافه به زودی فعال می‌شوند.", show_alert=True)
 
-@bot.callback_query_handler(func=lambda call: call.data == "show_payment_options")
-async def redirect_to_payment(call: types.CallbackQuery):
-    await wallet_charge_start(call)
-
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:transfer_start")
 async def transfer_balance_start(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 قابلیت انتقال موجودی به زودی فعال می‌شود.", show_alert=True)

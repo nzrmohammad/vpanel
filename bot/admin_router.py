@@ -256,8 +256,6 @@ ADMIN_CALLBACK_HANDLERS = {
     "ga_confirm": group_actions.ga_execute,
     "awd_b_menu": user_management.handle_award_badge_menu,
     "awd_b": user_management.handle_award_badge,
-    "ach_req_approve": user_management.handle_achievement_request_callback,
-    "ach_req_reject": user_management.handle_achievement_request_callback,
     "support_reply": support.prompt_for_reply,
 
     # Tools
@@ -276,11 +274,11 @@ ADMIN_CALLBACK_HANDLERS = {
     "backup": backup.backup_panel_data,
 
     # --- Settings Handlers ---
-    "settings": settings.settings_main_panel,      # admin:settings:main
-    "pay_methods": settings.list_payment_methods,  # admin:pay_methods:card
-    "add_method": settings.start_add_method,       # admin:add_method:card
-    "del_method": settings.delete_payment_method_handler, # admin:del_method:ID:type
-    "set_chan": settings.set_channel_start,        # admin:set_chan:log
+    "settings": settings.settings_main_panel,
+    "pay_methods": settings.list_payment_methods,
+    "add_method": settings.start_add_method,
+    "del_method": settings.delete_payment_method_handler,
+    "set_chan": settings.set_channel_start,
     "toggle_method": settings.toggle_payment_method_handler,
     "edit_usdt_rate": settings.edit_usdt_rate_start,
 }

@@ -829,38 +829,6 @@ class UserDB:
             )
             result = await session.execute(stmt)
             return [dict(row._mapping) for row in result.all()]
-        
-    async def claim_daily_checkin(self, user_id: int) -> dict:
-        tehran_tz = pytz.timezone("Asia/Tehran")
-        today = datetime.now(tehran_tz).date()
-        
-        async with self.get_session() as session:
-            user = await session.get(User, user_id)
-            if not user:
-                return {"status": "error", "message": "User not found"}
-            
-            last_checkin = user.last_checkin
-            streak = user.streak_count or 0
-            
-            if last_checkin == today:
-                return {"status": "already_claimed", "streak": streak}
-            
-            if last_checkin == today - timedelta(days=1):
-                new_streak = streak + 1
-            else:
-                new_streak = 1
-            
-            points = 1
-            if new_streak % 7 == 0:
-                points += 5
-            
-            user.last_checkin = today
-            user.streak_count = new_streak
-            user.achievement_points = (user.achievement_points or 0) + points
-            
-            await session.commit()
-            
-            return {"status": "success", "streak": new_streak, "points": points}
 
     async def update_user_panel_access_by_id(self, uuid_id: int, panel_id: int, allow: bool) -> bool:
         """آپدیت دسترسی پنل با استفاده از ID دقیق پنل (همراه با رفرش کش)"""

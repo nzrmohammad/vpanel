@@ -37,8 +37,6 @@ class User(Base):
     settings: Mapped[dict] = mapped_column(JSONB, default={})
     admin_note: Mapped[Optional[str]] = mapped_column(Text)
     lang_code: Mapped[Optional[str]] = mapped_column(String(10), default='fa')
-    last_checkin: Mapped[Optional[date]] = mapped_column(Date)
-    streak_count: Mapped[int] = mapped_column(Integer, default=0)
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
     referred_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     referral_reward_applied: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -374,16 +372,6 @@ class WeeklyChampionLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
     win_date: Mapped[date] = mapped_column(Date)
-
-class AchievementRequest(Base):
-    __tablename__ = "achievement_requests"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
-    badge_code: Mapped[str] = mapped_column(String(50))
-    status: Mapped[str] = mapped_column(String(20), default='pending')
-    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    reviewed_by: Mapped[Optional[int]] = mapped_column(BigInteger)
-    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 class MonthlyCost(Base):
     __tablename__ = "monthly_costs"

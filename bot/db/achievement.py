@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 # مدل‌ها را از فایل base وارد می‌کنیم
 from .base import (
     User, UserAchievement, AchievementShopLog, WeeklyChampionLog,
-    UserUUID, UsageSnapshot, AchievementRequest,
+    UserUUID, UsageSnapshot,
     BirthdayGiftLog, AnniversaryGiftLog, DatabaseManager
 )
 
@@ -277,42 +277,6 @@ class AchievementDB:
             pass
 
     # --- توابع مربوط به درخواست نشان ---
-
-    async def add_achievement_request(self, user_id: int, badge_code: str) -> int:
-        """ثبت درخواست نشان جدید."""
-        async with self.get_session() as session:
-            req = AchievementRequest(user_id=user_id, badge_code=badge_code)
-            session.add(req)
-            # رفرش می‌کنیم تا ID تولید شده را بگیریم
-            await session.refresh(req)
-            return req.id
-
-    async def get_achievement_request(self, request_id: int) -> Optional[Dict[str, Any]]:
-        """دریافت اطلاعات درخواست نشان."""
-        async with self.get_session() as session:
-            req = await session.get(AchievementRequest, request_id)
-            if req:
-                return {
-                    "id": req.id, "user_id": req.user_id,
-                    "badge_code": req.badge_code, "status": req.status,
-                    "requested_at": req.requested_at
-                }
-            return None
-
-    async def update_achievement_request_status(self, request_id: int, status: str, admin_id: int):
-        """به‌روزرسانی وضعیت درخواست."""
-        async with self.get_session() as session:
-            stmt = (
-                update(AchievementRequest)
-                .where(AchievementRequest.id == request_id)
-                .values(
-                    status=status,
-                    reviewed_by=admin_id,
-                    reviewed_at=datetime.now(timezone.utc)
-                )
-            )
-            await session.execute(stmt)
-
     async def check_if_gift_given(self, user_id: int, gift_type: str, year: int) -> bool:
         """بررسی دریافت هدیه در سال جاری."""
         # نگاشت رشته به کلاس مدل

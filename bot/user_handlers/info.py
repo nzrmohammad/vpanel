@@ -4,7 +4,7 @@ from bot.bot_instance import bot
 from bot.keyboards import user as user_menu
 from bot.database import db
 from bot.language import get_string
-from bot.config import ADMIN_SUPPORT_CONTACT, TUTORIAL_LINKS
+from bot.config import TUTORIAL_LINKS
 
 @bot.callback_query_handler(func=lambda call: call.data == "tutorials")
 async def tutorials_menu(call: types.CallbackQuery):
@@ -61,8 +61,11 @@ async def show_tutorial_link(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "support:new")
 async def support_info(call: types.CallbackQuery):
-    lang = await db.get_user_language(call.from_user.id) # ✅ await
-    text = get_string('support_guidance_body', lang).format(admin_contact=ADMIN_SUPPORT_CONTACT)
+    lang = await db.get_user_language(call.from_user.id)
+    
+    support_contact = await db.get_config('admin_support_contact', '@Nzrmohammad')
+    
+    text = get_string('support_guidance_body', lang).format(admin_contact=support_contact)
     
     await bot.edit_message_text(
         text,

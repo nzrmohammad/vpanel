@@ -6,9 +6,7 @@ from .base import BaseMenu, CATEGORY_META
 from ..language import get_string
 from bot.database import db
 from ..config import (
-    EMOJIS, 
-    CARD_PAYMENT_INFO, 
-    ONLINE_PAYMENT_LINK, 
+    EMOJIS,
     ENABLE_TRAFFIC_TRANSFER
 )
 
@@ -28,7 +26,6 @@ class UserMenu(BaseMenu):
             (f"{EMOJIS['lightning']} {get_string('quick_stats', lang_code)}", "quick_stats"),
             (f"🛒 {get_string('view_plans', lang_code)}", "view_plans"),
             (f"💳 {get_string('wallet', lang_code)}", "wallet:main"),
-            (f"🩺 {get_string('btn_connection_doctor', lang_code)}", "connection_doctor"),
             (f"📚 {get_string('btn_tutorials', lang_code)}", "tutorials"),
             (f"👤 {get_string('user_account_page_title', lang_code)}", "user_account"),
             (f"👥 {get_string('btn_referrals', lang_code)}", "referral:info"),
@@ -36,7 +33,6 @@ class UserMenu(BaseMenu):
             (f"⚙️ {get_string('settings', lang_code)}", "settings"),
             (f"🎁 {get_string('birthday_gift', lang_code)}", "birthday_gift"),
             (f"💬 {get_string('support', lang_code)}", "support:new"),
-            ("📅 اعلام حضور (سکه رایگان)", "daily_checkin"),
             (f"🌐 {get_string('btn_web_login', lang_code)}", "web_login")
         ]
 
@@ -157,11 +153,7 @@ class UserMenu(BaseMenu):
         kb.add(*cat_buttons)
         
         # 3. دکمه‌های ثابت پایین
-        kb.add(
-            self.btn("➕ حجم یا زمان", "show_addons"),
-            self.btn(get_string('btn_payment_methods', lang_code), "show_payment_options")
-        )
-        kb.add(self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
+        kb.add(self.btn("➕ حجم یا زمان", "show_addons"),self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
         kb.add(self.back_btn("back", lang_code))
         
         return kb
@@ -387,17 +379,6 @@ class UserMenu(BaseMenu):
             self.btn(f"📝 {get_string('btn_link_b64', lang_code)}", f"getlink_b64_{uuid_id}")
         )
         kb.add(self.btn(f"🔙 {get_string('back', lang_code)}", f"acc_{uuid_id}"))
-        return kb
-    
-    async def request_badge_menu(self) -> types.InlineKeyboardMarkup:
-        """منوی درخواست نشان"""
-        kb = self.create_markup(row_width=2)
-        kb.add(
-            self.btn("💪 بدن‌سازی", "achievements:req:bodybuilder"),
-            self.btn("🏊‍♂️ شنا", "achievements:req:water_athlete"),
-            self.btn("🤸‍♀️ اریال ", "achievements:req:aerialist")
-        )
-        kb.add(self.btn("🔙 بازگشت به دستاوردها", "achievements"))
         return kb
     
     async def feedback_rating_menu(self) -> types.InlineKeyboardMarkup:

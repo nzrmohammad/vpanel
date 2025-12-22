@@ -207,23 +207,8 @@ async def back_to_main_menu_handler(call: types.CallbackQuery):
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
 
 # =============================================================================
-# 2. Daily Check-in & Lucky Spin
+# 2. Lucky Spin
 # =============================================================================
-
-@bot.callback_query_handler(func=lambda call: call.data == "daily_checkin")
-async def daily_checkin_handler(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    result = await db.claim_daily_checkin(user_id)
-    
-    if result['status'] == 'success':
-        msg = f"✅ Congrats! You received {result['points']} points.\n🔥 Streak: {result['streak']}"
-        await bot.answer_callback_query(call.id, msg, show_alert=True)
-    elif result['status'] == 'already_claimed':
-        msg = f"⏳ You have already claimed your daily points. Come back tomorrow!"
-        await bot.answer_callback_query(call.id, msg, show_alert=True)
-    else:
-        await bot.answer_callback_query(call.id, "❌ An error occurred.", show_alert=True)
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "lucky_spin_menu")
 async def lucky_spin_menu_handler(call: types.CallbackQuery):
@@ -558,10 +543,7 @@ async def show_achievements_page(call: types.CallbackQuery):
         text += escape_markdown("شما هنوز نشانی دریافت نکرده‌اید. به فعالیت خود ادامه دهید تا نشان‌ها را کشف کنید!")
 
     kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("🏅 درخواست نشان ورزشی", callback_data="achievements:req_menu"),
-        types.InlineKeyboardButton("ℹ️ راهنما", callback_data="achievements:info")
-    )
+    kb.add(types.InlineKeyboardButton("ℹ️ راهنما", callback_data="achievements:info"))
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
     
     await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
@@ -578,42 +560,6 @@ async def show_achievements_info(call: types.CallbackQuery):
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="achievements"))
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
-
-@bot.callback_query_handler(func=lambda call: call.data == "achievements:req_menu")
-async def request_badge_menu_handler(call: types.CallbackQuery):
-    markup = await user_menu.request_badge_menu()
-    await _safe_edit(call.from_user.id, call.message.message_id, "Select your sport:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("achievements:req:"))
-async def handle_badge_request(call: types.CallbackQuery):
-    badge_code = call.data.split(":")[2]
-    uid = call.from_user.id
-    
-    user_achievements = await db.get_user_achievements(uid)
-    if badge_code in user_achievements:
-        await bot.answer_callback_query(call.id, "You already have this badge!", show_alert=True)
-        return
-
-    req_id = await db.add_achievement_request(uid, badge_code)
-    
-    user = call.from_user
-    badge_name = ACHIEVEMENTS.get(badge_code, {}).get('name', badge_code)
-    admin_msg = f"🏅 *Badge Request*\n👤 {escape_markdown(user.first_name)}\nBadge: {escape_markdown(badge_name)}"
-    
-    admin_kb = types.InlineKeyboardMarkup()
-    admin_kb.add(
-        types.InlineKeyboardButton("✅ Approve", callback_data=f"admin:ach_approve:{req_id}"),
-        types.InlineKeyboardButton("❌ Reject", callback_data=f"admin:ach_reject:{req_id}")
-    )
-    
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, admin_msg, parse_mode="MarkdownV2", reply_markup=admin_kb)
-        except: pass
-
-    await _safe_edit(uid, call.message.message_id, "✅ Request sent.", reply_markup=None)
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 Back", callback_data="achievements"))
-    await bot.send_message(uid, "You will be notified of the result.", reply_markup=kb)
 
 # =============================================================================
 # 8. Achievement Shop
@@ -713,127 +659,6 @@ async def shop_execute_handler(call: types.CallbackQuery):
     else:
         await bot.answer_callback_query(call.id, "❌ Insufficient balance.", show_alert=True)
 
-# =============================================================================
-# 9. Connection Doctor
-# =============================================================================
-
-@bot.callback_query_handler(func=lambda call: call.data == "connection_doctor")
-async def connection_doctor_handler(call: types.CallbackQuery):
-    uid = call.from_user.id
-    
-    # 0. نمایش پیام انتظار
-    await _safe_edit(uid, call.message.message_id, "🩺 ...", reply_markup=None)
-    
-    # 1. بررسی وضعیت اکانت کاربر
-    user_uuids = await db.uuids(uid)
-    is_user_active = False
-    if user_uuids:
-        active_uuid = next((u for u in user_uuids if u['is_active']), None)
-        if active_uuid:
-            info = await combined_handler.get_combined_user_info(str(active_uuid['uuid']))
-            if info and info.get('is_active'):
-                is_user_active = True
-
-    # 2. بررسی وضعیت سرورها
-    active_panels = await db.get_active_panels()
-    server_categories = await db.get_server_categories()
-    cat_map = {c['code']: c for c in server_categories}
-    
-    panel_status_lines = []
-    category_stats = {} 
-
-    for p in active_panels:
-        p_name = p['name']
-        p_cat = p.get('category')
-        
-        try:
-            handler = await PanelFactory.get_panel(p_name)
-            stats = await handler.get_system_stats()
-            
-            if stats:
-                status_text = "آنلاین و پایدار"
-                icon = "✅"
-                cpu = stats.get('cpu_usage') or stats.get('cpu') or 0
-                if p_cat:
-                    if p_cat not in category_stats: category_stats[p_cat] = []
-                    category_stats[p_cat].append(float(cpu))
-            else:
-                status_text = "آفلاین یا دارای اختلال"
-                icon = "❌"
-        except Exception:
-            status_text = "عدم برقراری ارتباط"
-            icon = "❌"
-
-        safe_p_name = escape_markdown(p_name)
-        safe_status = escape_markdown(status_text)
-        label = escape_markdown(f"وضعیت سرور «{p_name}»")
-        panel_status_lines.append(f"{icon} {label}: {safe_status}")
-
-    # 3. تحلیل هوشمند بار سرور
-    load_analysis_lines = []
-    
-    if category_stats:
-        for cat_code, loads in category_stats.items():
-            if not loads: continue
-            avg_load = sum(loads) / len(loads)
-            
-            if avg_load < 30:
-                status_label = "خلوت"
-                status_icon = "🟢"
-            elif avg_load < 75:
-                status_label = "عادی"
-                status_icon = "🟡"
-            else:
-                status_label = "شلوغ"
-                status_icon = "🔴"
-            
-            cat_info = cat_map.get(cat_code)
-            if cat_info:
-                cat_name = escape_markdown(cat_info.get('name', cat_code))
-                cat_emoji = cat_info.get('emoji', '')
-            else:
-                cat_name = escape_markdown(cat_code.upper())
-                cat_emoji = ""
-            
-            safe_label = escape_markdown(status_label)
-            server_word = escape_markdown("سرور")
-            load_analysis_lines.append(f" {status_icon} {server_word} {cat_name} {cat_emoji}: {safe_label}")
-    else:
-        load_analysis_lines.append(escape_markdown("اطلاعاتی در دسترس نیست."))
-
-    # 4. ساخت پیام نهایی با هدر و فوتر
-    acc_status = escape_markdown("فعال" if is_user_active else "غیرفعال")
-    acc_icon = "✅" if is_user_active else "❌"
-    
-    separator = escape_markdown("──────────────────")
-
-    msg_lines = [
-        escape_markdown("گزارش پزشک اتصال:"),
-        separator,
-        f"{acc_icon} {escape_markdown('وضعیت اکانت شما:')} {acc_status}",
-    ]
-    
-    msg_lines.extend(panel_status_lines)
-    
-    msg_lines.append(separator)
-    msg_lines.append(escape_markdown("📈 تحلیل هوشمند بار سرور (۱۵ دقیقه اخیر):"))
-    msg_lines.extend(load_analysis_lines)
-    
-    msg_lines.append(separator)
-    msg_lines.append(escape_markdown("💡 پیشنهاد:"))
-    
-    suggestion_text = (
-        "اگر اکانت و سرورها فعال هستند اما همچنان با کندی مواجه‌اید، "
-        "لطفاً یک بار اتصال خود را قطع و وصل کرده و به سرور دیگری متصل شوید. "
-        "در صورت ادامه مشکل، با پشتیبانی تماس بگیرید."
-    )
-    msg_lines.append(escape_markdown(suggestion_text))
-    
-    final_text = "\n".join(msg_lines)
-    
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="back"))
-    
-    await _safe_edit(uid, call.message.message_id, final_text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
 async def coming_soon(call: types.CallbackQuery):
