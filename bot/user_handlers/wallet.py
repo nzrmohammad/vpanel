@@ -7,7 +7,8 @@ from bot.formatters import user_formatter
 from bot.database import db
 from bot.language import get_string
 from bot.services.panels import PanelFactory
-from bot.utils import escape_markdown, to_shamsi
+from bot.utils.formatters import escape_markdown
+from bot.utils.date_helpers import to_shamsi
 import logging
 import uuid as uuid_lib
 

@@ -5,7 +5,8 @@ from telebot import types
 from sqlalchemy import select
 from bot.database import db
 from bot.db.base import User, ChargeRequest
-from bot.utils import escape_markdown, _safe_edit
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 from bot.keyboards import user as user_menu
 from bot.keyboards import admin as admin_menu
 

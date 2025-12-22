@@ -5,7 +5,9 @@ from sqlalchemy import select, update
 from bot.database import db
 from bot.db.base import Plan, ServerCategory
 from bot.keyboards import admin as admin_menu
-from bot.utils import _safe_edit, escape_markdown, extract_country_code_from_flag
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
+from bot.utils.parsers import extract_country_code_from_flag
 
 logger = logging.getLogger(__name__)
 bot, admin_conversations = None, None

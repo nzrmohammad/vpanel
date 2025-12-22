@@ -8,17 +8,14 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from bot.config import EMOJIS, PAGE_SIZE, ACHIEVEMENTS 
+from bot.config import EMOJIS
 from bot.database import db
 from bot.db.base import UserUUID, User, Panel, ServerCategory, PanelNode
 from bot import combined_handler
 from bot.language import get_string
-from .utils import (
-    create_progress_bar,
-    format_daily_usage, escape_markdown,
-    to_shamsi, days_until_next_birthday,
-    parse_user_agent
-)
+from bot.utils.formatters import create_progress_bar, format_daily_usage, escape_markdown
+from bot.utils.date_helpers import to_shamsi, days_until_next_birthday
+from bot.utils.parsers import parse_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +213,14 @@ class UserFormatter:
                 except ValueError:
                     pass
 
+            percent = 0
+            if limit > 0:
+                percent = (usage / limit) * 100
+            
+            progress_bar = ""
+            if limit > 0:
+                progress_bar = f"\n{create_progress_bar(percent)}\n"
+
             last_online_str = to_shamsi(fixed_last_online, include_time=True)
 
             limit_fmt = f"{LTR}{limit:.0f} GB"
@@ -230,7 +235,8 @@ class UserFormatter:
                 f"{EMOJIS['download']} {escape_markdown('حجم باقیمانده :')} {escape_markdown(remaining_fmt)}",
                 f"{EMOJIS['lightning']} {escape_markdown('مصرف امروز :')} {escape_markdown(daily_fmt)}",
                 f"{EMOJIS['time']} {escape_markdown('آخرین اتصال :')} {escape_markdown(last_online_str)}",
-                f"📅 {escape_markdown('انقضا :')} {escape_markdown(expire_str)}",
+                f"{EMOJIS['calendar']} {escape_markdown('انقضا :')} {escape_markdown(expire_str)}",
+                f"{progress_bar}",
                 separator
             ]
 

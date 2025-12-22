@@ -12,13 +12,14 @@ from telebot import types
 from bot.bot_instance import bot
 from bot.database import db
 from bot.keyboards import user as user_menu
-from bot.utils import escape_markdown, _safe_edit, _UUID_RE
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
+from bot.utils.parsers import _UUID_RE
 from bot.language import get_string
 from bot.formatters import user_formatter
-from bot.config import (
-    ADMIN_IDS, ADMIN_SUPPORT_CONTACT, TUTORIAL_LINKS, 
-    ACHIEVEMENTS, ACHIEVEMENT_SHOP_ITEMS, ENABLE_REFERRAL_SYSTEM, REFERRAL_REWARD_GB
-)
+from bot.config import ADMIN_IDS, TUTORIAL_LINKS
+from bot.constants.achievements import ACHIEVEMENTS
+from bot.constants.shop import ACHIEVEMENT_SHOP_ITEMS
 from bot import combined_handler
 from bot.services.panels import PanelFactory
 
@@ -64,24 +65,32 @@ async def conversation_step_handler(message: types.Message):
 
 @bot.message_handler(commands=['start'])
 async def start_command(message: types.Message):
-    # پاک کردن استیت‌های قبلی اگر وجود داشته باشد
-    if message.from_user.id in user_conversations:
-        del user_conversations[message.from_user.id]
-
     user_id = message.from_user.id
+    
+    # پاک کردن استیت‌های قبلی
+    if user_id in user_conversations:
+        del user_conversations[user_id]
+
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
     
+    # ثبت یا بروزرسانی کاربر
     await db.add_or_update_user(user_id, username, first_name, last_name)
     
+    referral_status = await db.get_config('enable_referral_system', 'True')
+    is_referral_enabled = referral_status.lower() == 'true'
+    
     args = message.text.split()
-    if len(args) > 1 and ENABLE_REFERRAL_SYSTEM:
+    if len(args) > 1 and is_referral_enabled:
         referral_code = args[1]
+        # بررسی اینکه کاربر قبلاً زیرمجموعه کسی نشده باشد
         referrer_info = await db.get_referrer_info(user_id)
         if not referrer_info:
+            # ثبت معرف (ارسال کد معرف به دیتابیس)
             await db.set_referrer(user_id, referral_code)
 
+    # --- نمایش منو ---
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
     

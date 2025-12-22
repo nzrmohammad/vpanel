@@ -1,6 +1,6 @@
 # bot/formatters/admin.py
 
-from bot.formatters.utils import format_currency, format_date, get_status_emoji
+from bot.utils.formatters import format_currency, format_date, get_status_emoji
 from bot.config import EMOJIS
 
 class AdminFormatter:

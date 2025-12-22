@@ -15,7 +15,8 @@ from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, WalletTransaction, ScheduledMessage, Panel, UsageSnapshot, Plan
 from bot.db import queries
-from bot.utils import _safe_edit, escape_markdown
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 from bot.services.panels import PanelFactory
 
 logger = logging.getLogger(__name__)

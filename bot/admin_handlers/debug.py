@@ -4,7 +4,8 @@ import logging
 import asyncio
 from telebot import types
 from bot.config import ADMIN_IDS
-from bot.utils import escape_markdown, _safe_edit
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 from bot.database import db
 from bot.keyboards import admin as admin_menu
 

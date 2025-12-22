@@ -12,7 +12,8 @@ from bot.keyboards import admin as admin_menu
 from bot.database import db
 from bot.db.base import UserUUID
 from bot.services.panels import PanelFactory
-from bot.utils import _safe_edit, escape_markdown
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 
 logger = logging.getLogger(__name__)
 

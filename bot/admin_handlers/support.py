@@ -3,7 +3,8 @@
 import logging
 from telebot import types
 from bot.database import db
-from bot.utils import escape_markdown, _safe_edit
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 from bot.config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)

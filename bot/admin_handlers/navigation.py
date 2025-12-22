@@ -5,7 +5,7 @@ from bot.bot_instance import bot
 from bot.utils import _safe_edit
 from bot.keyboards import admin as admin_menu
 from bot.admin_handlers import reporting
-from bot.database import db # ✅ اضافه شده
+from bot.database import db
 
 # توابع ساده نویگیشن (نمایش منوها)
 

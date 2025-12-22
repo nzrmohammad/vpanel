@@ -101,6 +101,17 @@ async def route_add_user(call: types.CallbackQuery, params: list):
     else:
         await bot.answer_callback_query(call.id, "⚠️ User management module not updated.", show_alert=True)
 
+@safe_handler
+async def route_system_config(call: types.CallbackQuery, params: list):
+    """مسیریاب تنظیمات یکپارچه سیستم"""
+    # params structure: ['list', 'channels'] or ['edit', 'support_username']
+    if not params: return
+    action = params[0]
+    
+    if action == 'list':
+        await settings.list_config_category(call, params[1:])
+    elif action == 'edit':
+        await settings.edit_config_start(call, params[1:])
 # ===================================================================
 # 4. Dispatcher Dictionary
 # ===================================================================
@@ -275,10 +286,10 @@ ADMIN_CALLBACK_HANDLERS = {
 
     # --- Settings Handlers ---
     "settings": settings.settings_main_panel,
+    "sys_conf": route_system_config,
     "pay_methods": settings.list_payment_methods,
     "add_method": settings.start_add_method,
     "del_method": settings.delete_payment_method_handler,
-    "set_chan": settings.set_channel_start,
     "toggle_method": settings.toggle_payment_method_handler,
     "edit_usdt_rate": settings.edit_usdt_rate_start,
 }

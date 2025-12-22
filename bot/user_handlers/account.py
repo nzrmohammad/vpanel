@@ -6,7 +6,8 @@ from bot.formatters import user_formatter
 from bot.database import db
 from bot import combined_handler
 from bot.language import get_string
-from bot.utils import escape_markdown, _safe_edit
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
 from datetime import datetime
 import logging
 import asyncio

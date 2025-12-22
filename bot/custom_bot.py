@@ -4,7 +4,6 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 
-# 1. بارگذاری متغیرهای محیطی (بسیار مهم که اول باشد)
 load_dotenv()
 
 from bot.bot_instance import bot

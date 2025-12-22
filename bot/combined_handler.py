@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from bot.keyboards import user
-from bot.utils import validate_uuid
+from bot.utils.parsers import validate_uuid
 
 logger = logging.getLogger(__name__)
 

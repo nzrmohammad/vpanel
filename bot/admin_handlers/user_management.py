@@ -14,7 +14,10 @@ from bot.keyboards import admin as admin_menu
 from bot.keyboards.base import CATEGORY_META
 from bot.database import db
 from bot.db.base import User, UserUUID, Panel, UserUUID, ServerCategory
-from bot.utils import _safe_edit, escape_markdown, to_shamsi, validate_uuid
+from bot.utils.formatters import escape_markdown
+from bot.utils.network import _safe_edit
+from bot.utils.date_helpers import to_shamsi
+from bot.utils.parsers import validate_uuid
 from bot import combined_handler
 from bot.services.panels import PanelFactory
 from bot.formatters import user_formatter

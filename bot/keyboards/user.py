@@ -5,10 +5,7 @@ from typing import List, Dict, Any, Optional
 from .base import BaseMenu, CATEGORY_META
 from ..language import get_string
 from bot.database import db
-from ..config import (
-    EMOJIS,
-    ENABLE_TRAFFIC_TRANSFER
-)
+from ..config import (EMOJIS)
 
 class UserMenu(BaseMenu):
     """
@@ -69,6 +66,9 @@ class UserMenu(BaseMenu):
     
     async def account_menu(self, uuid_id: int, lang_code: str) -> types.InlineKeyboardMarkup:
         """منوی مدیریت یک سرویس خاص (دریافت لینک، تمدید و...)"""
+        # دریافت مقدار از دیتابیس (خروجی رشته است)
+        enable_transfer = await db.get_config('enable_traffic_transfer', 'True')
+        
         kb = self.create_markup(row_width=2)
         
         # ردیف ۱: آمار مصرف و دریافت لینک
@@ -89,8 +89,8 @@ class UserMenu(BaseMenu):
             self.btn(f"📈 {get_string('btn_usage_history', lang_code)}", f"usage_history_{uuid_id}")
         )
         
-        # دکمه انتقال ترافیک (اگر در کانفیگ فعال باشد)
-        if ENABLE_TRAFFIC_TRANSFER:
+        # اصلاح شرط: چک کردن مقدار رشته‌ای به صورت حروف کوچک
+        if str(enable_transfer).lower() == 'true':
             kb.add(self.btn("💸 انتقال ترافیک", f"transfer_start_{uuid_id}"))
             
         kb.add(self.back_btn("manage", lang_code))
