@@ -492,44 +492,47 @@ class UserDB:
             
             return output
 
-    # 🔥 متد جدید: مدیریت دسترسی به سرورهای خاص (از طریق دسته‌بندی)
     async def update_user_server_access(self, uuid_id: int, category: str, status: bool) -> bool:
         """
-        دسترسی کاربر به یک دسته‌بندی خاص (مثلاً 'de') را فعال یا غیرفعال می‌کند.
-        این کار با افزودن/حذف پنل‌های آن دسته در جدول رابط انجام می‌شود.
+        دسترسی کاربر به یک دسته‌بندی خاص را فعال/غیرفعال می‌کند (همراه با رفرش کش).
         """
-        # برای جلوگیری از ایمپورت حلقوی، از متدهای PanelDB استفاده می‌کنیم یا مستقیم اینجا می‌زنیم
-        # چون این کلاس Mixin است، می‌توانیم فرض کنیم متدهای PanelDB در دسترس هستند اگر در کلاس Database ترکیب شوند
-        # اما برای اطمینان، کد را مستقیم می‌نویسیم.
-        
-        async with self.get_session() as session:
-            uuid_obj = await session.get(UserUUID, uuid_id)
-            if not uuid_obj: return False
+        try:
+            from bot.db.base import UserUUID, Panel
             
-            # لود پنل‌های فعلی
-            await session.refresh(uuid_obj, ["allowed_panels"])
-            
-            if status: # Grant Access
-                # پیدا کردن پنل‌های این کتگوری که کاربر هنوز ندارد
-                stmt = select(Panel).where(Panel.category == category)
-                result = await session.execute(stmt)
-                panels_to_add = result.scalars().all()
+            uid_to_clear = None
+            async with self.get_session() as session:
+                uuid_obj = await session.get(UserUUID, uuid_id)
+                if not uuid_obj: return False
                 
-                current_ids = {p.id for p in uuid_obj.allowed_panels}
-                for p in panels_to_add:
-                    if p.id not in current_ids:
-                        uuid_obj.allowed_panels.append(p)
-            else: # Revoke Access
-                # حذف پنل‌های این کتگوری از لیست مجاز
-                uuid_obj.allowed_panels = [
-                    p for p in uuid_obj.allowed_panels if p.category != category
-                ]
-            
-            await session.commit()
+                uid_to_clear = uuid_obj.user_id
+                
+                await session.refresh(uuid_obj, ["allowed_panels"])
+                
+                if status: # فعال‌سازی
+                    stmt = select(Panel).where(Panel.category == category)
+                    result = await session.execute(stmt)
+                    panels_to_add = result.scalars().all()
+                    
+                    current_ids = {p.id for p in uuid_obj.allowed_panels}
+                    for p in panels_to_add:
+                        if p.id not in current_ids:
+                            uuid_obj.allowed_panels.append(p)
+                else: # غیرفعال‌سازی
+                    uuid_obj.allowed_panels = [
+                        p for p in uuid_obj.allowed_panels if p.category != category
+                    ]
+                
+                await session.commit()
+
+            # پاکسازی کش
+            if uid_to_clear and hasattr(self, 'clear_user_cache'):
+                self.clear_user_cache(uid_to_clear)
+                
             return True
-            
-# در فایل bot/db/user.py
-    
+        except Exception as e:
+            logger.error(f"DB Error (update_user_server_access): {e}")
+            return False
+                
     async def get_user_access_rights(self, user_id: int) -> dict:
         """
         حقوق دسترسی کاربر را بر اساس دسته‌بندی پنل‌ها و نودهای مجاز برمی‌گرداند.
@@ -860,13 +863,16 @@ class UserDB:
             return {"status": "success", "streak": new_streak, "points": points}
 
     async def update_user_panel_access_by_id(self, uuid_id: int, panel_id: int, allow: bool) -> bool:
-        """آپدیت دسترسی پنل با استفاده از ID دقیق پنل"""
+        """آپدیت دسترسی پنل با استفاده از ID دقیق پنل (همراه با رفرش کش)"""
         try:
+            from bot.db.base import UserUUID, Panel
+            
+            uid_to_clear = None
             async with self.get_session() as session:
-                from bot.db.base import UserUUID, Panel
-                
                 user_uuid = await session.get(UserUUID, uuid_id)
                 if not user_uuid: return False
+                
+                uid_to_clear = user_uuid.user_id # ذخیره شناسه کاربر برای پاکسازی کش
                 
                 await session.refresh(user_uuid, ["allowed_panels"])
                 panel = await session.get(Panel, panel_id)
@@ -880,23 +886,36 @@ class UserDB:
                         user_uuid.allowed_panels.remove(panel)
                 
                 await session.commit()
-                return True
+            
+            # پاکسازی کش
+            if uid_to_clear and hasattr(self, 'clear_user_cache'):
+                self.clear_user_cache(uid_to_clear)
+                
+            return True
         except Exception as e:
-            print(f"DB Error (update_user_panel_access_by_id): {e}")
+            logger.error(f"DB Error (update_user_panel_access_by_id): {e}")
             return False
 
     async def set_uuid_access_categories(self, uuid: str, categories: List[str]) -> bool:
-        """دسترسی‌های مجاز (کشورها) را برای یک UUID تنظیم می‌کند."""
-        async with self.get_session() as session:
-            # پیدا کردن رکورد UUID
-            stmt = select(UserUUID).where(UserUUID.uuid == uuid)
-            result = await session.execute(stmt)
-            user_uuid_obj = result.scalar_one_or_none()
+        """دسترسی‌های مجاز (کشورها) را برای یک UUID تنظیم می‌کند (همراه با رفرش کش)"""
+        try:
+            uid_to_clear = None
+            async with self.get_session() as session:
+                stmt = select(UserUUID).where(UserUUID.uuid == uuid)
+                result = await session.execute(stmt)
+                user_uuid_obj = result.scalar_one_or_none()
+                
+                if user_uuid_obj:
+                    uid_to_clear = user_uuid_obj.user_id
+                    user_uuid_obj.allowed_categories = categories
+                    flag_modified(user_uuid_obj, "allowed_categories")
+                    await session.commit()
             
-            if user_uuid_obj:
-                user_uuid_obj.allowed_categories = categories
-                # چون نوع فیلد JSON است، باید تغییر را اعلام کنیم
-                flag_modified(user_uuid_obj, "allowed_categories")
-                await session.commit()
-                return True
+            # پاکسازی کش
+            if uid_to_clear and hasattr(self, 'clear_user_cache'):
+                self.clear_user_cache(uid_to_clear)
+                
+            return True if uid_to_clear else False
+        except Exception as e:
+            logger.error(f"DB Error (set_uuid_access_categories): {e}")
             return False

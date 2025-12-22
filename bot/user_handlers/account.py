@@ -7,6 +7,7 @@ from bot.database import db
 from bot import combined_handler
 from bot.language import get_string
 from bot.utils import escape_markdown, _safe_edit
+from datetime import datetime
 import logging
 import asyncio
 
@@ -41,32 +42,47 @@ async def add_account_prompt(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage")
 async def account_list_handler(call: types.CallbackQuery):
-    """نمایش لیست اکانت‌های کاربر با محاسبه درصد مصرف (به صورت همزمان)"""
+    """نمایش لیست اکانت‌های کاربر با محاسبه درصد مصرف و روزهای باقی‌مانده"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
     accounts = await db.uuids(user_id)
     
     if accounts:
-        # --- بهینه‌سازی: دریافت اطلاعات همزمان (Concurrent) ---
-        async def update_account_info(acc):
+        for acc in accounts:
             try:
                 uuid_str = str(acc['uuid'])
-                # این تابع خودش الان بهینه شده است، اما فراخوانی همزمان آن برای چند اکانت سرعت را چند برابر می‌کند
                 info = await combined_handler.get_combined_user_info(uuid_str)
                 if info:
                     acc['usage_percentage'] = info.get('usage_percentage', 0)
-                    acc['expire'] = info.get('expire')
+                    
+                    # --- شروع اصلاحیه: محاسبه روزهای باقی‌مانده ---
+                    raw_expire = info.get('expire')
+                    
+                    # اگر مقدار عددی بزرگ بود (تایم‌استمپ)، تبدیل به روز شود
+                    if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
+                        try:
+                            expire_dt = datetime.fromtimestamp(raw_expire)
+                            now = datetime.now()
+                            rem_days = (expire_dt - now).days
+                            acc['expire'] = max(0, rem_days) # جلوگیری از نمایش عدد منفی
+                        except:
+                            acc['expire'] = '?'
+                    # اگر مقدار کوچک بود (مثلا ۳۰)، یعنی خودش تعداد روز است
+                    elif raw_expire is not None:
+                        acc['expire'] = raw_expire
+                    # اگر اصلا تاریخی نبود
+                    else:
+                        acc['expire'] = None
+                    # --- پایان اصلاحیه ---
+                    
                 else:
                     acc['usage_percentage'] = 0
+                    acc['expire'] = None
             except Exception as e:
                 logger.error(f"Error fetching stats for list: {e}")
                 acc['usage_percentage'] = 0
-
-        # ایجاد تسک برای همه اکانت‌ها و اجرای همزمان
-        tasks = [update_account_info(acc) for acc in accounts]
-        await asyncio.gather(*tasks)
-        # -----------------------------------------------------
+                acc['expire'] = None
     
     markup = await user_menu.accounts(accounts, lang)
     
@@ -75,10 +91,10 @@ async def account_list_handler(call: types.CallbackQuery):
     else:
         text = get_string('account_list_title', lang)
 
-    await bot.edit_message_text(
-        text,
+    await _safe_edit(
         user_id,
         call.message.message_id,
+        text,
         reply_markup=markup,
         parse_mode='Markdown'
     )
@@ -355,18 +371,6 @@ async def usage_history_handler(call: types.CallbackQuery):
     # ✅ اصلاح مهم: متن باید escape شود تا پرانتزها درست ارسال شوند
     safe_text = escape_markdown(text)
     await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
-
-# --- 8. افزودن اکانت (Add) ---
-# (این هندلر تکراری است چون در ابتدای فایل هم وجود دارد، اما برای اطمینان حفظ شده است)
-@bot.callback_query_handler(func=lambda call: call.data == "add")
-async def add_account_prompt_dup(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    lang = await db.get_user_language(user_id)
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(user_menu.back_btn("manage", lang))
-    
-    await _safe_edit(user_id, call.message.message_id, get_string('prompt_add_uuid', lang), reply_markup=markup)
 
 # --- 9. انتقال ترافیک (Transfer) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_start_'))

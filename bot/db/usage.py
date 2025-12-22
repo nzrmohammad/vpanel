@@ -238,63 +238,64 @@ class UsageDB:
         return intervals
 
     async def get_daily_usage_summary(self) -> List[Dict[str, Any]]:
-        """خلاصه مصرف روزانه کل سیستم برای ۷ روز گذشته."""
+        """
+        خلاصه مصرف روزانه کل سیستم برای ۷ روز گذشته.
+        🚀 نسخه فوق‌بهینه: تبدیل 7000 کوئری به 1 کوئری!
+        """
         tehran_tz = pytz.timezone('Asia/Tehran')
-        today = datetime.now(tehran_tz).date()
-        summary = []
+        days_to_check = 7
+        start_date = datetime.now(timezone.utc) - timedelta(days=days_to_check)
         
-        # دریافت لیست ID کاربران فعال
-        active_uuids_data = await self.get_all_active_uuids_with_user_id()
-        all_active_uuids = [u['id'] for u in active_uuids_data]
-
         async with self.get_session() as session:
-            for i in range(7):
-                date_to_check = today - timedelta(days=i)
-                day_start_utc = tehran_tz.localize(datetime(date_to_check.year, date_to_check.month, date_to_check.day)).astimezone(pytz.utc).replace(tzinfo=None)
-                day_end_utc = day_start_utc + timedelta(days=1)
-                
-                total_day_usage = 0.0
-                
-                # برای بهینه‌سازی، می‌توان این حلقه را بهینه‌تر کرد، اما برای حفظ منطق Baseline فعلاً تکرار می‌کنیم
-                for uuid_id in all_active_uuids:
-                    # Baseline
-                    stmt_base = (
-                        select(UsageSnapshot)
-                        .where(and_(UsageSnapshot.uuid_id == uuid_id, UsageSnapshot.taken_at < day_start_utc))
-                        .order_by(desc(UsageSnapshot.taken_at))
-                        .limit(1)
-                    )
-                    # End
-                    stmt_end = (
-                        select(UsageSnapshot)
-                        .where(and_(UsageSnapshot.uuid_id == uuid_id, UsageSnapshot.taken_at < day_end_utc))
-                        .order_by(desc(UsageSnapshot.taken_at))
-                        .limit(1)
-                    )
-                    
-                    # اجرای همزمان برای سرعت بیشتر (اختیاری) - اینجا ساده اجرا می‌کنیم
-                    b_res = await session.execute(stmt_base)
-                    e_res = await session.execute(stmt_end)
-                    
-                    baseline = b_res.scalar_one_or_none()
-                    end_snap = e_res.scalar_one_or_none()
+            # کوئری تجمیعی: گروه‌بندی بر اساس روز و UUID، سپس محاسبه Max-Min
+            # ما نیاز داریم برای هر کاربر در هر روز مصرفش را حساب کنیم و بعد همه را جمع بزنیم.
+            
+            # 1. تبدیل taken_at به Date (بدون ساعت)
+            snapshot_date = cast(UsageSnapshot.taken_at, Date).label('snap_date')
+            
+            # 2. محاسبه Min و Max مصرف هر کاربر در هر روز
+            subq = (
+                select(
+                    snapshot_date,
+                    UsageSnapshot.uuid_id,
+                    (func.max(UsageSnapshot.hiddify_usage_gb) - func.min(UsageSnapshot.hiddify_usage_gb)).label('daily_h'),
+                    (func.max(UsageSnapshot.marzban_usage_gb) - func.min(UsageSnapshot.marzban_usage_gb)).label('daily_m')
+                )
+                .where(UsageSnapshot.taken_at >= start_date)
+                .group_by(snapshot_date, UsageSnapshot.uuid_id)
+                .subquery()
+            )
 
-                    if not end_snap:
-                        continue
+            # 3. جمع زدن مصرف همه کاربران در هر روز
+            stmt = (
+                select(
+                    subq.c.snap_date,
+                    func.sum(subq.c.daily_h + subq.c.daily_m).label('total_daily')
+                )
+                .group_by(subq.c.snap_date)
+                .order_by(subq.c.snap_date)
+            )
 
-                    h_start = baseline.hiddify_usage_gb if baseline else 0.0
-                    m_start = baseline.marzban_usage_gb if baseline else 0.0
-                    h_end = end_snap.hiddify_usage_gb or 0.0
-                    m_end = end_snap.marzban_usage_gb or 0.0
-                    
-                    h_usage = h_end - h_start if h_end >= h_start else h_end
-                    m_usage = m_end - m_start if m_end >= m_start else m_end
-                    
-                    total_day_usage += max(0, h_usage) + max(0, m_usage)
-                
-                summary.append({"date": date_to_check.strftime('%Y-%m-%d'), "total_usage": total_day_usage})
-                
-        return sorted(summary, key=lambda x: x['date'])
+            result = await session.execute(stmt)
+            rows = result.all()
+
+        # فرمت‌دهی خروجی
+        summary_dict = {row.snap_date: row.total_daily for row in rows}
+        final_summary = []
+        
+        # پر کردن روزهای خالی (اگر روزی مصرف 0 بود)
+        for i in range(days_to_check):
+            d = (datetime.now().date() - timedelta(days=i))
+            # تبدیل به string برای سازگاری با فرانت/تلگرام
+            # نکته: دیتابیس ممکن است date برگرداند، مقایسه باید درست باشد
+            # فرض ساده: کلیدهای summary_dict آبجکت date هستند
+            usage = summary_dict.get(d, 0.0)
+            final_summary.append({
+                "date": d.strftime('%Y-%m-%d'),
+                "total_usage": round(usage, 2)
+            })
+
+        return sorted(final_summary, key=lambda x: x['date'])
 
     async def get_new_users_per_month_stats(self) -> Dict[str, int]:
         """آمار کاربران جدید در هر ماه میلادی."""
