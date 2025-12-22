@@ -219,7 +219,7 @@ class UserFormatter:
             
             progress_bar = ""
             if limit > 0:
-                progress_bar = f"\n{create_progress_bar(percent)}\n"
+                progress_bar = f"{create_progress_bar(percent)}"
 
             last_online_str = to_shamsi(fixed_last_online, include_time=True)
 

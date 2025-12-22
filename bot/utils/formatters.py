@@ -37,14 +37,20 @@ def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
-def create_progress_bar(percent: float, length: int = 15) -> str:
+def create_progress_bar(percent: float, length: int = 16) -> str:
+    """خروجی: 🔴 88% ███████░░░ (قسمت پر در سمت چپِ نوار)"""
     percent = max(0, min(100, percent))
     
+    # تعیین رنگ
     if percent < 60: color = "🟢"
     elif percent < 85: color = "🟡"
     else: color = "🔴"
         
     filled = int(percent / 100 * length)
-    bar = '█' * filled + '░' * (length - filled)
     
-    return f"{color} `{bar} {percent:.1f}%`"
+    # جابه‌جایی: ابتدا قسمت پر (█) و سپس قسمت خالی (░)
+    bar = ('█' * filled) + ('░' * (length - filled))
+    
+    # چیدمان: عدد درصد را هم قبل از نوار (bar) قرار دادم تا در کنار قسمت پر باشد
+    # خروجی نهایی داخل کدبلاک: "88% ███░░"
+    return f"\u200f{color} `{bar} {int(percent)}%`"
