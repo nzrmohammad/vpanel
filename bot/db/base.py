@@ -63,6 +63,7 @@ class UserUUID(Base):
     welcome_message_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     renewal_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_categories: Mapped[List[str]] = mapped_column(JSONB, default=[])
     allowed_panels: Mapped[List["Panel"]] = relationship(
         "Panel", secondary="uuid_panel_access", back_populates="allowed_uuids", lazy="selectin"
     )

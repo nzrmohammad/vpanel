@@ -1743,102 +1743,132 @@ async def get_user_db_object(session, identifier: str):
             return await session.get(User, uuid_obj.user_id)
     return None
 
-# در فایل bot/admin_handlers/user_management.py
-
 async def handle_user_access_panel_list(call, params):
-    identifier = params[0]
-    uid, msg_id = call.from_user.id, call.message.message_id
+    """
+    نمایش لیست پنل‌ها و نودها (نسخه پرسرعت 🚀 + دکمه بازگشت اصلاح شده)
+    """
+    input_id = int(params[0])
+    uid = call.from_user.id
+    msg_id = call.message.message_id
     
-    panels = await db.get_active_panels()
-    all_cats = await db.get_server_categories()
-    cat_map = {c['code']: c['emoji'] for c in all_cats}
-    
-    panels_data = []
-    
-    for p in panels:
-        # دریافت نودهای واقعی (تعریف شده توسط ادمین)
-        nodes = await db.get_panel_nodes(p['id'])
-        
-        # اطلاعات سرور اصلی
-        main_cat = p['category'] or 'general'
-        main_flag = cat_map.get(main_cat, "🏳️")
-        
-        # بررسی اینکه آیا کد سرور اصلی در نودها هست یا خیر (جلوگیری از تکرار)
-        existing_codes = set(n['code'] for n in nodes)
-        
-        if main_cat not in existing_codes:
-            # ساخت نود مجازی برای سرور اصلی
-            main_node = {
-                'id': 0,
-                'name': 'سرور اصلی', 
-                'code': main_cat, 
-                'flag': main_flag
-            }
-            # اضافه کردن به ابتدای لیست نودها
-            nodes.insert(0, main_node)
-        
-        panels_data.append({
-            'panel': p,
-            'nodes': nodes,
-            'flag': main_flag
-        })
-
-    # دریافت تنظیمات کاربر
-    user_settings = {}
-    user_name = identifier
     async with db.get_session() as session:
-        user_db = await get_user_db_object(session, identifier)
-        if user_db:
-            user_name = user_db.first_name or user_db.username or identifier
-            user_settings = user_db.settings or {}
+        from bot.db.base import UserUUID, Panel, PanelNode, ServerCategory
+        from sqlalchemy.orm import selectinload
+        
+        # 1️⃣ دریافت اطلاعات کاربر + پنل‌های مجاز (با یک کوئری)
+        # تلاش اول: بر اساس تلگرام آیدی
+        stmt_user = (
+            select(UserUUID)
+            .options(selectinload(UserUUID.allowed_panels)) # لود کردن پنل‌های مجاز همزمان
+            .where(UserUUID.user_id == input_id)
+            .limit(1)
+        )
+        result = await session.execute(stmt_user)
+        user_uuid = result.scalar_one_or_none()
+        
+        # تلاش دوم: بر اساس آیدی کانفیگ
+        if not user_uuid:
+            user_uuid = await session.get(UserUUID, input_id)
+            # اگر اینطوری لود شد، باید allowed_panels را جدا لود کنیم یا رفرش کنیم
+            if user_uuid:
+                await session.refresh(user_uuid, ["allowed_panels"])
 
-    panel_access = user_settings.get('panel_access', {})
+        if not user_uuid:
+            await bot.answer_callback_query(call.id, "❌ کاربر یافت نشد.")
+            return
 
-    markup = await admin_menu.user_access_aggregated_menu(identifier, panels_data, panel_access)
+        # استخراج اطلاعات برای نمایش
+        real_uuid_id = user_uuid.id
+        telegram_id = user_uuid.user_id or 0
+        config_name = user_uuid.name or "بی‌نام"
+        
+        # لیست آیدی پنل‌هایی که کاربر دسترسی دارد
+        allowed_panel_ids = {p.id for p in user_uuid.allowed_panels}
 
-    prompt = (
-        f"🏗 *مدیریت دسترسی نودها \(Nodes\)*\n"
-        f"👤 کاربر: `{escape_markdown(str(user_name))}`\n\n"
-        f"در اینجا می‌توانید دسترسی کاربر به نودهای هر سرور را مدیریت کنید\.\n"
-        f"با کلیک روی دکمه‌ها، دسترسی آن نود خاص برای کاربر قطع/وصل می‌شود\."
+        # 2️⃣ دریافت همه اطلاعات سیستم (کتگوری‌ها، پنل‌ها، نودها) در یک اتصال
+        # دریافت ایموجی‌ها
+        cats = (await session.execute(select(ServerCategory))).scalars().all()
+        cat_map = {c.code: c.emoji for c in cats}
+        
+        # دریافت پنل‌های فعال
+        panels = (await session.execute(select(Panel).where(Panel.is_active == True).order_by(Panel.id))).scalars().all()
+        
+        # دریافت همه نودهای فعال (یکجا)
+        all_nodes = (await session.execute(select(PanelNode).where(PanelNode.is_active == True))).scalars().all()
+
+    # --- پردازش داده‌ها در پایتون (بدون درگیری دیتابیس) ---
+    
+    # گروه‌بندی نودها بر اساس پنل_آیدی
+    nodes_by_panel = {}
+    for node in all_nodes:
+        if node.panel_id not in nodes_by_panel:
+            nodes_by_panel[node.panel_id] = []
+        nodes_by_panel[node.panel_id].append(node)
+
+    # --- ساخت کیبورد ---
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    
+    for panel in panels:
+        # وضعیت دسترسی کاربر به این پنل
+        is_active = panel.id in allowed_panel_ids
+        status_icon = "✅" if is_active else "❌"
+        action = "disable" if is_active else "enable"
+        
+        flag = cat_map.get(panel.category, "🏳️") if panel.category else "🏳️"
+        
+        # A. دکمه تیتر (کنترل اصلی پنل)
+        header_text = f"{flag} {panel.name} ({panel.panel_type}) : {status_icon}"
+        # کالبک: admin:ptgl:UUID_ID:PANEL_ID:ACTION
+        header_callback = f"admin:ptgl:{real_uuid_id}:{panel.id}:{action}"
+        
+        kb.add(types.InlineKeyboardButton(header_text, callback_data=header_callback))
+        
+        # B. نمایش نودهای زیرمجموعه (فقط جهت اطلاع)
+        panel_nodes = nodes_by_panel.get(panel.id, [])
+        node_buttons = []
+        for node in panel_nodes:
+            node_flag = cat_map.get(node.country_code, "🏳️")
+            # فعلاً دکمه نودها همان کار دکمه پنل را می‌کند (چون دسترسی نود جدا نیست)
+            # یا می‌توانید callback_data="ignore" بگذارید که کلیک نشود
+            node_text = f"└ {node_flag} {node.name}"
+            node_buttons.append(types.InlineKeyboardButton(node_text, callback_data=header_callback))
+            
+        if node_buttons:
+            kb.add(*node_buttons)
+
+    # ✅ دکمه بازگشت: به پروفایل کاربر (admin:us) برمی‌گردد
+    # اگر telegram_id موجود باشد، به پروفایل برمی‌گردد. اگر 0 بود (کاربر حذف شده)، به منوی اصلی.
+    back_callback = f"admin:us:{telegram_id}" if telegram_id else "admin:search_menu"
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_callback))
+    
+    text = (
+        f"⚙️ *مدیریت دسترسی پنل‌ها*\n"
+        f"👤 کانفیگ: `{escape_markdown(config_name)}`\n"
+        f"🆔 شناسه تلگرام: `{escape_markdown(str(telegram_id))}`\n\n"
+        f"با کلیک روی نام هر پنل، دسترسی کاربر به آن را *قطع* یا *وصل* کنید\\.\n"
     )
     
-    await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
-    
+    await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
+
 async def handle_user_access_toggle(call, params):
-    """تغییر وضعیت دسترسی و رفرش لیست کلی"""
-    identifier = params[0]
-    panel_id = str(params[1])
-    target_code = params[2]
+    """
+    تغییر وضعیت دسترسی و رفرش لیست
+    params: [uuid_id, country_code, action]
+    """
+    uuid_id = int(params[0])
+    country_code = params[1]
+    action = params[2] # 'enable' or 'disable'
     
-    async with db.get_session() as session:
-        user_db = await get_user_db_object(session, identifier)
-        if not user_db: return
-        
-        # لود و آپدیت تنظیمات
-        settings = dict(user_db.settings) if user_db.settings else {}
-        panel_access = settings.get('panel_access', {})
-        if not isinstance(panel_access, dict): panel_access = {}
-        
-        current_nodes = panel_access.get(panel_id, [])
-        
-        action_msg = ""
-        if target_code in current_nodes:
-            current_nodes.remove(target_code)
-            action_msg = "❌ غیرفعال شد"
-        else:
-            current_nodes.append(target_code)
-            action_msg = "✅ فعال شد"
-            
-        panel_access[panel_id] = current_nodes
-        settings['panel_access'] = panel_access
-        
-        user_db.settings = settings
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(user_db, "settings")
-        
-        await session.commit()
+    status = True if action == "enable" else False
     
-    # نکته مهم: نمایش پیام کوتاه و رفرش همان منوی اصلی
-    await bot.answer_callback_query(call.id, action_msg)
-    await handle_user_access_panel_list(call, [identifier])
+    # استفاده از تابع جدیدی که در db/user.py ساختید
+    success = await db.update_user_server_access(uuid_id, country_code, status)
+    
+    if success:
+        msg = f"✅ دسترسی {country_code} فعال شد." if status else f"❌ دسترسی {country_code} قطع شد."
+        await bot.answer_callback_query(call.id, msg)
+        
+        # رفرش کردن همین منو برای دیدن تغییر آیکون
+        await handle_user_access_panel_list(call, [uuid_id])
+    else:
+        await bot.answer_callback_query(call.id, "خطا در انجام عملیات", show_alert=True)

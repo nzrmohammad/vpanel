@@ -77,13 +77,15 @@ class UserDB:
 
     # --- تنظیمات داینامیک (Dynamic Settings) ---
 
+# جایگزین متد فعلی get_user_settings در UserDB شوید:
+
     async def get_user_settings(self, user_id: int) -> Dict[str, bool]:
         """
-        تنظیمات کاربر را از ستون JSON می‌خواند و با مقادیر پیش‌فرض ترکیب می‌کند.
+        تنظیمات کاربر را می‌خواند.
+        ✅ هوشمند: فقط دکمه‌های کشورهایی را اضافه می‌کند که کاربر حداقل در یک اکانتش به آن‌ها دسترسی داشته باشد.
         """
         user_data = await self.user(user_id)
         
-        # مقادیر پیش‌فرض ثابت
         defaults = {
             'daily_reports': True, 'weekly_reports': True, 'monthly_reports': True,
             'expiry_warnings': True, 'show_info_config': True, 
@@ -91,24 +93,42 @@ class UserDB:
             'auto_delete_reports': False,
         }
 
-        # ✅ اضافه کردن داینامیک کشورهای موجود در دیتابیس به تنظیمات پیش‌فرض
-        # (این بخش باعث می‌شود هر کشوری اضافه کنید، پیش‌فرضش True باشد)
         async with self.get_session() as session:
-            # از مدل ServerCategory که در فایل base.py است استفاده می‌کنیم
+            # 1. دریافت تمام دسته‌بندی‌های موجود در سیستم
             from .base import ServerCategory 
-            stmt = select(ServerCategory.code)
-            result = await session.execute(stmt)
-            for code in result.scalars():
-                defaults[f'data_warning_{code}'] = True
+            all_cats_stmt = select(ServerCategory.code)
+            all_cats_result = await session.execute(all_cats_stmt)
+            all_cats = [c for c in all_cats_result.scalars()]
+
+            # 2. دریافت دسترسی‌های واقعی کاربر از جدول UserUUID
+            # (اگر کاربر چند اکانت داشت، اجتماع دسترسی‌ها را می‌گیریم)
+            user_access_stmt = select(UserUUID.allowed_categories).where(
+                and_(UserUUID.user_id == user_id, UserUUID.is_active == True)
+            )
+            access_result = await session.execute(user_access_stmt)
+            
+            user_allowed_cats = set()
+            for row in access_result.scalars():
+                if row: # اگر لیست پر بود
+                    user_allowed_cats.update(row)
+            
+            # اگر کاربر هیچ سرویسی ندارد یا لیست خالی است، شاید بخواهید همه را نشان دهید یا هیچکدام
+            # اینجا فرض می‌کنیم اگر خالی بود، پیش‌فرض همه را نشان بده (برای کاربران جدید)
+            # اما اگر سرویس دارد، فقط همان‌ها را نشان بده.
+            final_cats_to_show = user_allowed_cats if user_allowed_cats else all_cats
+
+            # اضافه کردن کلیدهای تنظیمات فقط برای کشورهای مجاز
+            for code in all_cats:
+                if code in final_cats_to_show or not user_allowed_cats:
+                    defaults[f'data_warning_{code}'] = True
         
         if not user_data:
             return defaults
             
         saved_settings = user_data.get('settings', {}) or {}
         
+        # ترکیب تنظیمات ذخیره شده با پیش‌فرض‌های هوشمند
         return {**defaults, **saved_settings}
-
-    # ... (ادامه کدها)
 
     async def update_user_setting(self, user_id: int, setting: str, value: bool) -> None:
         """
@@ -508,15 +528,18 @@ class UserDB:
             await session.commit()
             return True
             
+# در فایل bot/db/user.py
+    
     async def get_user_access_rights(self, user_id: int) -> dict:
         """
-        حقوق دسترسی کاربر را بر اساس دسته‌بندی پنل‌ها و نودهای مجاز در تمام اکانت‌هایش برمی‌گرداند.
+        حقوق دسترسی کاربر را بر اساس دسته‌بندی پنل‌ها و نودهای مجاز برمی‌گرداند.
+        ✅ نسخه اصلاح شده (بدون نیاز به تغییر در base.py)
         """
         access_rights = {}
         async with self.get_session() as session:
             from .base import UserUUID, Panel, PanelNode
             
-            # ۱. استخراج دسته‌بندی خود پنل‌هایی که به کاربر متصل است
+            # 1️⃣ استخراج دسته‌بندی پنل‌هایی که کاربر به آن‌ها دسترسی دارد
             stmt_panels = (
                 select(Panel.category)
                 .join(UserUUID.allowed_panels)
@@ -533,11 +556,12 @@ class UserDB:
                 if cat:
                     access_rights[f"has_access_{cat}"] = True
 
-            # ۲. استخراج دسته‌بندی نودهایی که در پنل‌های مجاز کاربر قرار دارند
+            # 2️⃣ استخراج کدهای کشور نودها (PanelNode)
+            # ✅ تغییر: استفاده از جوین دستی به جای PanelNode.panel
             stmt_nodes = (
                 select(PanelNode.country_code)
-                .join(Panel, Panel.id == PanelNode.panel_id)
-                .join(UserUUID.allowed_panels) # اتصال به پنل‌های مجاز کاربر
+                .join(Panel, Panel.id == PanelNode.panel_id) # اتصال نود به پنل از طریق ID
+                .join(UserUUID, Panel.allowed_uuids)         # اتصال پنل به کاربر
                 .where(and_(
                     UserUUID.user_id == user_id,
                     UserUUID.is_active == True,
@@ -834,3 +858,48 @@ class UserDB:
             await session.commit()
             
             return {"status": "success", "streak": new_streak, "points": points}
+
+    async def update_user_single_panel_access(self, uuid_id: int, panel_id: int, status: bool) -> bool:
+        """
+        دسترسی کاربر به یک پنل خاص (مشخص شده با ID) را قطع یا وصل می‌کند.
+        """
+        async with self.get_session() as session:
+            from .base import UserUUID, Panel
+            
+            uuid_obj = await session.get(UserUUID, uuid_id)
+            target_panel = await session.get(Panel, panel_id)
+            
+            if not uuid_obj or not target_panel:
+                return False
+            
+            # لود کردن لیست فعلی
+            await session.refresh(uuid_obj, ["allowed_panels"])
+            
+            # بررسی اینکه آیا پنل الان در لیست هست یا نه
+            current_ids = [p.id for p in uuid_obj.allowed_panels]
+            
+            if status: # فعال کردن
+                if target_panel.id not in current_ids:
+                    uuid_obj.allowed_panels.append(target_panel)
+            else: # غیرفعال کردن
+                # حذف پنل با این ID از لیست
+                uuid_obj.allowed_panels = [p for p in uuid_obj.allowed_panels if p.id != target_panel.id]
+            
+            await session.commit()
+            return True
+
+    async def set_uuid_access_categories(self, uuid: str, categories: List[str]) -> bool:
+        """دسترسی‌های مجاز (کشورها) را برای یک UUID تنظیم می‌کند."""
+        async with self.get_session() as session:
+            # پیدا کردن رکورد UUID
+            stmt = select(UserUUID).where(UserUUID.uuid == uuid)
+            result = await session.execute(stmt)
+            user_uuid_obj = result.scalar_one_or_none()
+            
+            if user_uuid_obj:
+                user_uuid_obj.allowed_categories = categories
+                # چون نوع فیلد JSON است، باید تغییر را اعلام کنیم
+                flag_modified(user_uuid_obj, "allowed_categories")
+                await session.commit()
+                return True
+            return False

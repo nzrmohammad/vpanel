@@ -211,11 +211,12 @@ ADMIN_CALLBACK_HANDLERS = {
     'p_node_ren_st': panel_management.handle_node_rename_start,
     'p_node_tog': panel_management.handle_node_toggle,
     'p_node_del': panel_management.handle_node_delete,
-    
-    # --- Fix Node/Panel Access Handlers ---
     'us_acc_p_list': user_management.handle_user_access_panel_list,
     'us_acc_tgl': user_management.handle_user_access_toggle,
     'tgl_acc': user_management.handle_user_access_toggle,
+    'ptgl': user_management.handle_user_access_toggle,
+    'node_manage': user_management.handle_user_access_panel_list,
+    'node_tgl': user_management.handle_user_access_toggle,
     
     # اصلاح نام تابع تغییر وضعیت نود
     'tgl_n_acc': getattr(user_management, 'handle_user_access_toggle', None),
