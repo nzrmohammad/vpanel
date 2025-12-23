@@ -130,6 +130,15 @@ async def fetch_all_users_from_panels() -> List[Dict[str, Any]]:
 
             # مدیریت انقضا (کمترین انقضای معتبر)
             new_expire = user.get('expire')
+            
+            # --- اصلاحیه برای هیدیفای ---
+            # اگر پارامتر expire وجود نداشت، پارامترهای دیگر مثل package_days بررسی می‌شوند
+            if new_expire is None:
+                new_expire = user.get('package_days')  # این معمولا در هیدیفای عدد روز است
+                if new_expire is None:
+                     new_expire = user.get('expiry_time') # برای اطمینان
+            # ---------------------------
+
             if new_expire:
                 curr_expire = all_users_map[identifier]['expire']
                 if curr_expire is None or (new_expire > 0 and new_expire < curr_expire):

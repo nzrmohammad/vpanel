@@ -2,6 +2,7 @@
 
 import logging
 from telebot import types
+from datetime import datetime  # ایمپورت ماژول زمان
 
 # --- Imports ---
 from bot.bot_instance import bot
@@ -137,7 +138,7 @@ async def handle_uuid_login(message: types.Message):
                 if accounts:
                     for acc in accounts:
                         try:
-                            # تلاش برای دریافت اطلاعات از کش برای همه اکانت‌ها (نه فقط اکانت جدید)
+                            # تلاش برای دریافت اطلاعات از کش
                             u_str = str(acc['uuid'])
                             cached_info = await combined_handler.get_combined_user_info(u_str)
                             
@@ -145,22 +146,38 @@ async def handle_uuid_login(message: types.Message):
                                 # 1. تنظیم درصد مصرف
                                 acc['usage_percentage'] = cached_info.get('usage_percentage', 0)
                                 
-                                # 2. محاسبه دقیق روزهای باقی‌مانده (مشابه فایل account.py)
+                                # --- اصلاحیه هوشمند تاریخ انقضا ---
                                 raw_expire = cached_info.get('expire')
+                                
+                                # تبدیل رشته به عدد (اگر پنل تاریخ را به صورت رشته فرستاده باشد)
+                                if isinstance(raw_expire, str):
+                                    # حذف اعشار احتمالی و بررسی عددی بودن
+                                    clean_raw = raw_expire.split('.')[0]
+                                    if clean_raw.isdigit():
+                                        raw_expire = int(clean_raw)
+
+                                # لاگ برای دیباگ دقیق
+                                logger.info(f"User: {acc.get('name')} | Final Raw Expire: {raw_expire} | Type: {type(raw_expire)}")
+
+                                # حالت ۱: تایم‌استمپ (عدد بزرگ)
                                 if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
-                                    # تبدیل تایم‌استمپ به تعداد روز
-                                    from datetime import datetime
-                                    expire_dt = datetime.fromtimestamp(raw_expire)
-                                    now = datetime.now()
-                                    rem_days = (expire_dt - now).days
-                                    acc['expire'] = max(0, rem_days)
-                                elif raw_expire is not None:
-                                    # اگر خودش عدد کوچک بود (تعداد روز)
-                                    acc['expire'] = raw_expire
+                                    try:
+                                        expire_dt = datetime.fromtimestamp(raw_expire)
+                                        now = datetime.now()
+                                        rem_days = (expire_dt - now).days
+                                        acc['expire'] = max(0, rem_days) # جلوگیری از عدد منفی
+                                    except:
+                                        acc['expire'] = '?'
+
+                                # حالت ۲: تعداد روز (عدد کوچک)
+                                elif isinstance(raw_expire, (int, float)):
+                                    acc['expire'] = int(raw_expire)
+                                
+                                # حالت ۳: نامحدود یا نامشخص
                                 else:
                                     acc['expire'] = None
+                                # ----------------------------------
                             else:
-                                # اگر در کش نبود (مثلاً کش هنوز آپدیت نشده)
                                 acc['usage_percentage'] = 0
                                 acc['expire'] = None
                                 
@@ -173,7 +190,7 @@ async def handle_uuid_login(message: types.Message):
                 markup = await user_menu.accounts(accounts, lang)
                 final_text = f"✅ {success_text}\n\n{get_string('account_list_title', lang)}"
                 
-                # ویرایش پیام نهایی (جایگزین کردن "در حال بررسی" با "لیست اکانت‌ها")
+                # ویرایش پیام نهایی
                 await bot.edit_message_text(
                     final_text, 
                     message.chat.id, 
@@ -185,7 +202,6 @@ async def handle_uuid_login(message: types.Message):
             elif result == "db_err_uuid_already_active_self":
                 # اکانت تکراری است
                 err_txt = get_string(result, lang)
-                # دکمه بازگشت برای تلاش مجدد
                 markup = types.InlineKeyboardMarkup()
                 markup.add(user_menu.back_btn("manage", lang))
                 await bot.edit_message_text(err_txt, message.chat.id, target_msg_id, reply_markup=markup)
