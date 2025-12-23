@@ -310,7 +310,7 @@ class RemnawavePanel(BasePanel):
                         "usage_current_GB": (data.get("trafficUsed", 0) or 0) / (1024**3),
                         "expire": expire_val, # استفاده از تاریخ اصلاح شده
                         "status": "active" if data.get("status") == "active" else "disabled",
-                        "panel_url": self.panel_url
+                        "panel_url": self.api_url
                     }
                 
                 elif resp.status_code == 404:

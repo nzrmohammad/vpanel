@@ -77,8 +77,6 @@ async def start_command(message: types.Message):
 async def handle_uuid_login(message: types.Message):
     """
     مدیریت ورودی کانفیگ/UUID.
-    این تابع هم ورودی‌های صحیح UUID را می‌گیرد و هم اگر کاربر در مرحله افزودن اکانت باشد،
-    هر متنی (حتی غلط مثل 11) را می‌گیرد تا بتواند خطا دهد.
     """
     user_id = message.from_user.id
     input_text = message.text.strip() if message.text else ""
@@ -96,24 +94,19 @@ async def handle_uuid_login(message: types.Message):
         pass
 
     # 3. اعتبارسنجی فرمت UUID
-    # اگر فرمت غلط باشد (مثل عدد 11) و کاربر در پروسه افزودن باشد، باید خطا بدهیم
     if not _UUID_RE.match(input_text):
         if is_in_add_flow and menu_msg_id:
             try:
-                # نمایش خطا روی همان منوی قبلی
-                error_text = "❌ فرمت UUID اشتباه است.\nلطفاً کد کانفیگ صحیح را ارسال کنید:"
-                # دکمه بازگشت هم نگه می‌داریم
+                error_text = "❌ فرمت UUID اشتباه است.\nلطفاً UUID صحیح را ارسال کنید:"
                 markup = types.InlineKeyboardMarkup()
                 markup.add(user_menu.back_btn("manage", lang))
                 
                 await bot.edit_message_text(error_text, message.chat.id, menu_msg_id, reply_markup=markup)
             except Exception as e:
                 logger.error(f"Error editing menu for invalid input: {e}")
-        # اگر کاربر همینجوری "11" فرستاده و در پروسه نیست، واکنشی نشان نمی‌دهیم (یا می‌توان گفت دستور نامعتبر)
         return
 
     # 4. آماده‌سازی پیام "در حال بررسی"
-    # اگر در پروسه بودیم، پیام قبلی را ادیت می‌کنیم. اگر نه، پیام جدید می‌فرستیم.
     wait_text = "⏳ در حال بررسی ..."
     target_msg_id = None
 
@@ -122,7 +115,6 @@ async def handle_uuid_login(message: types.Message):
             await bot.edit_message_text(wait_text, message.chat.id, menu_msg_id)
             target_msg_id = menu_msg_id
         except:
-            # اگر پیام قبلی پاک شده بود، پیام جدید می‌فرستیم
             msg = await bot.send_message(message.chat.id, wait_text)
             target_msg_id = msg.message_id
     else:

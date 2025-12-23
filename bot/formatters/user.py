@@ -206,12 +206,16 @@ class UserFormatter:
 
             if p_type == 'hiddify' and raw_last_online and isinstance(raw_last_online, str):
                 try:
-                    clean_time = raw_last_online.split('.')[0]
+                    clean_time = raw_last_online.replace('T', ' ').split('.')[0]
                     dt_obj = datetime.strptime(clean_time, '%Y-%m-%d %H:%M:%S')
-                    tehran_tz = pytz.timezone("Asia/Tehran")
-                    fixed_last_online = tehran_tz.localize(dt_obj)
-                except ValueError:
-                    pass
+                    
+                    if dt_obj.year > 2000:
+                        tehran_tz = pytz.timezone("Asia/Tehran")
+                        fixed_last_online = tehran_tz.localize(dt_obj)
+                    else:
+                        fixed_last_online = None
+                except Exception:
+                    fixed_last_online = None
 
             percent = 0
             if limit > 0:
