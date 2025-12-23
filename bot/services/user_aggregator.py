@@ -2,14 +2,13 @@
 
 import logging
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from bot.services.panels.factory import PanelFactory
 from bot.database import db
 
 logger = logging.getLogger(__name__)
 
-async def get_handler_for_panel(panel_name: str):
-    """دریافت هندلر پنل (برای استفاده داخلی و خارجی)"""
+async def _get_handler(panel_name: str):
     try:
         return await PanelFactory.get_panel(panel_name)
     except Exception as e:
@@ -17,7 +16,7 @@ async def get_handler_for_panel(panel_name: str):
         return None
 
 def _process_and_merge_user_data(all_users_map: dict) -> List[Dict[str, Any]]:
-    """نرمال‌سازی و ترکیب نهایی داده‌ها"""
+    """تبدیل دیکشنری تجمیع شده به لیست نهایی"""
     processed_list = []
     for identifier, data in all_users_map.items():
         limit = data.get('usage_limit_GB', 0)
@@ -25,15 +24,12 @@ def _process_and_merge_user_data(all_users_map: dict) -> List[Dict[str, Any]]:
         
         data['remaining_GB'] = max(0, limit - usage)
         data['usage_percentage'] = (usage / limit * 100) if limit > 0 else 0
-        data['usage'] = {
-            'total_usage_GB': usage,
-            'data_limit_GB': limit
-        }
+        data['usage'] = {'total_usage_GB': usage, 'data_limit_GB': limit}
 
         if 'panels' in data and isinstance(data['panels'], set):
             data['panels'] = list(data['panels'])
 
-        # تعیین نام نمایشی کاربر
+        # پیدا کردن بهترین نام برای نمایش
         final_name = "کاربر ناشناس"
         if data.get('breakdown'):
             for _, panel_details in data['breakdown'].items():
@@ -46,57 +42,69 @@ def _process_and_merge_user_data(all_users_map: dict) -> List[Dict[str, Any]]:
     return processed_list
 
 async def fetch_all_users_from_panels() -> List[Dict[str, Any]]:
-    """دریافت همزمان اطلاعات کاربران از تمام پنل‌های فعال"""
-    logger.info("♻️ Aggregator: Fetching data from all panels...")
+    """
+    اطلاعات را از تمام پنل‌ها می‌گیرد.
+    نکته مهم: Hiddify و Remnawave اگر UUID یکسان داشته باشند، اینجا یکی می‌شوند.
+    """
+    logger.info("AGGREGATOR: Fetching users from all active panels concurrently.")
     all_users_map = {}
     active_panels = await db.get_active_panels()
 
     async def fetch_single(panel_config):
         p_name = panel_config['name']
         p_type = panel_config['panel_type']
-        
-        handler = await get_handler_for_panel(p_name)
+        handler = await _get_handler(p_name)
         if not handler: return None
-
         try:
             users = await handler.get_all_users() or []
             return {"users": users, "panel_name": p_name, "panel_type": p_type}
         except Exception as e:
-            logger.error(f"Error fetching from {p_name}: {e}")
+            logger.error(f"Fetch error {p_name}: {e}")
             return None
 
-    # اجرای همزمان درخواست‌ها
     tasks = [fetch_single(p) for p in active_panels]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     for res in results:
         if not res or isinstance(res, Exception): continue
         
-        for user in res['users']:
-            uuid = user.get('uuid')
-            identifier = None
+        panel_users = res['users']
+        panel_name = res['panel_name']
+        panel_type = res['panel_type']
 
-            # --- منطق تشخیص شناسه (دقیقاً مثل فایل کامل شما) ---
-            if res['panel_type'] in ['hiddify', 'remnawave']:
-                identifier = uuid
-            elif res['panel_type'] == 'marzban':
-                u_name = user.get('username')
-                if u_name: identifier = f"marzban_{u_name}"
+        for user in panel_users:
+            identifier = None
+            uuid = None
             
+            # --- منطق شناسایی و ادغام اولیه ---
+            if panel_type in ['hiddify', 'remnawave']:
+                # برای این پنل‌ها، شناسه همان UUID است
+                uuid = user.get('uuid')
+                identifier = uuid
+            elif panel_type == 'marzban':
+                # برای مرزبان شناسه موقت می‌سازیم
+                username = user.get('username')
+                identifier = f"marzban_{username}"
+                uuid = None 
+
             if not identifier: continue
             
+            # ایجاد ساختار کاربر اگر وجود ندارد
             if identifier not in all_users_map:
                 all_users_map[identifier] = {
                     'uuid': uuid,
                     'is_active': False, 'expire': None,
+                    'last_online': None,
                     'current_usage_GB': 0, 'usage_limit_GB': 0,
-                    'breakdown': {}, 'panels': set()
+                    'breakdown': {},
+                    'panels': set()
                 }
             
+            # آپدیت UUID اگر قبلاً نداشته (مثلاً در مرزبان)
             if uuid and not all_users_map[identifier].get('uuid'):
                  all_users_map[identifier]['uuid'] = uuid
 
-            # نرمال‌سازی حجم
+            # نرمال‌سازی حجم‌ها
             limit_gb = 0
             current_gb = 0
             if 'usage_limit_GB' in user:
@@ -106,22 +114,25 @@ async def fetch_all_users_from_panels() -> List[Dict[str, Any]]:
                 limit_gb = float(user['data_limit']) / (1024**3) if user['data_limit'] else 0
                 current_gb = float(user.get('used_traffic', 0)) / (1024**3) if user.get('used_traffic') else 0
 
-            all_users_map[identifier]['breakdown'][res['panel_name']] = {
+            # ذخیره جزئیات پنل
+            all_users_map[identifier]['breakdown'][panel_name] = {
                 "data": {**user, "usage_limit_GB": limit_gb, "current_usage_GB": current_gb},
-                "type": res['panel_type']
+                "type": panel_type
             }
-            all_users_map[identifier]['panels'].add(res['panel_name'])
+            all_users_map[identifier]['panels'].add(panel_name)
             
-            status = user.get('status', '').lower()
+            # جمع‌بندی آمار
+            status = str(user.get('status', '')).lower()
             is_active = status == 'active' or user.get('is_active', False)
             all_users_map[identifier]['is_active'] |= is_active
             all_users_map[identifier]['current_usage_GB'] += current_gb
             all_users_map[identifier]['usage_limit_GB'] += limit_gb
 
+            # مدیریت انقضا (کمترین انقضای معتبر)
             new_expire = user.get('expire')
-            if new_expire is not None:
-                curr = all_users_map[identifier]['expire']
-                if curr is None or (new_expire > 0 and new_expire < curr):
+            if new_expire:
+                curr_expire = all_users_map[identifier]['expire']
+                if curr_expire is None or (new_expire > 0 and new_expire < curr_expire):
                     all_users_map[identifier]['expire'] = new_expire
-    
+
     return _process_and_merge_user_data(all_users_map)
