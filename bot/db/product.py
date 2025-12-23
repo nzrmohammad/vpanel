@@ -102,6 +102,19 @@ class ProductDB:
 
     # --- مدیریت افزودنی‌ها (Addons) ---
 
+    async def create_addon(self, name: str, price: float, gb: float, days: int):
+        """ساخت یک محصول جدید"""
+        async with self.get_session() as session:
+            new_item = Addon(
+                name=name, 
+                price=price, 
+                extra_gb=gb, 
+                extra_days=days, 
+                is_active=True
+            )
+            session.add(new_item)
+            return new_item
+
     async def get_all_addons(self, active_only: bool = True) -> List[Dict[str, Any]]:
         """لیست بسته‌های افزودنی (حجم/زمان) را برمی‌گرداند."""
         async with self.get_session() as session:

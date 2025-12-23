@@ -7,6 +7,7 @@ import pytz
 
 from sqlalchemy import select, update, delete, func, desc, and_
 from sqlalchemy.exc import IntegrityError
+from bot.db.base import Badge
 
 # مدل‌ها را از فایل base وارد می‌کنیم
 from .base import (
@@ -23,6 +24,37 @@ class AchievementDB:
     این کلاس به عنوان Mixin طراحی شده تا متدهای آن روی کلاس اصلی DatabaseManager سوار شوند.
     فرض بر این است که `self` دارای متد `get_session` است (که در DatabaseManager وجود دارد).
     """
+
+    async def create_badge(self, code: str, name: str, icon: str, points: int, desc: str):
+        """تعریف یک نشان جدید"""
+        async with self.get_session() as session:
+            # بررسی تکراری نبودن
+            existing = await session.get(Badge, code)
+            if existing:
+                return None
+            
+            new_badge = Badge(
+                code=code, 
+                name=name, 
+                icon=icon, 
+                points=points, 
+                description=desc,
+                is_active=True
+            )
+            session.add(new_badge)
+            return new_badge
+
+    async def get_all_badges(self):
+        """دریافت تمام نشان‌ها"""
+        async with self.get_session() as session:
+            stmt = select(Badge).where(Badge.is_active == True)
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
+    async def get_badge(self, code: str):
+        """دریافت یک نشان خاص با کد"""
+        async with self.get_session() as session:
+            return await session.get(Badge, code)
 
     async def add_achievement(self, user_id: int, badge_code: str) -> bool:
         """یک دستاورد جدید برای کاربر ثبت می‌کند."""

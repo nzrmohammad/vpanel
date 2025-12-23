@@ -132,11 +132,17 @@ class AdminMenu(BaseMenu):
         kb = self.create_markup(row_width=2)
         
         for plan in plans:
+            # نمایش قیمت با جداکننده هزارگان
             btn_text = f"{plan['name']} ({int(plan['price']):,} T)"
             kb.add(self.btn(btn_text, f"admin:plan_details:{plan['id']}"))
 
+        # دکمه‌های مدیریتی
         kb.add(self.btn("🌍 مدیریت کشورها", "admin:cat_manage"))
         kb.add(self.btn("➕ افزودن پلن جدید", "admin:plan_add_start"))
+        
+        # ✅ دکمه جدید شما برای فروشگاه
+        kb.add(types.InlineKeyboardButton("🏪 مدیریت فروشگاه امتیاز", callback_data="admin:shop:main"))
+        
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb
 
@@ -567,7 +573,6 @@ class AdminMenu(BaseMenu):
             
         kb.row(self.btn("🔙 بازگشت به لیست پنل‌ها", f"admin:us_acc_p_list:{identifier}"))
         return kb
-    
 
     async def user_access_aggregated_menu(self, target_id, panels_data, user_panel_access):
         """منوی تجمیعی مدیریت دسترسی"""
@@ -600,3 +605,33 @@ class AdminMenu(BaseMenu):
         markup.add(types.InlineKeyboardButton("🔙 بازگشت به پروفایل", callback_data=f"admin:us:{target_id}"))
         
         return markup
+    
+    async def shop_management_menu(addons_list):
+        """منوی مدیریت محصولات فروشگاه"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        
+        # 1. لیست کردن محصولات موجود
+        if not addons_list:
+            keyboard.add(types.InlineKeyboardButton("❌ محصولی یافت نشد (لیست خالی)", callback_data="ignore"))
+        else:
+            for item in addons_list:
+                # فرمت: [نام محصول] | [قیمت] | [حذف]
+                # مثلا: 📦 15GB (30d) | 💰 150 | ❌
+                info_text = f"📦 {item.name} | 💰 {item.price}"
+                del_btn = types.InlineKeyboardButton("🗑 حذف", callback_data=f"admin:shop:del:{item.id}")
+                # دکمه‌ای که فقط اطلاعات را نمایش می‌دهد (بدون اکشن خاص)
+                info_btn = types.InlineKeyboardButton(info_text, callback_data="ignore")
+                
+                keyboard.row(info_btn, del_btn)
+
+        # 2. دکمه‌های کنترلی پایین
+        keyboard.add(types.InlineKeyboardButton("➕ افزودن محصول جدید", callback_data="admin:shop:add"))
+        keyboard.add(types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="admin:panel"))
+        
+        return keyboard
+
+    async def shop_cancel_menu():
+        """دکمه انصراف هنگام ساخت محصول"""
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:shop:cancel"))
+        return kb

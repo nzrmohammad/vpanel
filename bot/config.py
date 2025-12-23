@@ -45,49 +45,6 @@ TUTORIAL_LINKS = {
     }
 }
 
-# ✨ قالب‌های دسترسی بر اساس نوع پلن
-ACCESS_TEMPLATES = {
-    # --- پلن‌های تک کشوره ---
-    'de': {
-        'has_access_de': True, 'has_access_fr': False, 'has_access_tr': False, 
-        'has_access_us': False, 'has_access_ro': False, 'has_access_supp': False
-    },
-    'fr': {
-        'has_access_de': False, 'has_access_fr': True, 'has_access_tr': False, 
-        'has_access_us': False, 'has_access_ro': False, 'has_access_supp': False
-    },
-    'tr': {
-        'has_access_de': False, 'has_access_fr': False, 'has_access_tr': True, 
-        'has_access_us': False, 'has_access_ro': False, 'has_access_supp': False
-    },
-    'us': {
-        'has_access_de': False, 'has_access_fr': False, 'has_access_tr': False, 
-        'has_access_us': True, 'has_access_ro': False, 'has_access_supp': False
-    },
-    'ro': {
-        'has_access_de': False, 'has_access_fr': False, 'has_access_tr': False, 
-        'has_access_us': False, 'has_access_ro': True, 'has_access_supp': False
-    },
-    'fi': {
-        'has_access_de': False, 'has_access_fr': False, 'has_access_tr': False, 
-        'has_access_us': False, 'has_access_ro': False, 'has_access_supp': True
-    },
-
-    # --- پلن ترکیبی (آلمان، فرانسه، ترکیه) ---
-    'combined': {
-        'has_access_de': True, 'has_access_fr': True, 'has_access_tr': True, 
-        'has_access_us': False, 'has_access_ro': False,
-        'has_access_supp': False
-    },
-    
-    # --- قالب پیش‌فرض ---
-    # اگر پلنی خارج از دسته‌های بالا ساخته شود، همه دسترسی‌ها را فعال می‌کند
-    'default': {
-        'has_access_de': False, 'has_access_fr': False, 'has_access_tr': False, 
-        'has_access_us': False, 'has_access_ro': False, 'has_access_supp': False
-    }
-}
-
 # --- Emojis & Visuals ---
 EMOJIS = {
     "fire": "🔥", "chart": "📊", "warning": "⚠️", "error": "❌",

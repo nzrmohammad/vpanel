@@ -15,7 +15,7 @@ from .config import ADMIN_IDS
 from .admin_handlers import (
     user_management, reporting, broadcast, backup, group_actions,
     plan_management, panel_management, support, wallet as wallet_admin,
-    navigation, debug, settings
+    navigation, debug, settings, shop_management
 )
 
 logger = logging.getLogger(__name__)
@@ -179,6 +179,8 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_delete_confirm": panel_management.handle_panel_delete_confirm,
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
     "panel_set_cat": panel_management.handle_set_panel_category,
+
+    "shop": shop_management.handle_shop_callbacks,
 
     # User Management Actions
     "sg": user_management.handle_global_search_convo,
