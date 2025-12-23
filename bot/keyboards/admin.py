@@ -324,22 +324,47 @@ class AdminMenu(BaseMenu):
         )
         return kb
 
-    async def backup_selection_menu(self) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=2)
-        kb.add(
-            self.btn("📄 Hiddify Users", "admin:backup:hiddify"),
-            self.btn("📄 Marzban Users", "admin:backup:marzban")
-        )
-        kb.add(self.btn("🗄️ دیتابیس ربات (SQL)", "admin:backup:bot_db"))
-        kb.add(self.btn("🔙 بازگشت", "admin:panel"))
-        return kb
 
-    async def system_status_menu(self, panels: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب سرور برای چک کردن وضعیت سیستم"""
+    async def backup_selection_menu(self, panel_types: list, current_filter: str = 'all') -> types.InlineKeyboardMarkup:
+        """منوی انتخاب بکاپ (راست‌چین + MarkdownV2 Compatible)"""
         kb = self.create_markup(row_width=2)
-        for p in panels:
-            kb.add(self.btn(f"وضعیت {p['name']}", f"admin:health_check:{p['id']}"))
+        
+        # --- 1. بخش فیلترها (چیدمان معکوس برای نمایش صحیح در تلگرام) ---
+        # نمایش در تلگرام: [❌ غیرفعال] [✅ فعال] [👥 همه]
+        filters = [
+            ("❌ غیرفعال", "inactive"),
+            ("✅ فعال", "active"),
+            ("👥 همه", "all")
+        ]
+        
+        filter_btns = []
+        for label, code in filters:
+            if code == current_filter:
+                display = f"🔘 {label}"
+                cb = "noop" 
+            else:
+                display = label
+                cb = f"admin:backup_filter:{code}" 
+            
+            filter_btns.append(self.btn(display, cb))
+        
+        # افزودن دکمه‌های فیلتر در یک ردیف
+        kb.row(*filter_btns)
+        
+        # --- 2. بخش دکمه‌های پنل ---
+        panel_buttons = []
+        for p_type in panel_types:
+            display_name = p_type.capitalize()
+            # فرمت: admin:backup:{panel_type}:{filter}
+            panel_buttons.append(self.btn(f"📥 {display_name} (API)", f"admin:backup:{p_type}:{current_filter}"))
+            
+        if panel_buttons:
+            kb.add(*panel_buttons)
+            
+        # دکمه‌های ثابت
+        kb.add(self.btn("🗄️ دیتابیس ربات (SQL + JSON)", "admin:backup:bot_db"))
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
+        
         return kb
 
     # --- متدهای کمکی و متفرقه ---

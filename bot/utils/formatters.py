@@ -1,5 +1,7 @@
 # bot/utils/formatters.py
 import re
+import uuid
+from datetime import datetime, date
 from bot.config import PROGRESS_COLORS
 
 def bytes_to_gb(bytes_value: int) -> float:
@@ -37,20 +39,24 @@ def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
+def json_serializer(obj):
+    """تبدیل انواع داده‌های خاص (UUID, Datetime) به رشته برای JSON"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 def create_progress_bar(percent: float, length: int = 16) -> str:
     """خروجی: 🔴 88% ███████░░░ (قسمت پر در سمت چپِ نوار)"""
     percent = max(0, min(100, percent))
     
-    # تعیین رنگ
     if percent < 60: color = "🟢"
     elif percent < 85: color = "🟡"
     else: color = "🔴"
         
     filled = int(percent / 100 * length)
     
-    # جابه‌جایی: ابتدا قسمت پر (█) و سپس قسمت خالی (░)
     bar = ('█' * filled) + ('░' * (length - filled))
     
-    # چیدمان: عدد درصد را هم قبل از نوار (bar) قرار دادم تا در کنار قسمت پر باشد
-    # خروجی نهایی داخل کدبلاک: "88% ███░░"
     return f"\u200f{color} `{bar} {int(percent)}%`"
