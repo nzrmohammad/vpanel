@@ -1,7 +1,9 @@
 # bot/constants/shop.py
-ACHIEVEMENT_SHOP_ITEMS = {
-    "buy_7days":        {"name": "۷ روز", "cost": 150, "days": 7, "target": "all"},
-    "buy_30days":       {"name": "۳۰ روز", "cost": 450, "days": 30, "target": "all"},
-    "buy_de_15gb":      {"name": "۱۵ گیگ (🇩🇪)", "cost": 120, "gb": 15, "target": "de"},
-    # ... بقیه آیتم‌های فروشگاه را اینجا قرار دهید
+
+# --- سیستم وفاداری ---
+LOYALTY_REWARDS = {
+    3: {"gb": 6, "days": 3},   # هدیه در سومین تمدید
+    6: {"gb": 12, "days": 6},  # هدیه در ششمین تمدید
+    9: {"gb": 18, "days": 9},  # هدیه در نهمین تمدید
+    12: {"gb": 24, "days": 12} # هدیه در دوازدهمین تمدید
 }

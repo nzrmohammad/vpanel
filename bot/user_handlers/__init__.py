@@ -1,6 +1,6 @@
 from .account import *
 from .wallet import *
 from .settings import *
-from .various import *
+from .main_menu import *
 from .info import *
 from .feedback import *

@@ -2,11 +2,16 @@
 import logging
 from bot.user_handlers import (
     account,
+    main_menu,
     wallet,
     settings,
     info,
     feedback,
-    various
+    shop_actions,
+    support,
+    help,
+    achievements,
+    features
 )
 
 logger = logging.getLogger(__name__)
@@ -29,5 +34,10 @@ def register_user_handlers():
         settings,
         info,
         feedback,
-        various
+        main_menu,
+        shop_actions,
+        support,
+        help,
+        achievements,
+        features
     ]
