@@ -64,12 +64,6 @@ async def start_command(message: types.Message):
 # 2. هندلر ورود با کانفیگ (UUID Login)
 # =============================================================================
 
-# bot/user_handlers/main_menu.py
-
-# ... (ایمپورت‌های قبلی سرجای خود باشند) ...
-
-# تابع handle_uuid_login قبلی را پاک کنید و این را جایگزین کنید:
-
 @bot.message_handler(func=lambda m: (
     (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
     or _UUID_RE.match(m.text or "")
@@ -140,21 +134,40 @@ async def handle_uuid_login(message: types.Message):
 
                 # دریافت لیست اکانت‌ها برای نمایش نهایی
                 accounts = await db.uuids(user_id)
-                
-                # محاسبه درصد مصرف (برای زیبایی لیست)
                 if accounts:
                     for acc in accounts:
                         try:
+                            # تلاش برای دریافت اطلاعات از کش برای همه اکانت‌ها (نه فقط اکانت جدید)
                             u_str = str(acc['uuid'])
-                            # نکته: اگر بخواهید سریعتر باشد، می‌توانید از همان info استفاده کنید
-                            # اما چون لیست کلی است، شاید نیاز به رفرش باشد
-                            if u_str == uuid_str:
-                                acc['usage_percentage'] = info.get('usage_percentage', 0)
-                                acc['expire'] = info.get('expire')
+                            cached_info = await combined_handler.get_combined_user_info(u_str)
+                            
+                            if cached_info:
+                                # 1. تنظیم درصد مصرف
+                                acc['usage_percentage'] = cached_info.get('usage_percentage', 0)
+                                
+                                # 2. محاسبه دقیق روزهای باقی‌مانده (مشابه فایل account.py)
+                                raw_expire = cached_info.get('expire')
+                                if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
+                                    # تبدیل تایم‌استمپ به تعداد روز
+                                    from datetime import datetime
+                                    expire_dt = datetime.fromtimestamp(raw_expire)
+                                    now = datetime.now()
+                                    rem_days = (expire_dt - now).days
+                                    acc['expire'] = max(0, rem_days)
+                                elif raw_expire is not None:
+                                    # اگر خودش عدد کوچک بود (تعداد روز)
+                                    acc['expire'] = raw_expire
+                                else:
+                                    acc['expire'] = None
                             else:
-                                # برای بقیه اکانت‌ها فعلاً صفر یا کش (بهینه سازی سرعت)
-                                acc['usage_percentage'] = 0 
-                        except: pass
+                                # اگر در کش نبود (مثلاً کش هنوز آپدیت نشده)
+                                acc['usage_percentage'] = 0
+                                acc['expire'] = None
+                                
+                        except Exception as e:
+                            logger.error(f"Error calculating stats for menu: {e}")
+                            acc['usage_percentage'] = 0
+                            acc['expire'] = None
                 
                 # ساخت منوی لیست اکانت‌ها
                 markup = await user_menu.accounts(accounts, lang)
