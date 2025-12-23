@@ -266,25 +266,22 @@ async def do_spin_handler(call: types.CallbackQuery):
     try:
         await bot.edit_message_text("🎰 Spinning... 🎲", call.message.chat.id, call.message.message_id)
         time.sleep(1.0) 
-    except:
-        pass
+    except: pass
 
     reward = random.choices(REWARDS_CONFIG, weights=[r['weight'] for r in REWARDS_CONFIG], k=1)[0]
     result_msg = ""
     
     if reward['type'] == "none":
         result_msg = f"😢 Oh! {reward['name']}\nMaybe next time."
-        
     elif reward['type'] == "points":
         await db.add_achievement_points(user_id, reward['value'])
         result_msg = f"🎉 Congrats! You won:\n**{reward['name']}**"
-        
     elif reward['type'] == "volume":
         user_uuids = await db.uuids(user_id)
         if user_uuids:
-            first_uuid = user_uuids[0]['uuid']
+            # ✅ اصلاح: تبدیل UUID به رشته
+            first_uuid = str(user_uuids[0]['uuid'])
             success = await combined_handler.modify_user_on_all_panels(first_uuid, add_gb=reward['value'], add_days=0)
-            
             if success:
                 result_msg = f"🔥 Awesome! You won:\n**{reward['name']}**\n(Added to your service)"
             else:
@@ -297,7 +294,6 @@ async def do_spin_handler(call: types.CallbackQuery):
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🎲 Spin Again", callback_data="lucky_spin_menu"))
     kb.add(types.InlineKeyboardButton("🔙 Back to Shop", callback_data="shop:main"))
-    
     await _safe_edit(user_id, call.message.message_id, result_msg, reply_markup=kb, parse_mode="MarkdownV2")
 
 # =============================================================================
@@ -574,6 +570,32 @@ async def show_achievements_info(call: types.CallbackQuery):
 # 8. Achievement Shop
 # =============================================================================
 
+async def _get_shop_item(item_id: str):
+    """دریافت آیتم فقط از دیتابیس"""
+    try:
+        # حذف پیشوند db_ اگر وجود داشته باشد (برای سازگاری)
+        clean_id = str(item_id).replace("db_", "")
+        if not clean_id.isdigit():
+            return None
+            
+        real_id = int(clean_id)
+        
+        # دریافت مستقیم از دیتابیس
+        addon = await db.get_addon_by_id(real_id)
+        
+        if addon:
+            return {
+                "id": str(addon['id']),
+                "name": addon['name'],
+                "cost": int(addon['price']),  # قیمت همان امتیاز است
+                "gb": addon.get('extra_gb', 0),
+                "days": addon.get('extra_days', 0),
+                "target": "all"  # همه محصولات دیتابیس روی همه سرویس‌ها اعمال می‌شوند
+            }
+    except Exception as e:
+        logger.error(f"Error fetching shop item {item_id}: {e}")
+    return None
+
 @bot.callback_query_handler(func=lambda call: call.data == "shop:main")
 async def shop_main_handler(call: types.CallbackQuery):
     uid = call.from_user.id
@@ -581,16 +603,38 @@ async def shop_main_handler(call: types.CallbackQuery):
     points = user_data.get('achievement_points', 0) if user_data else 0
     access = await db.get_user_access_rights(uid)
     
+    final_items = []
+    try:
+        # ✅ فقط دریافت محصولات فعال از دیتابیس
+        db_addons = await db.get_all_addons(active_only=True)
+        
+        for addon in db_addons:
+            final_items.append({
+                "id": str(addon['id']),
+                "name": addon['name'],
+                "cost": int(addon['price']),
+                "gb": addon.get('extra_gb', 0),
+                "days": addon.get('extra_days', 0),
+                "target": "all"
+            })
+    except Exception as e:
+        logger.error(f"Error loading shop addons: {e}")
+    
     text = f"🛍️ *Shop*\nBalance: *{points} points*\n\nAvailable items:"
-    markup = await user_menu.achievement_shop_menu(points, access, list(ACHIEVEMENT_SHOP_ITEMS.values()))
+    
+    # ارسال لیست محصولات به کیبورد
+    markup = await user_menu.achievement_shop_menu(points, access, final_items)
     
     await _safe_edit(uid, call.message.message_id, text, reply_markup=markup, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("shop:confirm:"))
 async def shop_confirm_handler(call: types.CallbackQuery):
     item_id = call.data.split(":")[2]
-    item = ACHIEVEMENT_SHOP_ITEMS.get(item_id)
-    if not item: return
+    
+    item = await _get_shop_item(item_id)
+    if not item: 
+        await bot.answer_callback_query(call.id, "❌ آیتم یافت نشد یا حذف شده است.", show_alert=True)
+        return
 
     uid = call.from_user.id
     lang = await db.get_user_language(uid)
@@ -600,15 +644,21 @@ async def shop_confirm_handler(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id, "No active service.", show_alert=True)
         return
     
-    main_uuid = user_uuids[0]['uuid']
+    # ✅ اصلاح: تبدیل UUID به رشته
+    main_uuid = str(user_uuids[0]['uuid'])
     info_before = await combined_handler.get_combined_user_info(main_uuid)
     
+    if not info_before:
+         await bot.answer_callback_query(call.id, "❌ سرویس یافت نشد.", show_alert=True)
+         return
+
     info_after = copy.deepcopy(info_before)
     
     add_gb = item.get('gb', 0)
     add_days = item.get('days', 0)
     
-    info_after['usage_limit_GB'] += add_gb
+    if 'usage_limit_GB' in info_after:
+        info_after['usage_limit_GB'] += add_gb
     if info_after.get('expire') and add_days:
         info_after['expire'] += add_days
 
@@ -624,50 +674,50 @@ async def shop_confirm_handler(call: types.CallbackQuery):
     
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton("✅ Yes", callback_data=f"shop:exec:{item_id}"),
+        types.InlineKeyboardButton("✅ Yes", callback_data=f"shop:exec:{item['id']}"),
         types.InlineKeyboardButton("❌ No", callback_data="shop:main")
     )
     
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
+# 3. اصلاح هندلر اجرای خرید (Execute Purchase)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("shop:exec:"))
 async def shop_execute_handler(call: types.CallbackQuery):
-    item_key = call.data.split(":")[2]
-    item = ACHIEVEMENT_SHOP_ITEMS.get(item_key)
+    item_id = call.data.split(":")[2]
     uid = call.from_user.id
     
+    item = await _get_shop_item(item_id)
+    if not item:
+        await bot.answer_callback_query(call.id, "❌ آیتم نامعتبر.", show_alert=True)
+        return
+
     if await db.spend_achievement_points(uid, item['cost']):
         user_uuids = await db.uuids(uid)
         if user_uuids:
-            uuid = user_uuids[0]['uuid']
-            
-            target_type = None
-            t = item.get('target')
-            if t == 'de': target_type = 'hiddify'
-            elif t in ['fr', 'tr', 'us']: target_type = 'marzban'
+            # ✅ اصلاح: تبدیل UUID به رشته
+            uuid = str(user_uuids[0]['uuid'])
             
             success = await combined_handler.modify_user_on_all_panels(
                 identifier=uuid,
                 add_gb=item.get('gb', 0),
                 add_days=item.get('days', 0),
-                target_panel_type=target_type
+                target_panel_type=None
             )
             
             if success:
-                await db.log_shop_purchase(uid, item_key, item['cost'])
+                await db.log_shop_purchase(uid, item['id'], item['cost'])
                 await bot.answer_callback_query(call.id, "✅ Purchase successful.", show_alert=True)
                 await shop_main_handler(call)
                 try:
                     for aid in ADMIN_IDS:
-                        await bot.send_message(aid, f"🛍 User {uid} bought {item['name']}.")
+                        await bot.send_message(aid, f"🛍 User {uid} bought {item['name']} ({item['cost']} pts).")
                 except: pass
                 return
-
+        
         await db.add_achievement_points(uid, item['cost'])
-        await bot.answer_callback_query(call.id, "❌ Error applying reward.", show_alert=True)
+        await bot.answer_callback_query(call.id, "❌ Error applying reward. Points refunded.", show_alert=True)
     else:
         await bot.answer_callback_query(call.id, "❌ Insufficient balance.", show_alert=True)
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "coming_soon")
 async def coming_soon(call: types.CallbackQuery):

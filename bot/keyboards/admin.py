@@ -127,23 +127,55 @@ class AdminMenu(BaseMenu):
     # بخش مدیریت پلن‌ها (Plans)
     # ---------------------------------------------------------
 
-    async def plan_management_menu(self, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        """منوی مدیریت پلن‌ها"""
+    async def plan_management_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
+        """
+        منوی اصلی مدیریت پلن‌ها (نمایش لیست کشورها + دکمه‌های مدیریتی)
+        """
         kb = self.create_markup(row_width=2)
         
-        for plan in plans:
-            # نمایش قیمت با جداکننده هزارگان
-            btn_text = f"{plan['name']} ({int(plan['price']):,} T)"
-            kb.add(self.btn(btn_text, f"admin:plan_details:{plan['id']}"))
-
-        # دکمه‌های مدیریتی
-        kb.add(self.btn("🌍 مدیریت کشورها", "admin:cat_manage"))
-        kb.add(self.btn("➕ افزودن پلن جدید", "admin:plan_add_start"))
+        # 1. ساخت دکمه‌های کشورها (دسته‌بندی‌ها)
+        cat_buttons = []
+        for cat in categories:
+            # نمایش پرچم و نام کشور
+            btn_text = f"{cat['emoji']} {cat['name']}"
+            callback = f"admin:plan_show_category:{cat['code']}"
+            cat_buttons.append(self.btn(btn_text, callback))
         
-        # ✅ دکمه جدید شما برای فروشگاه
+        # افزودن دکمه‌های کشورها به کیبورد
+        if cat_buttons:
+            kb.add(*cat_buttons)
+
+        # 2. دکمه‌های مدیریتی
+        kb.row(
+            self.btn("🌍 مدیریت کشورها", "admin:cat_manage"),
+            self.btn("➕ افزودن پلن جدید", "admin:plan_add_start")
+        )
+        
+        # 3. دکمه جدید برای فروشگاه امتیاز
         kb.add(types.InlineKeyboardButton("🏪 مدیریت فروشگاه امتیاز", callback_data="admin:shop:main"))
         
-        kb.add(self.btn("🔙 بازگشت", "admin:panel"))
+        # 4. دکمه بازگشت
+        kb.add(self.btn("🔙 بازگشت به پنل", "admin:panel"))
+        
+        return kb
+
+    async def plan_type_selection_menu(self, categories: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب نوع پلن (ترکیبی یا اختصاصی کشورها) برای افزودن پلن جدید"""
+        kb = self.create_markup(row_width=2)
+        
+        # دکمه پلن ترکیبی (همه کشورها)
+        kb.add(self.btn("🚀 ترکیبی (همه سرورها)", "admin:plan_add_type:combined"))
+        
+        # دکمه برای هر کشور موجود
+        cat_btns = []
+        for cat in categories:
+            # ارسال کد کشور (مثلا de) به عنوان پارامتر
+            cat_btns.append(self.btn(f"{cat['emoji']} {cat['name']}", f"admin:plan_add_type:{cat['code']}"))
+            
+        if cat_btns:
+            kb.add(*cat_btns)
+            
+        kb.add(self.btn("🔙 بازگشت", "admin:plan_manage"))
         return kb
 
     # ---------------------------------------------------------
@@ -606,31 +638,43 @@ class AdminMenu(BaseMenu):
         
         return markup
     
-    async def shop_management_menu(addons_list):
-        """منوی مدیریت محصولات فروشگاه"""
+    async def shop_management_menu(self, addons_list):
+        """منوی لیست محصولات (کلیک برای جزئیات)"""
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         
-        # 1. لیست کردن محصولات موجود
         if not addons_list:
-            keyboard.add(types.InlineKeyboardButton("❌ محصولی یافت نشد (لیست خالی)", callback_data="ignore"))
+            keyboard.add(types.InlineKeyboardButton("❌ محصولی یافت نشد", callback_data="ignore"))
         else:
             for item in addons_list:
-                # فرمت: [نام محصول] | [قیمت] | [حذف]
-                # مثلا: 📦 15GB (30d) | 💰 150 | ❌
-                info_text = f"📦 {item.name} | 💰 {item.price}"
-                del_btn = types.InlineKeyboardButton("🗑 حذف", callback_data=f"admin:shop:del:{item.id}")
-                # دکمه‌ای که فقط اطلاعات را نمایش می‌دهد (بدون اکشن خاص)
-                info_btn = types.InlineKeyboardButton(info_text, callback_data="ignore")
+                # نمایش وضعیت با ایموجی
+                status_icon = "🟢" if item['is_active'] else "🔴"
+                btn_text = f"{status_icon} {item['name']} | 💰 {int(item['price'])}"
                 
-                keyboard.row(info_btn, del_btn)
+                # کلیک روی دکمه -> باز شدن جزئیات
+                callback = f"admin:shop:detail:{item['id']}"
+                keyboard.add(types.InlineKeyboardButton(btn_text, callback_data=callback))
 
-        # 2. دکمه‌های کنترلی پایین
         keyboard.add(types.InlineKeyboardButton("➕ افزودن محصول جدید", callback_data="admin:shop:add"))
         keyboard.add(types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="admin:panel"))
-        
         return keyboard
 
-    async def shop_cancel_menu():
+    async def shop_item_detail_menu(self, item):
+        """منوی جزئیات محصول (فعال‌سازی/حذف)"""
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        
+        # دکمه تغییر وضعیت
+        status_text = "فعال ✅" if item['is_active'] else "غیرفعال ❌"
+        kb.add(self.btn(f"وضعیت: {status_text}", f"admin:shop:toggle:{item['id']}"))
+        
+        # دکمه حذف
+        kb.add(self.btn("🗑 حذف محصول", f"admin:shop:del:{item['id']}"))
+        
+        # دکمه بازگشت به لیست
+        kb.add(self.btn("🔙 بازگشت به لیست", "admin:shop:main"))
+        return kb
+
+    # ✅ اصلاح شد: اضافه کردن self به عنوان آرگومان اول
+    async def shop_cancel_menu(self):
         """دکمه انصراف هنگام ساخت محصول"""
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:shop:cancel"))

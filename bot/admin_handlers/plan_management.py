@@ -25,28 +25,24 @@ async def _delete_user_message(msg: types.Message):
     except Exception:
         pass
 
+# ============================================================================
+# 1. بخش مدیریت پلن‌ها (منوی اصلی و نمایش لیست)
+# ============================================================================
+
 async def handle_plan_management_menu(call, params):
     """منوی اصلی مدیریت پلن‌های فروش"""
     uid, msg_id = call.from_user.id, call.message.message_id
+    
+    # دریافت لیست کشورها
     categories = await db.get_server_categories()
     
     prompt = (
         f"🗂️ *{escape_markdown('مدیریت پلن‌های فروش')}*\n\n"
-        f"{escape_markdown('لطفاً لوکیشن (کشور) مورد نظر را انتخاب کنید تا پلن‌های مربوط به آن نمایش داده شود:')}"
+        f"{escape_markdown('برای مشاهده پلن‌ها، لوکیشن (کشور) مورد نظر را انتخاب کنید و یا از دکمه‌های مدیریتی استفاده نمایید:')}"
     )
-    kb = types.InlineKeyboardMarkup(row_width=2)
     
-    buttons = []
-    for cat in categories:
-        buttons.append(
-            types.InlineKeyboardButton(f"{cat['emoji']} {cat['name']}", callback_data=f"admin:plan_show_category:{cat['code']}")
-        )
-    
-    if buttons:
-        kb.add(*buttons)
-        
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="admin:panel"))
-    
+    # استفاده از متد جدید که دکمه‌های فروشگاه و مدیریت کشورها را دارد
+    kb = await admin_menu.plan_management_menu(categories)    
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_show_plans_by_category(call, params):
@@ -116,7 +112,7 @@ async def handle_plan_details_menu(call, params):
         types.InlineKeyboardButton("🗑 حذف", callback_data=f"admin:plan_delete_confirm:{plan_id}"),
         types.InlineKeyboardButton("✏️ ویرایش", callback_data=f"admin:plan_edit_start:{plan_id}")
     )
-    return_cat = "combined" if is_combined else "germany" 
+    return_cat = "combined" if is_combined else (cats[0] if cats else "de")
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_show_category:{return_cat}"))
     
     await _safe_edit(uid, msg_id, "\n".join(details), reply_markup=kb, parse_mode="MarkdownV2")
@@ -150,7 +146,9 @@ async def handle_delete_plan_execute(call, params):
         else:
             await bot.answer_callback_query(call.id, "❌ خطا: پلن یافت نشد.")
 
-# --- Add Plan Flow ---
+# ============================================================================
+# 2. پروسه افزودن پلن جدید (Add Plan Flow)
+# ============================================================================
 
 async def handle_plan_add_start(call, params):
     """شروع افزودن پلن"""
@@ -160,43 +158,45 @@ async def handle_plan_add_start(call, params):
     admin_conversations[uid] = {
         'step': 'plan_add_name', 
         'msg_id': msg_id, 
-        'new_plan_data': {}
+        'new_plan_data': {},
+        'timestamp': time.time()
     }
     
     if pre_selected_cat:
+        # اگر از قبل کشوری انتخاب شده بود
         admin_conversations[uid]['new_plan_data']['allowed_categories'] = [pre_selected_cat]
-        # تنظیم هندلر مرحله بعد
         admin_conversations[uid]['next_handler'] = get_plan_add_name
         
         back_btn = types.InlineKeyboardMarkup().add(
             types.InlineKeyboardButton("✖️ لغو", callback_data=f"admin:plan_show_category:{pre_selected_cat}")
         )
-        
         await _safe_edit(uid, msg_id, "2️⃣ *نام پلن* را وارد کنید:", reply_markup=back_btn)
         
     else:
-        # اگر کتگوری انتخاب نشده، فقط پیام را ادیت میکنیم (کالبک دکمه‌ها هندل می‌شود)
+        # اگر کشوری انتخاب نشده، کیبورد انتخاب نوع پلن را نمایش بده
+        categories = await db.get_server_categories()
         admin_conversations[uid]['step'] = 'plan_add_type'
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        # فرض بر این است که دکمه‌های اینلاین در تابع get_plan_add_type پردازش می‌شوند
-        # اما چون اینجا فقط نمایش منو است، نیازی به next_handler نیست
+        
+        # استفاده از کیبورد جدید که در فایل admin.py ساختیم
+        kb = await admin_menu.plan_type_selection_menu(categories)
+        
         await _safe_edit(uid, msg_id, "1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
 
 async def get_plan_add_type(call, params):
+    """دریافت نوع پلن (ترکیبی یا کشور خاص)"""
     uid = call.from_user.id
     if uid not in admin_conversations: return
     
-    plan_type = params[0]
+    selected_type = params[0]
     allowed_cats = []
     
-    if plan_type == 'combined':
+    if selected_type == 'combined':
         async with db.get_session() as session:
             result = await session.execute(select(ServerCategory))
             allowed_cats = [c.code for c in result.scalars().all()]
             if not allowed_cats: allowed_cats = ['de', 'fr', 'tr', 'us']
     else:
-        mapping = {'germany': ['de'], 'france': ['fr'], 'turkey': ['tr']}
-        allowed_cats = mapping.get(plan_type, [])
+        allowed_cats = [selected_type]
 
     admin_conversations[uid]['new_plan_data']['allowed_categories'] = allowed_cats
     admin_conversations[uid]['step'] = 'plan_add_name'
@@ -213,11 +213,8 @@ async def get_plan_add_name(message: types.Message):
     
     admin_conversations[uid]['new_plan_data']['name'] = message.text.strip()
     admin_conversations[uid]['step'] = 'plan_add_volume'
-    
-    # تنظیم هندلر مرحله بعد
     admin_conversations[uid]['next_handler'] = get_plan_add_volume
     
-    # اصلاح متن برای جلوگیری از خطای پرانتز
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], "3️⃣ *حجم \(GB\)* را وارد کنید \(فقط عدد\):", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_add_volume(message: types.Message):
@@ -229,8 +226,6 @@ async def get_plan_add_volume(message: types.Message):
         vol = float(message.text.strip())
         admin_conversations[uid]['new_plan_data']['volume_gb'] = vol
         admin_conversations[uid]['step'] = 'plan_add_days'
-        
-        # تنظیم هندلر مرحله بعد
         admin_conversations[uid]['next_handler'] = get_plan_add_days
         
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], "4️⃣ *مدت زمان \(روز\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
@@ -246,8 +241,6 @@ async def get_plan_add_days(message: types.Message):
         days = int(message.text.strip())
         admin_conversations[uid]['new_plan_data']['days'] = days
         admin_conversations[uid]['step'] = 'plan_add_price'
-        
-        # تنظیم هندلر مرحله بعد
         admin_conversations[uid]['next_handler'] = get_plan_save
         
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], "5️⃣ *قیمت \(تومان\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
@@ -282,7 +275,9 @@ async def get_plan_save(message: types.Message):
         logger.error(f"Error saving plan: {e}")
         await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره.", reply_markup=admin_menu.admin_cancel_action("admin:plan_manage"))
 
-# --- Edit Plan Flow (Complete) ---
+# ============================================================================
+# 3. پروسه ویرایش پلن (Edit Plan Flow)
+# ============================================================================
 
 async def handle_plan_edit_start(call, params):
     """شروع ویرایش."""
@@ -297,12 +292,13 @@ async def handle_plan_edit_start(call, params):
             'step': 'edit_name',
             'msg_id': msg_id,
             'plan_id': plan_id,
-            'edit_data': {}
+            'edit_data': {},
+            'timestamp': time.time(),
+            'next_handler': get_plan_edit_name
         }
         
         prompt = f"نام فعلی: {plan.name}\n👇 *نام جدید* را وارد کنید (یا . بفرستید تا تغییر نکند):"
-        await _safe_edit(uid, msg_id, prompt, reply_markup=admin_menu.admin_cancel_action(f"admin:plan_details:{plan_id}"))
-        bot.register_next_step_handler(call.message, get_plan_edit_name)
+        await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action(f"admin:plan_details:{plan_id}"))
 
 async def get_plan_edit_name(message: types.Message):
     uid = message.from_user.id
@@ -333,7 +329,6 @@ async def get_plan_edit_volume(message: types.Message):
             return
 
     admin_conversations[uid]['step'] = 'edit_days'
-    # ✅ تنظیم هندلر بعدی
     admin_conversations[uid]['next_handler'] = get_plan_edit_days
     
     msg_text = "👇 *مدت زمان جدید \(روز\)* \(یا \. برای عدم تغییر\):"
@@ -357,23 +352,6 @@ async def get_plan_edit_days(message: types.Message):
     
     msg_text = "👇 *قیمت جدید \(تومان\)* \(یا \. برای عدم تغییر\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-
-async def get_plan_edit_days(message: types.Message):
-    uid = message.from_user.id
-    if uid not in admin_conversations: return
-    await _delete_user_message(message)
-    
-    txt = message.text.strip()
-    if txt != '.':
-        try:
-            admin_conversations[uid]['edit_data']['days'] = int(txt)
-        except:
-            await bot.send_message(uid, "❌ عدد صحیح وارد کنید.")
-            return
-
-    admin_conversations[uid]['step'] = 'edit_price'
-    await _safe_edit(uid, admin_conversations[uid]['msg_id'], "👇 *قیمت جدید (تومان)* (یا . برای عدم تغییر):", reply_markup=admin_menu.admin_cancel_action("admin:plan_manage"))
-    bot.register_next_step_handler(message, get_plan_edit_finish)
 
 async def get_plan_edit_finish(message: types.Message):
     uid = message.from_user.id
@@ -404,10 +382,9 @@ async def get_plan_edit_finish(message: types.Message):
     
     await _safe_edit(uid, msg_id, "✅ پلن با موفقیت ویرایش شد.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
 
-
-# ==========================================
-# مدیریت دسته‌بندی‌ها (کشورها)
-# ==========================================
+# ============================================================================
+# 4. مدیریت دسته‌بندی‌ها (کشورها)
+# ============================================================================
 
 async def handle_category_management_menu(call, params):
     """منوی لیست کشورها (دو ستونه)"""
@@ -531,10 +508,9 @@ async def handle_category_delete_execute(call, params):
     await bot.answer_callback_query(call.id, "✅ کشور با موفقیت حذف شد.")
     await handle_category_management_menu(call, [])
 
-# --- پروسه افزودن کشور ---
-# ==========================================
-# 1. بخش مدیریت دسته‌بندی‌ها (کشورها)
-# ==========================================
+# ============================================================================
+# 5. پروسه افزودن کشور جدید (Add Category Flow)
+# ============================================================================
 
 async def handle_category_add_start(call, params):
     """شروع پروسه افزودن کشور"""
@@ -550,7 +526,6 @@ async def handle_category_add_start(call, params):
     
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
     
-    # تغییر متن پیام برای راهنمایی کاربر
     msg_text = (
         "1️⃣ لطفاً *کد کوتاه* کشور را بفرستید \(مثلاً `nl`\)\.\n\n"
         "💡 *نکته هوشمند:* می‌توانید همین الان *ایموجی پرچم* \(مثلاً 🇳🇱\) را بفرستید تا کد و پرچم به صورت خودکار ثبت شوند\!"
@@ -569,27 +544,24 @@ async def get_cat_code(message: types.Message):
     code = extract_country_code_from_flag(raw_text)
     
     # اعتبارسنجی طول کد
-    if len(code) > 10: # کدهای کشور معمولا ۲ یا ۳ حرفی هستند
+    if len(code) > 10: 
         await bot.send_message(uid, "❌ کد وارد شده نامعتبر یا خیلی طولانی است. لطفاً مجدد تلاش کنید.")
         return
 
     admin_conversations[uid]['cat_data']['code'] = code
     
-    # --- قابلیت هوشمند: تشخیص پرچم ---
-    # اگر ورودی کاربر واقعاً یک پرچم بود، آن را ذخیره می‌کنیم تا بعداً نپرسیم
+    # تشخیص پرچم
     is_flag = len(raw_text) == 2 and all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in raw_text)
     if is_flag:
         admin_conversations[uid]['cat_data']['emoji'] = raw_text
-        admin_conversations[uid]['has_flag'] = True # فلگ برای اسکیپ مرحله بعد
+        admin_conversations[uid]['has_flag'] = True
     else:
         admin_conversations[uid]['has_flag'] = False
 
-    # رفتن به مرحله بعد (نام کشور)
     admin_conversations[uid]['step'] = 'cat_name'
     admin_conversations[uid]['next_handler'] = get_cat_name
     
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
-    
     msg_text = f"2️⃣ کد `{code}` ثبت شد\. حالا *نام فارسی* کشور را بفرستید \(مثلا `هلند`\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
@@ -606,7 +578,6 @@ async def get_cat_name(message: types.Message):
         admin_conversations[uid]['next_handler'] = get_cat_description
         
         back_kb = await admin_menu.cancel_action("admin:cat_manage")
-        
         saved_flag = admin_conversations[uid]['cat_data']['emoji']
         msg_text = (
             f"3️⃣ پرچم {saved_flag} قبلاً دریافت شد\.\n\n"
@@ -622,142 +593,6 @@ async def get_cat_name(message: types.Message):
         msg_text = "3️⃣ حالا یک *ایموجی پرچم* بفرستید \(مثلا 🇳🇱\):"
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
-# ==========================================
-# 2. بخش افزودن پلن (Add Plan)
-# ==========================================
-
-async def handle_plan_add_start(call, params):
-    """شروع افزودن پلن"""
-    uid, msg_id = call.from_user.id, call.message.message_id
-    pre_selected_cat = params[0] if params else None
-    
-    admin_conversations[uid] = {
-        'step': 'plan_add_name', 
-        'msg_id': msg_id, 
-        'new_plan_data': {},
-        'timestamp': time.time()  # ✅ افزودن timestamp
-    }
-    
-    if pre_selected_cat:
-        admin_conversations[uid]['new_plan_data']['allowed_categories'] = [pre_selected_cat]
-        # ✅ تنظیم هندلر بعدی
-        admin_conversations[uid]['next_handler'] = get_plan_add_name
-        
-        back_btn = types.InlineKeyboardMarkup().add(
-            types.InlineKeyboardButton("✖️ لغو", callback_data=f"admin:plan_show_category:{pre_selected_cat}")
-        )
-        
-        await _safe_edit(uid, msg_id, "2️⃣ *نام پلن* را وارد کنید:", reply_markup=back_btn)
-        
-    else:
-        admin_conversations[uid]['step'] = 'plan_add_type'
-        # در اینجا چون دکمه اینلاین است، هندلر بعدی روی دکمه ست شده (plan_add_type) و نیاز به next_handler متنی نیست
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        # دکمه‌ها را باید اینجا اضافه کنید یا اگر از قبل وجود دارند استفاده کنید. 
-        # (فرض بر این است که این بخش فقط نمایش منو است و کالبک دکمه‌ها جداگانه هندل می‌شود)
-        # برای جلوگیری از گیر کردن، اگر دکمه‌ها را ندارید باید اضافه کنید، اما طبق کد قبلی شما، اینجا فقط پیام ادیت می‌شود.
-        await _safe_edit(uid, msg_id, "1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
-
-async def get_plan_add_type(call, params):
-    uid = call.from_user.id
-    if uid not in admin_conversations: return
-    
-    plan_type = params[0]
-    allowed_cats = []
-    
-    if plan_type == 'combined':
-        async with db.get_session() as session:
-            result = await session.execute(select(ServerCategory))
-            allowed_cats = [c.code for c in result.scalars().all()]
-            if not allowed_cats: allowed_cats = ['de', 'fr', 'tr', 'us']
-    else:
-        mapping = {'germany': ['de'], 'france': ['fr'], 'turkey': ['tr']}
-        allowed_cats = mapping.get(plan_type, [])
-
-    admin_conversations[uid]['new_plan_data']['allowed_categories'] = allowed_cats
-    admin_conversations[uid]['step'] = 'plan_add_name'
-    
-    # ✅ تنظیم هندلر بعدی
-    admin_conversations[uid]['next_handler'] = get_plan_add_name
-    
-    await _safe_edit(uid, call.message.message_id, "2️⃣ *نام پلن* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-
-async def get_plan_add_name(message: types.Message):
-    uid = message.from_user.id
-    if uid not in admin_conversations: return
-    await _delete_user_message(message)
-    
-    admin_conversations[uid]['new_plan_data']['name'] = message.text.strip()
-    admin_conversations[uid]['step'] = 'plan_add_volume'
-    
-    # ✅ تنظیم هندلر بعدی
-    admin_conversations[uid]['next_handler'] = get_plan_add_volume
-    
-    msg_text = "3️⃣ *حجم \(GB\)* را وارد کنید \(فقط عدد\):"
-    await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-
-async def get_plan_add_volume(message: types.Message):
-    uid = message.from_user.id
-    if uid not in admin_conversations: return
-    await _delete_user_message(message)
-    
-    try:
-        vol = float(message.text.strip())
-        admin_conversations[uid]['new_plan_data']['volume_gb'] = vol
-        admin_conversations[uid]['step'] = 'plan_add_days'
-        
-        # ✅ تنظیم هندلر بعدی
-        admin_conversations[uid]['next_handler'] = get_plan_add_days
-        
-        msg_text = "4️⃣ *مدت زمان \(روز\)* را وارد کنید:"
-        await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-    except ValueError:
-        await bot.send_message(uid, "❌ لطفاً عدد معتبر وارد کنید.")
-
-async def get_plan_add_days(message: types.Message):
-    uid = message.from_user.id
-    if uid not in admin_conversations: return
-    await _delete_user_message(message)
-    
-    try:
-        days = int(message.text.strip())
-        admin_conversations[uid]['new_plan_data']['days'] = days
-        admin_conversations[uid]['step'] = 'plan_add_price'
-        
-        # ✅ تنظیم هندلر بعدی
-        admin_conversations[uid]['next_handler'] = get_plan_save
-        
-        msg_text = "5️⃣ *قیمت \(تومان\)* را وارد کنید:"
-        await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-    except ValueError:
-        await bot.send_message(uid, "❌ عدد صحیح وارد کنید.")
-
-# ==========================================
-# 3. بخش ویرایش پلن (Edit Plan)
-# ==========================================
-
-async def handle_plan_edit_start(call, params):
-    """شروع ویرایش"""
-    plan_id = int(params[0])
-    uid, msg_id = call.from_user.id, call.message.message_id
-    
-    async with db.get_session() as session:
-        plan = await session.get(Plan, plan_id)
-        if not plan: return
-        
-        safe_name = escape_markdown(plan.name)
-        admin_conversations[uid] = {
-            'step': 'edit_name',
-            'msg_id': msg_id,
-            'plan_id': plan_id,
-            'edit_data': {},
-            'timestamp': time.time(),  # ✅ افزودن timestamp
-            'next_handler': get_plan_edit_name # ✅ تنظیم هندلر
-        }
-        
-        prompt = f"نام فعلی: {safe_name}\n👇 *نام جدید* را وارد کنید \(یا \. بفرستید تا تغییر نکند\):"
-        await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action(f"admin:plan_details:{plan_id}"))
-
 async def get_cat_emoji(message: types.Message):
     uid = message.from_user.id
     if uid not in admin_conversations: return
@@ -766,14 +601,11 @@ async def get_cat_emoji(message: types.Message):
     emoji = message.text.strip()
     admin_conversations[uid]['cat_data']['emoji'] = emoji
     
-    # تنظیم مرحله بعدی: دریافت توضیحات
     admin_conversations[uid]['step'] = 'cat_desc'
     admin_conversations[uid]['next_handler'] = get_cat_description
     
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
-    
     msg_text = "4️⃣ \(اختیاری\) اگر توضیحی برای این کشور دارید بنویسید \(مثلا: *مخصوص همراه اول*\)\n\nاگر توضیحی ندارید نقطه `.` بفرستید:"
-    
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
 async def get_cat_description(message: types.Message):
@@ -784,45 +616,13 @@ async def get_cat_description(message: types.Message):
     text = message.text.strip()
     description = None if text == '.' else text
     
-    # دریافت داده‌ها و پایان مکالمه
     data = admin_conversations.pop(uid)
     cat = data['cat_data']
     msg_id = data['msg_id']
     
-    # ذخیره در دیتابیس
     await db.add_server_category(cat['code'], cat['name'], cat['emoji'], description)
     
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:cat_manage"))
 
-    # ✅ اصلاح متن: نقطه پایان جمله اسکیپ شد
     await _safe_edit(uid, msg_id, "✅ کشور جدید با موفقیت اضافه شد\.", reply_markup=kb)
-
-async def get_plan_save(message: types.Message):
-    uid = message.from_user.id
-    if uid not in admin_conversations: return
-    await _delete_user_message(message)
-    
-    data = admin_conversations.pop(uid)
-    plan_data = data['new_plan_data']
-    msg_id = data['msg_id']
-    
-    try:
-        price = float(message.text.strip())
-        async with db.get_session() as session:
-            new_plan = Plan(
-                name=plan_data['name'],
-                volume_gb=plan_data['volume_gb'],
-                days=plan_data['days'],
-                price=price,
-                allowed_categories=plan_data['allowed_categories'],
-                is_active=True
-            )
-            session.add(new_plan)
-            await session.commit()
-            
-        await _safe_edit(uid, msg_id, "✅ پلن جدید ساخته شد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")))
-    except Exception as e:
-        logger.error(f"Error saving plan: {e}")
-        await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره\.", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
-

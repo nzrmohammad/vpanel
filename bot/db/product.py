@@ -135,6 +135,26 @@ class ProductDB:
                 for a in addons
             ]
 
+    async def get_addon_by_id(self, addon_id: int) -> Optional[Dict[str, Any]]:
+        """دریافت اطلاعات یک محصول خاص"""
+        async with self.get_session() as session:
+            addon = await session.get(Addon, addon_id)
+            if addon:
+                return {
+                    "id": addon.id, "name": addon.name, "price": addon.price,
+                    "extra_gb": addon.extra_gb, "extra_days": addon.extra_days,
+                    "is_active": addon.is_active
+                }
+            return None
+
+    async def update_addon_status(self, addon_id: int, is_active: bool) -> bool:
+        """تغییر وضعیت فعال/غیرفعال محصول"""
+        async with self.get_session() as session:
+            stmt = update(Addon).where(Addon.id == addon_id).values(is_active=is_active)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
     async def add_addon(self, name: str, price: float, extra_gb: float = 0, extra_days: int = 0) -> bool:
         """یک بسته افزودنی جدید ایجاد می‌کند."""
         async with self.get_session() as session:
