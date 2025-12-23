@@ -257,36 +257,71 @@ class RemnawavePanel(BasePanel):
             logger.error(f"Remnawave add_user error: {e}")
             return None
         
-    # سایر متدها...
     async def get_user(self, identifier: str) -> Optional[dict]:
-        # روش اول: تلاش با استفاده از SDK
+        """
+        دریافت اطلاعات کاربر از رمنیو (با اصلاح خودکار تاریخ انقضای میلی‌ثانیه)
+        """
+        # --- روش اول: تلاش با استفاده از SDK ---
         try:
-            user = await self.client.users.get_user(identifier)
-            return self._normalize(user.model_dump())
-        except Exception:
-            # روش دوم: اگر SDK کار نکرد، درخواست مستقیم (Fallback)
-            try:
-                import httpx
-                async with httpx.AsyncClient() as client:
-                    url = f"{self.api_url}/api/users/{identifier}"
-                    headers = {
-                        "Authorization": f"Bearer {self.api_token}",
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                    resp = await client.get(url, headers=headers, timeout=10)
+            if hasattr(self, 'client') and self.client:
+                user = await self.client.users.get_user(identifier)
+                user_data = user.model_dump() if hasattr(user, 'model_dump') else user.__dict__
+                
+                # اصلاح تاریخ اگر میلی‌ثانیه باشد
+                if user_data.get("expiration") and user_data["expiration"] > 100_000_000_000:
+                    user_data["expiration"] = user_data["expiration"] / 1000
                     
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        # هندل کردن ساختار response wrapper
-                        if "response" in data:
-                            data = data["response"]
-                        return self._normalize(data)
-                    else:
-                        logger.error(f"Direct get_user failed: {resp.status_code} | {resp.text}")
-            except Exception as e:
-                logger.error(f"Direct get_user exception: {e}")
-            
+                return self._normalize(user_data)
+        except Exception:
+            pass
+
+        # --- روش دوم: درخواست مستقیم HTTP ---
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                base_url = self.api_url.rstrip('/')
+                url = f"{base_url}/api/users/{identifier}"
+                
+                headers = {
+                    "Authorization": f"Bearer {self.api_token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                }
+                
+                resp = await client.get(url, headers=headers, timeout=10)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict) and "response" in data:
+                        data = data["response"]
+                    
+                    # ✅ فیکس اصلی: تبدیل میلی‌ثانیه به ثانیه
+                    expire_val = data.get("expiration")
+                    if isinstance(expire_val, (int, float)):
+                        # اگر عدد بزرگتر از 100 میلیارد باشد، یعنی میلی‌ثانیه است
+                        if expire_val > 100_000_000_000: 
+                            expire_val = expire_val / 1000
+                    
+                    # ساخت دستی دیکشنری برای اطمینان از فرمت صحیح
+                    return {
+                        "uuid": data.get("uuid"),
+                        "name": data.get("username", "Unknown"),
+                        "usage_limit_GB": (data.get("trafficLimit", 0) or 0) / (1024**3),
+                        "usage_current_GB": (data.get("trafficUsed", 0) or 0) / (1024**3),
+                        "expire": expire_val, # استفاده از تاریخ اصلاح شده
+                        "status": "active" if data.get("status") == "active" else "disabled",
+                        "panel_url": self.panel_url
+                    }
+                
+                elif resp.status_code == 404:
+                    return None
+                    
+                else:
+                    logger.error(f"Direct get_user failed: {resp.status_code} | {resp.text}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"Direct get_user exception: {e}")
             return None
 
     async def get_all_users(self) -> List[dict]:
