@@ -887,3 +887,14 @@ class UserDB:
         except Exception as e:
             logger.error(f"DB Error (set_uuid_access_categories): {e}")
             return False
+        
+    async def has_ever_had_account(self, user_id: int) -> bool:
+        """
+        بررسی می‌کند که آیا کاربر تا به حال هیچ اکانتی (فعال یا حذف شده) داشته است؟
+        این متد برای جلوگیری از دریافت مجدد سرویس تست استفاده می‌شود.
+        """
+        async with self.get_session() as session:
+            # جستجو در جدول UserUUID بدون شرط is_active
+            stmt = select(UserUUID.id).where(UserUUID.user_id == user_id).limit(1)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none() is not None

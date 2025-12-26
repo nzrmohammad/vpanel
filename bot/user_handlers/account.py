@@ -9,6 +9,7 @@ from bot.language import get_string
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
 from datetime import datetime
+from bot.services import cache_manager
 import logging
 import asyncio
 
@@ -102,7 +103,7 @@ async def account_list_handler(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('acc_'))
 async def account_detail_handler(call: types.CallbackQuery):
-    """جزئیات یک اکانت خاص"""
+    """جزئیات یک اکانت خاص (با قابلیت آپدیت کش و دکمه حذف در صورت عدم وجود)"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     
@@ -115,9 +116,18 @@ async def account_detail_handler(call: types.CallbackQuery):
             return
         
         uuid_str = account['uuid']
+        
+        # تلاش اول برای دریافت اطلاعات از کش
         info = await combined_handler.get_combined_user_info(str(uuid_str))
         
+        # اگر پیدا نشد، کش را آپدیت کن و دوباره تلاش کن
+        if not info:
+            await bot.answer_callback_query(call.id, "🔄 در حال بروزرسانی اطلاعات...", show_alert=False)
+            await cache_manager.fetch_and_update_cache()
+            info = await combined_handler.get_combined_user_info(str(uuid_str))
+
         if info:
+            # نمایش اطلاعات اکانت
             info['db_id'] = acc_id 
             text = await user_formatter.profile_info(info, lang)
             markup = await user_menu.account_menu(acc_id, lang)
@@ -127,7 +137,18 @@ async def account_detail_handler(call: types.CallbackQuery):
                 reply_markup=markup, parse_mode='MarkdownV2'
             )
         else:
-            await bot.edit_message_text("❌ اطلاعات اکانت یافت نشد.", user_id, call.message.message_id)
+            # ✅✅✅ اضافه کردن دکمه حذف به پیام خطا ✅✅✅
+            error_text = "❌ اطلاعات اکانت در سرور یافت نشد. ممکن است حذف شده باشد.\n\nمی‌توانید این اکانت را از لیست خود پاک کنید:"
+            
+            markup = types.InlineKeyboardMarkup()
+            
+            # 1. دکمه حذف از دیتابیس ربات (با استفاده از هندلر موجود del_)
+            markup.add(types.InlineKeyboardButton("🗑 حذف از لیست ربات", callback_data=f"del_{acc_id}"))
+            
+            # 2. دکمه بازگشت
+            markup.add(user_menu.back_btn("manage", lang))
+            
+            await bot.edit_message_text(error_text, user_id, call.message.message_id, reply_markup=markup)
             
     except Exception as e:
         logger.error(f"Account Detail Error: {e}")
@@ -298,8 +319,9 @@ async def delete_account_confirm(call: types.CallbackQuery):
     # منوی تایید ساده
     kb = types.InlineKeyboardMarkup()
     kb.add(
-        types.InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"confirm_del_{acc_id}"),
-        types.InlineKeyboardButton("❌ خیر، پشیمون شدم", callback_data=f"acc_{acc_id}")
+        types.InlineKeyboardButton("❌ خیر، پشیمون شدم", callback_data=f"acc_{acc_id}"),
+        types.InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"confirm_del_{acc_id}")
+        
     )
     
     # متن فارسی شده

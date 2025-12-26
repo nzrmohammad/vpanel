@@ -13,13 +13,6 @@ from .base import (
     UserGeneratedConfig, UUIDPanelAccess
 )
 
-# ایمپورت ACCESS_TEMPLATES فقط برای استفاده از کلیدهای قدیمی در تبدیل
-try:
-    from ..config import ACCESS_TEMPLATES
-except ImportError:
-    ACCESS_TEMPLATES = {}
-    logging.warning("Could not import ACCESS_TEMPLATES from config.")
-
 logger = logging.getLogger(__name__)
 
 class PanelDB:
@@ -180,26 +173,6 @@ class PanelDB:
             return result.rowcount > 0
 
     # --- مدیریت دسترسی‌ها (Access Management) ---
-
-    async def apply_access_template(self, uuid_id: int, plan_category: str) -> bool:
-        """
-        قالب دسترسی قدیمی را به دسته‌بندی‌های جدید ترجمه کرده و اعمال می‌کند.
-        """
-        template = ACCESS_TEMPLATES.get(plan_category, ACCESS_TEMPLATES.get('default', {}))
-        if not template:
-            logging.error(f"Access template '{plan_category}' not found.")
-            return False
-
-        # استخراج دسته‌بندی‌های مجاز از کلیدهای قالب قدیمی
-        # مثلاً اگر 'has_access_de': True باشد، دسته 'de' را اضافه می‌کنیم.
-        allowed_categories = []
-        for key, value in template.items():
-            if value is True and key.startswith('has_access_'):
-                # تبدیل 'has_access_de' به 'de'
-                cat = key.replace('has_access_', '')
-                allowed_categories.append(cat)
-
-        return await self.grant_access_by_category(uuid_id, allowed_categories)
 
     async def grant_access_by_category(self, uuid_id: int, categories: List[str]) -> bool:
         """
