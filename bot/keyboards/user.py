@@ -414,3 +414,36 @@ class UserMenu(BaseMenu):
         cancel_text = get_string('btn_cancel_action', lang_code)
         kb.add(self.btn(f"✖️ {cancel_text}", back_callback))
         return kb
+    
+    async def language_selection_start(self) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب زبان مخصوص استارت (بدون تداخل با تنظیمات)"""
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn("🇺🇸 English", "start_lang:en"),
+            self.btn("🇮🇷 فارسی", "start_lang:fa")
+        )
+        return kb
+
+    async def auth_selection(self, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب روش ورود (شناسه یا اکانت جدید)"""
+        kb = self.create_markup(row_width=1)
+        kb.add(
+            self.btn(f"🔑 {get_string('login_with_uuid', lang_code)}", "auth:login"),
+            self.btn(f"🆕 {get_string('create_test_account', lang_code)}", "auth:new")
+        )
+        return kb
+
+    async def country_selection(self, categories: list, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی انتخاب کشور برای ساخت اکانت"""
+        kb = self.create_markup(row_width=2)
+        buttons = []
+        for cat in categories:
+            # cat شامل: code, name, emoji
+            text = f"{cat['emoji']} {cat['name']}"
+            buttons.append(self.btn(text, f"new_acc_country:{cat['code']}"))
+        
+        if buttons:
+            kb.add(*buttons)
+        
+        kb.add(self.back_btn("start_reset", lang_code)) # دکمه بازگشت به اول
+        return kb

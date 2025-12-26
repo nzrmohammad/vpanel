@@ -1,4 +1,12 @@
 {
+  "login_with_uuid": "🔑 Login with UUID",
+  "create_test_account": "🎁 Get Test Service",
+  "welcome_choose_option": "✅ Language set successfully.\n\nPlease select one of the options below to proceed:",
+  "select_country_prompt": "🌍 Please select your desired location for the test service:",
+  "processing_create": "⏳ Creating your test service... Please wait.",
+  "test_account_created": "✅ Your test service has been created successfully! You can see the details below.",
+  "send_uuid_prompt": "🔑 Please send your config UUID:",
+
   "start_prompt": "Welcome!\n\nPlease send your account UUID",
   "uuid_not_found": "UUID not found in the panel. Try again",
   "select_language": "Please select your preferred language:",
