@@ -545,6 +545,24 @@ class UserFormatter:
             f"\n`{escape_markdown(uuid_str)}`"
         ]
         return "\n".join(lines), "MarkdownV2"
+    
+
+    async def format_plan_btn(self, plan: dict, user_balance: float) -> str:
+        """
+        ساخت متن دکمه خرید پلن (تک ستونه)
+        فرمت: خرید نام (قیمت) علامت
+        """
+        price = plan.get('price', 0)
+        name = plan.get('name', 'Unknown')
+        price_str = "{:,.0f}".format(price)
+        
+        # اگر موجودی کافی است
+        if user_balance >= price:
+            # مثال: خرید سرویس آلمان (50,000) ✅
+            return f"خرید {name} ({price_str}) ✅"
+        else:
+            # مثال: سرویس آلمان (50,000) ❌
+            return f"{name} ({price_str}) ❌"
 
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:

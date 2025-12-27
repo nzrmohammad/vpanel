@@ -296,10 +296,10 @@ async def get_plan_save(message: types.Message):
             session.add(new_plan)
             await session.commit()
             
-        await _safe_edit(uid, msg_id, "✅ پلن جدید ساخته شد.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")))
+        await _safe_edit(uid, msg_id, "✅ پلن جدید ساخته شد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")))
     except Exception as e:
         logger.error(f"Error saving plan: {e}")
-        await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره.", reply_markup=admin_menu.admin_cancel_action("admin:plan_manage"))
+        await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره\.", reply_markup=admin_menu.admin_cancel_action("admin:plan_manage"))
 
 # ============================================================================
 # 3. پروسه ویرایش پلن (Edit Plan Flow)
@@ -323,7 +323,8 @@ async def handle_plan_edit_start(call, params):
             'next_handler': get_plan_edit_name
         }
         
-        prompt = f"نام فعلی: {plan.name}\n👇 *نام جدید* را وارد کنید (یا . بفرستید تا تغییر نکند):"
+        prompt = f"نام فعلی: {escape_markdown(plan.name)}\n👇 *نام جدید* را وارد کنید \(یا \. بفرستید تا تغییر نکند\):"
+        
         await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action(f"admin:plan_details:{plan_id}"))
 
 async def get_plan_edit_name(message: types.Message):
@@ -398,7 +399,7 @@ async def get_plan_edit_finish(message: types.Message):
             return
 
     if not changes:
-        await _safe_edit(uid, msg_id, "⚠️ هیچ تغییری اعمال نشد.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
+        await _safe_edit(uid, msg_id, "⚠️ هیچ تغییری اعمال نشد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
         return
 
     async with db.get_session() as session:
@@ -406,8 +407,7 @@ async def get_plan_edit_finish(message: types.Message):
         await session.execute(stmt)
         await session.commit()
     
-    await _safe_edit(uid, msg_id, "✅ پلن با موفقیت ویرایش شد.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
-
+    await _safe_edit(uid, msg_id, "✅ پلن با موفقیت ویرایش شد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
 # ============================================================================
 # 4. مدیریت دسته‌بندی‌ها (کشورها)
 # ============================================================================

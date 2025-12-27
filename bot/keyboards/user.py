@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from .base import BaseMenu, CATEGORY_META
 from ..language import get_string
 from bot.database import db
+from bot.formatters import user_formatter
 from ..config import (EMOJIS)
 
 class UserMenu(BaseMenu):
@@ -178,31 +179,29 @@ class UserMenu(BaseMenu):
         
         return kb
 
+
     async def plan_category_menu(self, lang_code: str, user_balance: float, plans: list) -> types.InlineKeyboardMarkup:
         """
-        نمایش لیست پلن‌های موجود در یک دسته‌بندی خاص
-        به همراه وضعیت موجودی کاربر
+        نمایش لیست پلن‌های موجود به صورت تک ستونه
         """
         kb = self.create_markup(row_width=1)
         
         # نمایش موجودی
         balance_str = "{:,.0f}".format(user_balance)
-        kb.add(self.btn(f"موجودی: {balance_str} تومان", "wallet:main"))
+        kb.row(self.btn(f"موجودی: {balance_str} تومان", "wallet:main"))
         
         for plan in plans:
-            price = plan.get('price', 0)
-            is_affordable = user_balance >= price
-            emoji = "✅" if is_affordable else "❌"
-            price_str = "{:,.0f}".format(price)
+            # فراخوانی تابع فرمتر (حتماً با await)
+            btn_text = await user_formatter.format_plan_btn(plan, user_balance)
             
-            btn_text = f"{emoji} {plan.get('name')} ({price_str} تومان)"
-            # ارسال ID پلن برای پردازش در هندلر
+            is_affordable = user_balance >= plan.get('price', 0)
             cb_data = f"wallet:buy_confirm:{plan['id']}" if is_affordable else "wallet:insufficient"
             
             kb.add(self.btn(btn_text, cb_data))
 
-        kb.add(self.btn(f"➕ {get_string('charge_wallet', lang_code)}", "wallet:charge"))
-        kb.add(self.back_btn("view_plans", lang_code))
+        kb.row(self.btn(f"➕ {get_string('charge_wallet', lang_code)}", "wallet:charge"))
+        kb.row(self.back_btn("view_plans", lang_code))
+        
         return kb
 
     async def settings(self, settings_dict: dict, lang_code: str, access: dict) -> types.InlineKeyboardMarkup:
