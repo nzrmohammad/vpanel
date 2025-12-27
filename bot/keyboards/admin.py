@@ -144,12 +144,6 @@ class AdminMenu(BaseMenu):
         # افزودن دکمه‌های کشورها به کیبورد
         if cat_buttons:
             kb.add(*cat_buttons)
-
-        # 2. دکمه‌های مدیریتی
-        kb.row(
-            self.btn("🌍 مدیریت دسته بندی کشورها", "admin:cat_manage"),
-            self.btn("➕ افزودن پلن جدید", "admin:plan_add_start")
-        )
         
         # 3. دکمه جدید برای فروشگاه امتیاز
         kb.add(types.InlineKeyboardButton("🏪 مدیریت فروشگاه امتیاز", callback_data="admin:shop:main"))
@@ -204,7 +198,7 @@ class AdminMenu(BaseMenu):
             kb.add(*panel_buttons)
             
         kb.row(
-            self.btn("🌍 مدیریت دسته بندی کشورها", "admin:cat_manage"),
+            self.btn("🌍 دسته بندی کشورها", "admin:cat_manage"),
             self.btn("➕ افزودن پنل", "admin:panel_add_start")
         )
         
@@ -467,8 +461,9 @@ class AdminMenu(BaseMenu):
         kb = self.create_markup(row_width=2)
         
         kb.add(
-            self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"),
-            self.btn("📋 لیست اتصالات موجود", "admin:mapping_list:0")
+            self.btn("📋 لیست اتصالات موجود", "admin:mapping_list:0"),
+            self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping")
+            
         )
         
         kb.add(self.btn("🔙 بازگشت به پنل", "admin:panel"))
