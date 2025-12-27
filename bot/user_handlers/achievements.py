@@ -59,14 +59,15 @@ async def show_achievements_page(call: types.CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "achievements:info")
 async def show_achievements_info(call: types.CallbackQuery):
-    """نمایش راهنمای دریافت مدال‌ها"""
+    """نمایش راهنمای دریافت مدال‌ها (اصلاح شده برای رفع خطای پارس)."""
     uid = call.from_user.id
     text = "ℹ️ *راهنمای نشان‌ها*\n\n"
     
     for code, info in ACHIEVEMENTS.items():
-        text += f"{info['icon']} *{escape_markdown(info['name'])}* ({info['points']} امتیاز):\n"
+        text += f"{info['icon']} *{escape_markdown(info['name'])}* \\({info['points']} امتیاز\\):\n"
         text += f"{escape_markdown(info['description'])}\n\n"
         
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="achievements"))
+    
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")

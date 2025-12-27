@@ -200,6 +200,7 @@
   "account_stats_title": "Account Stats",
   "label_name": "Name",
   "label_user_id": "User ID",
+  "referral_disabled_title": "System Disabled",
   "label_referral_code": "Referral Code",
   "label_registration_date": "Registration Date",
   "label_user_group": "User Group",

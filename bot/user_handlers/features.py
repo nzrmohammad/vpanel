@@ -9,6 +9,7 @@ from bot.database import db
 from bot.keyboards import user as user_menu
 from bot.utils.network import _safe_edit
 from bot.utils.formatters import escape_markdown
+from bot.utils.date_helpers import to_shamsi, days_until_next_birthday
 from bot.language import get_string
 from bot.formatters import user_formatter
 from bot.config import ADMIN_IDS
@@ -52,23 +53,47 @@ async def coming_soon(call: types.CallbackQuery):
 
 # --- 3. Birthday Gift ---
 def _fmt_birthday_info(user_data, lang_code):
+    """فرمت‌دهی اطلاعات تولد مطابق درخواست کاربر"""
     bday = user_data.get('birthday')
+    
+    # اگر به هر دلیلی تاریخ نبود (محض احتیاط)
     if not bday:
         return "تاریخ تولدی ثبت نشده است."
-    return f"🎂 تاریخ ثبت شده: {bday}"
+        
+    # محاسبه روزهای باقی‌مانده و تبدیل تاریخ به شمسی
+    days_left = days_until_next_birthday(bday)
+    shamsi_date = to_shamsi(bday, include_time=False)
+    
+    # متن دقیق درخواستی
+    # نکته: از escape_markdown برای متغیرها استفاده می‌کنیم
+    line_sep = "`────────────────────`"
+    
+    text = (
+        f"🎁 *وضعیت هدیه تولد شما*\n"
+        f"{line_sep}\n"
+        f"تاریخ ثبت شده: *{escape_markdown(shamsi_date)}*\n"
+        f"شمارش معکوس: *{days_left}* روز تا تولد بعدی شما باقی مانده است\\.\n"
+        f"{line_sep}\n"
+        f"⚠️ نکته: تاریخ تولد ثبت شده قابل ویرایش نیست\\. در صورت ورود اشتباه، لطفاً به ادمین اطلاع دهید\\."
+    )
+    return text
 
 @bot.callback_query_handler(func=lambda call: call.data == "birthday_gift")
 async def handle_birthday_gift_request(call: types.CallbackQuery):
     uid = call.from_user.id
     msg_id = call.message.message_id
     lang_code = await db.get_user_language(uid)
+    
+    # دریافت اطلاعات تازه‌ی کاربر (مهم برای اینکه اگر تازه ثبت کرده، نمایش داده شود)
     user_data = await db.user(uid)
     
+    # بررسی اینکه آیا تاریخ تولد ست شده است یا خیر
     if user_data and user_data.get('birthday'):
         text = _fmt_birthday_info(user_data, lang_code=lang_code)
         kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back"))
         await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
     else:
+        # نمایش پرامپت دریافت تاریخ
         raw_text = get_string("prompt_birthday", lang_code)
         prompt = escape_markdown(raw_text).replace("YYYY/MM/DD", "`YYYY/MM/DD`")
         kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
@@ -96,12 +121,19 @@ async def process_birthday_date(message: types.Message):
         return
 
     try:
+        # تبدیل ورودی شمسی کاربر به میلادی برای ذخیره در دیتابیس
         gregorian_date = jdatetime.datetime.strptime(text, '%Y/%m/%d').togregorian().date()
         await db.update_user_birthday(uid, gregorian_date)
         
+        # نمایش پیام موفقیت
         success = escape_markdown(get_string("birthday_success", lang_code))
+        
+        # نکته: بعد از ثبت موفقیت‌آمیز، می‌توانیم دکمه‌ای بگذاریم که کاربر وضعیت را ببیند
+        # یا مستقیماً وضعیت را نشان دهیم. اینجا طبق کد قبلی پیام موفقیت نشان داده می‌شود.
         kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back"))
+        
         await _safe_edit(uid, original_msg_id, success, reply_markup=kb, parse_mode="MarkdownV2")
+        
     except ValueError:
         error = escape_markdown(get_string("birthday_invalid_format", lang_code))
         # خطا نمایش داده شود و دوباره منتظر بماند

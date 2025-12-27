@@ -279,11 +279,12 @@ async def edit_config_start(call: types.CallbackQuery, params: list):
     }
 
 async def process_config_save(message: types.Message):
-    """ذخیره نهایی"""
+    """ذخیره نهایی (اصلاح شده: ویرایش پیام قبلی + دکمه بازگشت)"""
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
     
+    # حذف پیام ارسالی کاربر (عدد یا متن جدید)
     try: await bot.delete_message(user_id, message.message_id)
     except: pass
     
@@ -291,37 +292,38 @@ async def process_config_save(message: types.Message):
     info = BOT_CONFIGS[key]
     value = message.text.strip()
     
+    # دکمه بازگشت برای مواقع خطا یا موفقیت
+    back_markup = types.InlineKeyboardMarkup()
+    back_markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:sys_conf:list:{info['category']}"))
+
     # اعتبارسنجی عددی
     if info['type'] == 'int':
         if not (value.lstrip('-').isdigit()):
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data=f"admin:sys_conf:list:{info['category']}"))
             err_text = "❌ خطا: لطفاً فقط *عدد* وارد کنید\\."
-            await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=markup, parse_mode='MarkdownV2')
+            await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=back_markup, parse_mode='MarkdownV2')
             return
             
-    # اعتبارسنجی زمان (فرمت HH:MM)
+    # اعتبارسنجی زمان
     if 'time' in key and ':' not in value:
-         markup = types.InlineKeyboardMarkup()
-         markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data=f"admin:sys_conf:list:{info['category']}"))
          err_text = "❌ خطا: لطفاً فرمت زمان را به صورت *HH:MM* (مثلاً 23:57) وارد کنید\\."
-         await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=markup, parse_mode='MarkdownV2')
+         await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=back_markup, parse_mode='MarkdownV2')
          return
 
+    # ذخیره در دیتابیس
     await db.set_config(key, value)
     del admin_conversations[user_id]
     
     safe_title = escape_markdown(info['title'])
-    msg_text = f"✅ تنظیمات *{safe_title}* ذخیره شد\\."
+    safe_val = escape_markdown(value)
     
-    await bot.send_message(user_id, msg_text, disable_notification=True, parse_mode='MarkdownV2')
+    # ✅ پیام موفقیت که جایگزین پیام قبلی می‌شود
+    msg_text = (
+        f"✅ تنظیمات *{safe_title}* با موفقیت ذخیره شد\\.\n\n"
+        f"🔹 مقدار جدید: `{safe_val}`"
+    )
     
-    class FakeCall:
-        def __init__(self, u_id, m_id):
-            self.from_user = type('User', (), {'id': u_id})()
-            self.message = type('Message', (), {'message_id': m_id})()
-            
-    await list_config_category(FakeCall(user_id, state['msg_id']), [info['category']])
+    # ویرایش پیام قبلی (msg_id ذخیره شده در state) به جای ارسال پیام جدید
+    await _safe_edit(user_id, state['msg_id'], msg_text, reply_markup=back_markup, parse_mode='MarkdownV2')
 
 # =========================================================
 # 3. بخش‌های قدیمی (کارت بانکی و کیف پول)

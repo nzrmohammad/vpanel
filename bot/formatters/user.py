@@ -418,27 +418,41 @@ class UserFormatter:
         return '\n'.join(lines)
 
     async def user_account_page(self, user_id: int, lang_code: str) -> str:
-        """صفحه حساب کاربری."""
+        """صفحه حساب کاربری (اصلاح شده برای نمایش حتی بدون سرویس فعال)."""
         async with db.get_session() as session:
             user_info = await session.get(User, user_id)
             user_uuids = await db.uuids(user_id)
-            if not user_info or not user_uuids:
+            
+            # فقط اگر اطلاعات پایه کاربر در دیتابیس نبود خطا بدهد
+            if not user_info:
                 return get_string("err_acc_not_found", lang_code)
             
-            first_uuid_record = user_uuids[0]
+            # مقادیر پیش‌فرض برای حالتی که کاربر هیچ سرویسی (UUID) ندارد
+            user_group = get_string("group_normal", lang_code)
+            registration_date = "---"
+            payments_count = 0
+            
+            # اگر سرویس (UUID) دارد، اطلاعات تکمیلی را استخراج کن
+            if user_uuids:
+                first_uuid_record = user_uuids[0]
+                
+                # دریافت تاریخچه پرداخت
+                payments = await db.get_user_payment_history(first_uuid_record['id'])
+                payments_count = len(payments)
+                
+                # بررسی وضعیت VIP
+                if first_uuid_record.get('is_vip'):
+                    user_group = get_string("group_vip", lang_code)
+                
+                # تاریخ ثبت نام (بر اساس تاریخ ایجاد اولین کانفیگ)
+                if first_uuid_record.get('created_at'):
+                    registration_date = to_shamsi(first_uuid_record['created_at'], include_time=False)
+            
+            # اطلاعات زیرمجموعه‌ها
             referred_list = await db.get_referred_users(user_id)
             referrals_count = len(referred_list)
             
-            # ✅ اصلاح شده: دسترسی به مقادیر دیکشنری با کروشه [] به جای نقطه
-            payments = await db.get_user_payment_history(first_uuid_record['id'])
-            payments_count = len(payments)
-            
-            # ✅ اصلاح شده: is_vip با کروشه
-            user_group = get_string("group_vip", lang_code) if first_uuid_record['is_vip'] else get_string("group_normal", lang_code)
-            
-            # ✅ اصلاح شده: created_at با کروشه
-            registration_date = to_shamsi(first_uuid_record['created_at'], include_time=False)
-            
+        # ساخت متن خروجی
         lines = [
             f"*{escape_markdown(get_string('user_account_page_title', lang_code))}*",
             "`──────────────────`",
@@ -467,38 +481,50 @@ class UserFormatter:
         )
 
     async def referral_page(self, user_id: int, bot_username: str, lang_code: str) -> str:
-        """صفحه رفرال."""
-        from bot.config import REFERRAL_REWARD_GB, REFERRAL_REWARD_DAYS
+        """صفحه رفرال (کاملاً داینامیک و متصل به پنل ادمین)."""
+        
+        # 1. بررسی فعال بودن سیستم
+        is_enabled_str = await db.get_config('enable_referral_system', 'True')
+        if str(is_enabled_str).lower() == 'false':
+            return f"⚠️ *{escape_markdown(get_string('referral_disabled_title', lang_code) or 'غیرفعال')}*\n\n{escape_markdown('این بخش موقتاً غیرفعال شده است.')}"
+
+        # 2. دریافت مقادیر پاداش از دیتابیس (با پیش‌فرض‌های پنل ادمین: 10 گیگ و 5 روز)
+        gb_reward = await db.get_config('referral_reward_gb', '1')
+        days_reward = await db.get_config('referral_reward_days', '1')
+
         referral_code = await db.get_or_create_referral_code(user_id)
         referral_link = f"https://t.me/{bot_username}?start={referral_code}"
+        
         referred_users = await db.get_referred_users(user_id)
         successful_referrals = [u for u in referred_users if u['referral_reward_applied']]
         pending_referrals = [u for u in referred_users if not u['referral_reward_applied']]
         
         unit_person = get_string('unit_person', lang_code)
-        successful_count_str = f"*{len(successful_referrals)} {escape_markdown(unit_person)}*"
-        pending_count_str = f"*{len(pending_referrals)} {escape_markdown(unit_person)}*"
         
         lines = [
             f"*{escape_markdown(get_string('referral_page_title', lang_code))}*",
             "`──────────────────`",
-            escape_markdown(get_string('referral_intro', lang_code).format(gb=REFERRAL_REWARD_GB, days=REFERRAL_REWARD_DAYS)),
+            # جایگذاری اعداد داینامیک در متن
+            escape_markdown(get_string('referral_intro', lang_code).format(gb=gb_reward, days=days_reward)),
             "\n",
             f"🔗 *{escape_markdown(get_string('referral_link_title', lang_code))}*",
             f"`{escape_markdown(referral_link)}`",
             "\n",
             f"🏆 *{escape_markdown(get_string('referral_status_title', lang_code))}*",
-            f" {get_string('referral_successful_count', lang_code)} {successful_count_str}",
-            f" {get_string('referral_pending_count', lang_code)} {pending_count_str}"
+            f" {get_string('referral_successful_count', lang_code)} *{len(successful_referrals)} {escape_markdown(unit_person)}*",
+            f" {get_string('referral_pending_count', lang_code)} *{len(pending_referrals)} {escape_markdown(unit_person)}*"
         ]
+        
         if successful_referrals:
             lines.append(f"\n✅ *{escape_markdown(get_string('referral_successful_list_title', lang_code))}*")
             for user in successful_referrals:
                 lines.append(f" `•` {escape_markdown(user['first_name'])}")
+        
         if pending_referrals:
             lines.append(f"\n⏳ *{escape_markdown(get_string('referral_pending_list_title', lang_code))}*")
             for user in pending_referrals:
                 lines.append(f" `•` {escape_markdown(user['first_name'])}")
+                
         return "\n".join(lines)
 
     async def inline_result(self, info: dict) -> tuple[str, str]:
