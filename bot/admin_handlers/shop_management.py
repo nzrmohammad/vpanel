@@ -1,46 +1,46 @@
-# bot/admin_handlers/shop_management.py
-
 import logging
+import time
 from telebot import types
-from bot.bot_instance import bot
 from bot.database import db
 from bot.keyboards import admin as admin_kb
+from bot.utils.network import _safe_edit
 
-# تنظیمات لاگ
 logger = logging.getLogger(__name__)
 
-# دیکشنری برای ذخیره وضعیت‌های مکالمه ساخت محصول
-# Format: {admin_id: {'step': 'STEP_NAME', 'data': {...}, 'msg_id': 123}}
-SHOP_CREATION_STATES = {}
+# متغیرهای سراسری برای نگهداری وضعیت و نمونه ربات
+bot = None
+admin_conversations = {}
+
+def initialize_shop_management_handlers(bot_instance, state_dict):
+    """
+    این تابع توسط admin_router صدا زده می‌شود تا وضعیت‌ها یکپارچه شوند.
+    """
+    global bot, admin_conversations
+    bot = bot_instance
+    admin_conversations = state_dict
+
+async def _delete_user_message(msg: types.Message):
+    """پیام کاربر را برای تمیز ماندن چت حذف می‌کند."""
+    try:
+        await bot.delete_message(msg.chat.id, msg.message_id)
+    except Exception:
+        pass
 
 async def handle_shop_callbacks(call: types.CallbackQuery, params: list):
-    """
-    توزیع‌کننده کال‌بک‌های مربوط به فروشگاه.
-    فرمت: admin:shop:ACTION:ARGS...
-    """
+    """مدیریت دکمه‌های منوی فروشگاه"""
     sub_action = params[0] if params else "main"
 
     if sub_action == "main":
         await open_shop_management(call)
-        
     elif sub_action == "detail":
-        # نمایش صفحه جزئیات محصول (برای حذف یا تغییر وضعیت)
         await show_shop_item_details(call, params)
-        
     elif sub_action == "toggle":
-        # تغییر وضعیت فعال/غیرفعال
         await toggle_shop_item_status(call, params)
-        
     elif sub_action == "del":
-        # حذف محصول
         await delete_shop_item(call, params)
-        
     elif sub_action == "add":
-        # شروع افزودن محصول
         await start_add_product(call)
-        
     elif sub_action == "cancel":
-        # انصراف از افزودن
         await cancel_shop_creation(call)
 
 # ============================================================================
@@ -48,34 +48,29 @@ async def handle_shop_callbacks(call: types.CallbackQuery, params: list):
 # ============================================================================
 
 async def open_shop_management(call: types.CallbackQuery):
-    """نمایش لیست تمام محصولات فروشگاه"""
+    """نمایش لیست محصولات"""
+    uid, msg_id = call.from_user.id, call.message.message_id
     try:
-        # دریافت همه محصولات (فعال و غیرفعال)
         addons = await db.get_all_addons(active_only=False)
-        
-        # ساخت کیبورد لیست
         markup = await admin_kb.shop_management_menu(addons)
         
         text = (
-            "🏪 **مدیریت فروشگاه امتیاز**\n\n"
-            "لیست محصولات فعلی در زیر نمایش داده شده است.\n"
-            "🟢 = فعال | 🔴 = غیرفعال\n\n"
-            "💡 **برای ویرایش (فعال/غیرفعال) یا حذف، روی نام محصول کلیک کنید.**"
+            "🏪 **مدیریت فروشگاه امتیاز**\n"
+            "➖➖➖➖➖➖➖➖➖➖\n"
+            "لیست بسته‌های قابل خرید برای کاربران:\n\n"
+            "🟢 = فعال (قابل خرید)\n"
+            "🔴 = غیرفعال (مخفی)\n\n"
+            "👇 __برای مدیریت هر محصول روی نام آن کلیک کنید.__"
         )
         
-        await bot.edit_message_text(
-            text, 
-            call.message.chat.id, 
-            call.message.message_id, 
-            reply_markup=markup, 
-            parse_mode="Markdown"
-        )
+        await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Error opening shop management: {e}")
-        await bot.answer_callback_query(call.id, "خطا در بارگذاری فروشگاه.")
+        logger.error(f"Error opening shop: {e}")
+        await bot.answer_callback_query(call.id, "خطا در بارگذاری.")
 
 async def show_shop_item_details(call: types.CallbackQuery, params: list):
-    """نمایش صفحه جزئیات یک محصول خاص"""
+    """نمایش جزئیات یک محصول"""
+    uid, msg_id = call.from_user.id, call.message.message_id
     try:
         addon_id = int(params[1])
         addon = await db.get_addon_by_id(addon_id)
@@ -85,208 +80,199 @@ async def show_shop_item_details(call: types.CallbackQuery, params: list):
             await open_shop_management(call)
             return
 
-        status_text = "فعال ✅" if addon['is_active'] else "غیرفعال ❌"
+        status_icon = "✅ فعال" if addon['is_active'] else "❌ غیرفعال"
         
         text = (
-            f"📦 **جزئیات محصول**\n\n"
+            f"📦 **مدیریت محصول**\n"
+            f"➖➖➖➖➖➖➖➖➖➖\n\n"
             f"🏷 **نام:** `{addon['name']}`\n"
-            f"💰 **قیمت:** `{int(addon['price']):,}` امتیاز\n"
-            f"📊 **حجم اضافه:** `{addon['extra_gb']}` GB\n"
-            f"⏳ **روز اضافه:** `{addon['extra_days']}` روز\n"
-            f"📡 **وضعیت فعلی:** {status_text}\n\n"
-            f"👇 عملیات مورد نظر را انتخاب کنید:"
+            f"💎 **قیمت:** `{int(addon['price']):,}` امتیاز\n"
+            f"📥 **حجم:** `{addon['extra_gb']}` گیگابایت\n"
+            f"📅 **زمان:** `{addon['extra_days']}` روز\n\n"
+            f"📡 **وضعیت:** {status_icon}"
         )
         
-        # استفاده از کیبورد جزئیات (که دکمه‌های تغییر وضعیت و حذف دارد)
         markup = await admin_kb.shop_item_detail_menu(addon)
+        await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="Markdown")
         
-        await bot.edit_message_text(
-            text,
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
     except Exception as e:
         logger.error(f"Error showing details: {e}")
-        await bot.answer_callback_query(call.id, "خطا در نمایش جزئیات.")
 
 # ============================================================================
-# 2. عملیات روی محصولات (تغییر وضعیت / حذف)
+# 2. عملیات (تغییر وضعیت / حذف)
 # ============================================================================
 
 async def toggle_shop_item_status(call: types.CallbackQuery, params: list):
-    """تغییر وضعیت (Active/Inactive)"""
     try:
         addon_id = int(params[1])
         addon = await db.get_addon_by_id(addon_id)
-        
         if addon:
             new_status = not addon['is_active']
             await db.update_addon_status(addon_id, new_status)
-            
-            msg = "فعال شد ✅" if new_status else "غیرفعال شد ❌"
-            await bot.answer_callback_query(call.id, f"محصول {msg}")
-            
-            # بازگشت به صفحه جزئیات برای دیدن تغییر
+            msg = "فعال شد 🟢" if new_status else "غیرفعال شد 🔴"
+            await bot.answer_callback_query(call.id, msg)
             await show_shop_item_details(call, params)
-        else:
-            await bot.answer_callback_query(call.id, "محصول یافت نشد.")
     except Exception as e:
-        logger.error(f"Error toggling status: {e}")
+        logger.error(f"Error toggle: {e}")
 
 async def delete_shop_item(call: types.CallbackQuery, params: list):
-    """حذف محصول"""
     try:
         addon_id = int(params[1])
-        
         if await db.delete_addon(addon_id):
-            await bot.answer_callback_query(call.id, "✅ محصول با موفقیت حذف شد.")
-            # بازگشت به لیست اصلی
+            await bot.answer_callback_query(call.id, "🗑 محصول حذف شد.")
             await open_shop_management(call)
         else:
-            await bot.answer_callback_query(call.id, "❌ خطا: محصول یافت نشد.", show_alert=True)
-            
+            await bot.answer_callback_query(call.id, "خطا در حذف.")
     except Exception as e:
-        logger.error(f"Error deleting addon: {e}")
-        await bot.answer_callback_query(call.id, "❌ خطای سیستمی.", show_alert=True)
+        logger.error(f"Error delete: {e}")
 
 # ============================================================================
-# 3. پروسه افزودن محصول جدید (Add Product Flow)
+# 3. پروسه افزودن محصول (State-Based)
 # ============================================================================
 
 async def start_add_product(call: types.CallbackQuery):
-    """شروع ویزارد افزودن محصول"""
-    admin_id = call.from_user.id
+    """شروع پروسه افزودن محصول"""
+    uid, msg_id = call.from_user.id, call.message.message_id
     
-    # تنظیم وضعیت اولیه
-    msg = await bot.edit_message_text(
-        text="📝 **قدم اول:**\n\nلطفاً **نام محصول** را وارد کنید:\n(مثال: 15 گیگ آلمان - 1 ماهه)",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=await admin_kb.shop_cancel_menu(),
-        parse_mode="Markdown"
+    # تنظیم وضعیت در دیکشنری اصلی ربات
+    admin_conversations[uid] = {
+        'step': 'shop_add_name',
+        'msg_id': msg_id,
+        'new_shop_data': {},
+        'timestamp': time.time(),
+        'next_handler': get_shop_add_name  # اشاره‌گر به تابع مرحله بعد
+    }
+    
+    text = (
+        "🛍 **افزودن محصول جدید** (مرحله 1/4)\n"
+        "➖➖➖➖➖➖➖➖➖➖\n\n"
+        "1️⃣ **نام محصول** را وارد کنید:\n"
+        "_(مثال: 10 گیگابایت - یک ماهه)_"
     )
     
-    SHOP_CREATION_STATES[admin_id] = {
-        "step": "WAIT_NAME",
-        "data": {},
-        "msg_id": msg.message_id
-    }
+    await _safe_edit(uid, msg_id, text, reply_markup=await admin_kb.shop_cancel_menu(), parse_mode="Markdown")
 
 async def cancel_shop_creation(call: types.CallbackQuery):
-    """لغو عملیات ساخت محصول"""
+    """انصراف از ساخت"""
     uid = call.from_user.id
-    if uid in SHOP_CREATION_STATES:
-        del SHOP_CREATION_STATES[uid]
+    if uid in admin_conversations:
+        del admin_conversations[uid]
     
     await bot.answer_callback_query(call.id, "عملیات لغو شد.")
-    # بازگشت به لیست محصولات
     await open_shop_management(call)
 
-async def process_shop_steps(message: types.Message):
-    """
-    هندلر مراحل متنی (Text Step Handler).
-    این تابع باید از طریق یک مسیج هندلر کلی در admin_router صدا زده شود.
-    """
-    admin_id = message.from_user.id
-    if admin_id not in SHOP_CREATION_STATES:
-        return
+# --- هندلرهای مراحل (Step Handlers) ---
 
-    state = SHOP_CREATION_STATES[admin_id]
-    step = state["step"]
-    chat_id = message.chat.id
+async def get_shop_add_name(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
     
-    # حذف پیام کاربر برای تمیز ماندن چت
+    name = message.text.strip()
+    admin_conversations[uid]['new_shop_data']['name'] = name
+    admin_conversations[uid]['step'] = 'shop_add_price'
+    admin_conversations[uid]['next_handler'] = get_shop_add_price
+    
+    msg_id = admin_conversations[uid]['msg_id']
+    text = (
+        f"🛍 **افزودن محصول جدید** (مرحله 2/4)\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"🏷 نام: **{name}**\n\n"
+        f"2️⃣ **قیمت** را وارد کنید (تعداد امتیاز):\n"
+        f"_(فقط عدد وارد کنید، مثلا: 500)_"
+    )
+    await _safe_edit(uid, msg_id, text, reply_markup=await admin_kb.shop_cancel_menu(), parse_mode="Markdown")
+
+async def get_shop_add_price(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
     try:
-        await bot.delete_message(chat_id, message.message_id)
-    except: pass
-
-    # --- مرحله ۱: دریافت نام ---
-    if step == "WAIT_NAME":
-        name = message.text.strip()
-        state["data"]["name"] = name
-        state["step"] = "WAIT_PRICE"
+        price = float(message.text.strip())
+        admin_conversations[uid]['new_shop_data']['price'] = price
+        admin_conversations[uid]['step'] = 'shop_add_gb'
+        admin_conversations[uid]['next_handler'] = get_shop_add_gb
         
-        await bot.edit_message_text(
-            f"✅ نام: **{name}**\n\n💰 **قدم دوم:**\nلطفاً **قیمت (امتیاز مورد نیاز)** را وارد کنید:\n(فقط عدد)",
-            chat_id, state["msg_id"],
-            reply_markup=await admin_kb.shop_cancel_menu(),
-            parse_mode="Markdown"
+        msg_id = admin_conversations[uid]['msg_id']
+        name = admin_conversations[uid]['new_shop_data']['name']
+        
+        text = (
+            f"🛍 **افزودن محصول جدید** (مرحله 3/4)\n"
+            f"➖➖➖➖➖➖➖➖➖➖\n"
+            f"🏷 نام: **{name}**\n"
+            f"💎 قیمت: `{int(price)}` امتیاز\n\n"
+            f"3️⃣ **حجم اضافه (گیگابایت)** را وارد کنید:\n"
+            f"_(اگر این بسته حجم ندارد، عدد 0 را بفرستید)_"
         )
+        await _safe_edit(uid, msg_id, text, reply_markup=await admin_kb.shop_cancel_menu(), parse_mode="Markdown")
+    except ValueError:
+        # در صورت خطا در فرمت، پیامی ارسال نمی‌کنیم یا می‌توانیم یک نوتیفیکیشن موقت بدهیم
+        pass
 
-    # --- مرحله ۲: دریافت قیمت ---
-    elif step == "WAIT_PRICE":
-        if not message.text.isdigit():
-            # نمایش خطا موقت (یا ادیت پیام اصلی)
-            # اینجا برای سادگی پیام خطا نمیفرستیم تا فلو به هم نریزد، فقط نادیده میگیریم
-            # یا می توانیم پیام اصلی را ادیت کنیم که "عدد وارد کن"
-            return 
-
-        state["data"]["price"] = float(message.text)
-        state["step"] = "WAIT_GB"
+async def get_shop_add_gb(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
+    try:
+        gb = float(message.text.strip())
+        admin_conversations[uid]['new_shop_data']['gb'] = gb
+        admin_conversations[uid]['step'] = 'shop_add_days'
+        admin_conversations[uid]['next_handler'] = get_shop_add_days
         
-        await bot.edit_message_text(
-            f"✅ قیمت: {message.text}\n\n📊 **قدم سوم:**\nلطفاً **حجم اضافه (گیگابایت)** را وارد کنید:\n(عدد 0 اگر حجم ندارد)",
-            chat_id, state["msg_id"],
-            reply_markup=await admin_kb.shop_cancel_menu(),
-            parse_mode="Markdown"
+        msg_id = admin_conversations[uid]['msg_id']
+        data = admin_conversations[uid]['new_shop_data']
+        
+        text = (
+            f"🛍 **افزودن محصول جدید** (مرحله 4/4)\n"
+            f"➖➖➖➖➖➖➖➖➖➖\n"
+            f"🏷 نام: **{data['name']}**\n"
+            f"💎 قیمت: `{int(data['price'])}`\n"
+            f"📥 حجم: `{gb}` GB\n\n"
+            f"4️⃣ **تعداد روز اضافه** را وارد کنید:\n"
+            f"_(اگر این بسته تمدید زمانی ندارد، عدد 0 را بفرستید)_"
         )
+        await _safe_edit(uid, msg_id, text, reply_markup=await admin_kb.shop_cancel_menu(), parse_mode="Markdown")
+    except ValueError:
+        pass
 
-    # --- مرحله ۳: دریافت حجم ---
-    elif step == "WAIT_GB":
-        try:
-            val = float(message.text)
-        except: return 
-
-        state["data"]["gb"] = val
-        state["step"] = "WAIT_DAYS"
+async def get_shop_add_days(message: types.Message):
+    uid = message.from_user.id
+    if uid not in admin_conversations: return
+    await _delete_user_message(message)
+    
+    try:
+        days = int(message.text.strip())
         
-        await bot.edit_message_text(
-            f"✅ حجم: {val} GB\n\n⏳ **قدم آخر:**\nلطفاً **تعداد روز اضافه** را وارد کنید:\n(عدد 0 اگر روز ندارد)",
-            chat_id, state["msg_id"],
-            reply_markup=await admin_kb.shop_cancel_menu(),
-            parse_mode="Markdown"
+        # دریافت داده‌ها و ذخیره نهایی
+        data = admin_conversations.pop(uid) # پاک کردن استیت
+        shop_data = data['new_shop_data']
+        msg_id = data['msg_id']
+        
+        await db.add_addon(
+            name=shop_data['name'],
+            price=shop_data['price'],
+            extra_gb=shop_data['gb'],
+            extra_days=days
         )
-
-    # --- مرحله ۴: دریافت روز و ذخیره نهایی ---
-    elif step == "WAIT_DAYS":
-        if not message.text.isdigit():
-            return
-
-        state["data"]["days"] = int(message.text)
         
-        # ذخیره در دیتابیس
-        d = state["data"]
-        try:
-            await db.add_addon(
-                name=d["name"],
-                price=d["price"],
-                extra_gb=d["gb"],
-                extra_days=d["days"]
-            )
-            
-            final_msg = (
-                f"✅ **محصول جدید با موفقیت ساخته شد!**\n\n"
-                f"📦 {d['name']}\n"
-                f"💰 {int(d['price'])} امتیاز\n"
-                f"📊 {d['gb']} GB | ⏳ {d['days']} روز"
-            )
-        except Exception as e:
-            logger.error(f"Error saving addon: {e}")
-            final_msg = f"❌ خطا در ذخیره محصول."
-
-        # پایان کار: حذف استیت
-        del SHOP_CREATION_STATES[admin_id]
+        final_text = (
+            "✅ **محصول با موفقیت ساخته شد!**\n"
+            "➖➖➖➖➖➖➖➖➖➖\n\n"
+            f"🏷 **{shop_data['name']}**\n"
+            f"💎 قیمت: {int(shop_data['price']):,} امتیاز\n"
+            f"📦 مشخصات: {shop_data['gb']} GB | {days} روز"
+        )
         
-        # ساخت دکمه بازگشت دستی
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔙 بازگشت به فروشگاه", callback_data="admin:shop:main"))
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:shop:main"))
         
-        # نمایش پیام نهایی
-        await bot.edit_message_text(
-            final_msg,
-            chat_id, state["msg_id"],
-            reply_markup=kb,
-            parse_mode="Markdown"
-        )
+        await _safe_edit(uid, msg_id, final_text, reply_markup=kb, parse_mode="Markdown")
+        
+    except ValueError:
+        pass
+    except Exception as e:
+        logger.error(f"Error saving shop item: {e}")
+        # اگر خطایی رخ داد، استیت را پاک می‌کنیم تا ادمین گیر نکند
+        if uid in admin_conversations: del admin_conversations[uid]

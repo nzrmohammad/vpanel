@@ -75,7 +75,7 @@ def register_admin_handlers(bot_instance, scheduler_instance):
     # Modules that need access to state
     modules_to_init = [
         user_management, plan_management, panel_management,
-        wallet_admin, support, settings
+        wallet_admin, support, settings, shop_management
     ]
     
     # Pass bot.context_state as the shared dictionary
