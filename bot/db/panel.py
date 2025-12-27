@@ -390,3 +390,26 @@ class PanelDB:
         random_pool = [tpl for tpl in all_templates if tpl.get('is_random_pool')]
         fixed_pool = [tpl for tpl in all_templates if not tpl.get('is_random_pool')]
         return random_pool, fixed_pool
+    
+    async def get_active_location_codes(self) -> set[str]:
+        """
+        لیست کدهای کشورهایی را برمی‌گرداند که حداقل یک پنل یا نود فعال دارند.
+        """
+        async with self.get_session() as session:
+            # 1. پیدا کردن کدهای پنل‌های فعال
+            stmt_panels = select(Panel.category).where(Panel.is_active == True)
+            result_panels = await session.execute(stmt_panels)
+            active_codes = set(code for code in result_panels.scalars().all() if code)
+
+            # 2. پیدا کردن کدهای نودهای فعال (به شرطی که پنل اصلی‌شان هم فعال باشد)
+            stmt_nodes = select(PanelNode.country_code).join(Panel).where(
+                and_(PanelNode.is_active == True, Panel.is_active == True)
+            )
+            result_nodes = await session.execute(stmt_nodes)
+            
+            # ادغام نتیجه‌ها
+            for code in result_nodes.scalars().all():
+                if code:
+                    active_codes.add(code)
+            
+            return active_codes

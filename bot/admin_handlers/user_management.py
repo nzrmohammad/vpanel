@@ -146,9 +146,11 @@ async def process_purge_user(message: types.Message):
     target_id = int(text)
     success = await db.purge_user_by_telegram_id(target_id)
     if success:
-        await _safe_edit(uid, msg_id, f"✅ کاربر {target_id} با موفقیت کامل پاکسازی شد.", reply_markup=await admin_menu.search_menu())
+        msg_text = escape_markdown(f"✅ کاربر {target_id} با موفقیت کامل پاکسازی شد.")
+        await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.search_menu())
     else:
-        await _safe_edit(uid, msg_id, "❌ کاربر یافت نشد یا خطا در حذف.", reply_markup=await admin_menu.search_menu())
+        msg_text = escape_markdown("❌ کاربر یافت نشد یا خطا در حذف.")
+        await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.search_menu())
 
 # ==============================================================================
 # 2. مدیریت و نمایش کاربر (User Profile)
@@ -229,8 +231,6 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
 
 # 3. افزودن کاربر جدید (Add User Flow)
-# ==============================================================================
-
 # ==================================================================
 #  User Creation Flow: Name -> UUID -> Limit -> Days -> [Tel -> Squad] -> Final
 # ==================================================================

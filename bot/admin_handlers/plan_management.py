@@ -33,12 +33,26 @@ async def handle_plan_management_menu(call, params):
     """منوی اصلی مدیریت پلن‌های فروش"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت لیست کشورها
+    # دریافت لیست کشورها و لیست فعال‌ها
     categories = await db.get_server_categories()
+    # فرض بر این است که تابع get_active_location_codes را در db/panel.py اضافه کرده‌اید
+    # اگر هنوز اضافه نکردید، این خط را کامنت کنید و active_codes را یک لیست خالی بگذارید
+    try:
+        active_codes = await db.get_active_location_codes()
+    except AttributeError:
+        # اگر تابع هنوز در دیتابیس نیست، برای جلوگیری از کرش موقتا همه را فعال فرض کن یا لیست خالی
+        active_codes = set(c['code'] for c in categories) 
+
+    # اصلاح دیکشنری categories برای نمایش وضعیت در دکمه‌ها
+    for cat in categories:
+        if cat['code'] not in active_codes:
+            # اضافه کردن علامت هشدار به نام کشورهایی که سرور ندارند
+            cat['name'] = f"{cat['name']} (⚠️ خالی)"
     
+    # اصلاح متن پیام (استفاده از escape_markdown برای متن جدید)
     prompt = (
         f"🗂️ *{escape_markdown('مدیریت پلن‌های فروش')}*\n\n"
-        f"{escape_markdown('برای مشاهده پلن‌ها، لوکیشن (کشور) مورد نظر را انتخاب کنید و یا از دکمه‌های مدیریتی استفاده نمایید:')}"
+        f"{escape_markdown('کشورهایی که با ⚠️ مشخص شده‌اند، هیچ سرور یا نود فعالی ندارند، اما می‌توانید برای آینده پلن بسازید.')}"
     )
     
     # استفاده از متد جدید که دکمه‌های فروشگاه و مدیریت کشورها را دارد
@@ -215,7 +229,7 @@ async def get_plan_add_name(message: types.Message):
     admin_conversations[uid]['step'] = 'plan_add_volume'
     admin_conversations[uid]['next_handler'] = get_plan_add_volume
     
-    await _safe_edit(uid, admin_conversations[uid]['msg_id'], "3️⃣ *حجم \(GB\)* را وارد کنید \(فقط عدد\):", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+    await _safe_edit(uid, admin_conversations[uid]['msg_id'], r"3️⃣ *حجم \(GB\)* را وارد کنید \(فقط عدد\):", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_add_volume(message: types.Message):
     uid = message.from_user.id
@@ -228,7 +242,7 @@ async def get_plan_add_volume(message: types.Message):
         admin_conversations[uid]['step'] = 'plan_add_days'
         admin_conversations[uid]['next_handler'] = get_plan_add_days
         
-        await _safe_edit(uid, admin_conversations[uid]['msg_id'], "4️⃣ *مدت زمان \(روز\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+        await _safe_edit(uid, admin_conversations[uid]['msg_id'], r"4️⃣ *مدت زمان \(روز\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
     except ValueError:
         await bot.send_message(uid, "❌ لطفاً عدد معتبر وارد کنید.")
 
@@ -243,7 +257,7 @@ async def get_plan_add_days(message: types.Message):
         admin_conversations[uid]['step'] = 'plan_add_price'
         admin_conversations[uid]['next_handler'] = get_plan_save
         
-        await _safe_edit(uid, admin_conversations[uid]['msg_id'], "5️⃣ *قیمت \(تومان\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+        await _safe_edit(uid, admin_conversations[uid]['msg_id'], r"5️⃣ *قیمت \(تومان\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
     except ValueError:
         await bot.send_message(uid, "❌ عدد صحیح وارد کنید.")
 
@@ -312,7 +326,7 @@ async def get_plan_edit_name(message: types.Message):
     admin_conversations[uid]['step'] = 'edit_volume'
     admin_conversations[uid]['next_handler'] = get_plan_edit_volume
     
-    msg_text = "👇 *حجم جدید \(GB\)* \(یا \. برای عدم تغییر\):"
+    msg_text = r"👇 *حجم جدید \(GB\)* \(یا \. برای عدم تغییر\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_edit_volume(message: types.Message):
@@ -331,7 +345,7 @@ async def get_plan_edit_volume(message: types.Message):
     admin_conversations[uid]['step'] = 'edit_days'
     admin_conversations[uid]['next_handler'] = get_plan_edit_days
     
-    msg_text = "👇 *مدت زمان جدید \(روز\)* \(یا \. برای عدم تغییر\):"
+    msg_text = r"👇 *مدت زمان جدید \(روز\)* \(یا \. برای عدم تغییر\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_edit_days(message: types.Message):
@@ -350,7 +364,7 @@ async def get_plan_edit_days(message: types.Message):
     admin_conversations[uid]['step'] = 'edit_price'
     admin_conversations[uid]['next_handler'] = get_plan_edit_finish
     
-    msg_text = "👇 *قیمت جدید \(تومان\)* \(یا \. برای عدم تغییر\):"
+    msg_text = r"👇 *قیمت جدید \(تومان\)* \(یا \. برای عدم تغییر\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_edit_finish(message: types.Message):
@@ -491,7 +505,7 @@ async def handle_category_delete(call, params):
     """مرحله اول: نمایش تاییدیه حذف کشور"""
     code = params[0]
         
-    prompt = f"⚠️ *آیا مطمئن هستید که می‌خواهید کشور `{code}` را حذف کنید؟*\nبا این کار تمام پنل‌های متصل به این دسته بی‌نظم می‌شوند\."
+    prompt = rf"⚠️ *آیا مطمئن هستید که می‌خواهید کشور `{code}` را حذف کنید؟*\nبا این کار تمام پنل‌های متصل به این دسته بی‌نظم می‌شوند\."
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -527,8 +541,8 @@ async def handle_category_add_start(call, params):
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
     
     msg_text = (
-        "1️⃣ لطفاً *کد کوتاه* کشور را بفرستید \(مثلاً `nl`\)\.\n\n"
-        "💡 *نکته هوشمند:* می‌توانید همین الان *ایموجی پرچم* \(مثلاً 🇳🇱\) را بفرستید تا کد و پرچم به صورت خودکار ثبت شوند\!"
+        r"1️⃣ لطفاً *کد کوتاه* کشور را بفرستید \(مثلاً `nl`\)\.\n\n"
+        r"💡 *نکته هوشمند:* می‌توانید همین الان *ایموجی پرچم* \(مثلاً 🇳🇱\) را بفرستید تا کد و پرچم به صورت خودکار ثبت شوند\!"
     )
     
     await _safe_edit(uid, call.message.message_id, msg_text, reply_markup=back_kb)
@@ -562,7 +576,7 @@ async def get_cat_code(message: types.Message):
     admin_conversations[uid]['next_handler'] = get_cat_name
     
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
-    msg_text = f"2️⃣ کد `{code}` ثبت شد\. حالا *نام فارسی* کشور را بفرستید \(مثلا `هلند`\):"
+    msg_text = rf"2️⃣ کد `{code}` ثبت شد\. حالا *نام فارسی* کشور را بفرستید \(مثلا `هلند`\):"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
 async def get_cat_name(message: types.Message):
@@ -580,8 +594,8 @@ async def get_cat_name(message: types.Message):
         back_kb = await admin_menu.cancel_action("admin:cat_manage")
         saved_flag = admin_conversations[uid]['cat_data']['emoji']
         msg_text = (
-            f"3️⃣ پرچم {saved_flag} قبلاً دریافت شد\.\n\n"
-            "4️⃣ *توضیحات اختیاری* را بفرستید \(یا نقطه `.` برای رد کردن\):"
+            rf"3️⃣ پرچم {saved_flag} قبلاً دریافت شد\.\n\n"
+            r"4️⃣ *توضیحات اختیاری* را بفرستید \(یا نقطه `.` برای رد کردن\):"
         )
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
         
@@ -590,7 +604,7 @@ async def get_cat_name(message: types.Message):
         admin_conversations[uid]['next_handler'] = get_cat_emoji
         
         back_kb = await admin_menu.cancel_action("admin:cat_manage")
-        msg_text = "3️⃣ حالا یک *ایموجی پرچم* بفرستید \(مثلا 🇳🇱\):"
+        msg_text = r"3️⃣ حالا یک *ایموجی پرچم* بفرستید \(مثلا 🇳🇱\):"
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
 async def get_cat_emoji(message: types.Message):
@@ -605,7 +619,7 @@ async def get_cat_emoji(message: types.Message):
     admin_conversations[uid]['next_handler'] = get_cat_description
     
     back_kb = await admin_menu.cancel_action("admin:cat_manage")
-    msg_text = "4️⃣ \(اختیاری\) اگر توضیحی برای این کشور دارید بنویسید \(مثلا: *مخصوص همراه اول*\)\n\nاگر توضیحی ندارید نقطه `.` بفرستید:"
+    msg_text = r"4️⃣ \(اختیاری\) اگر توضیحی برای این کشور دارید بنویسید \(مثلا: *مخصوص همراه اول*\)\n\nاگر توضیحی ندارید نقطه `.` بفرستید:"
     await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=back_kb)
 
 async def get_cat_description(message: types.Message):
@@ -625,4 +639,4 @@ async def get_cat_description(message: types.Message):
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:cat_manage"))
 
-    await _safe_edit(uid, msg_id, "✅ کشور جدید با موفقیت اضافه شد\.", reply_markup=kb)
+    await _safe_edit(uid, msg_id, r"✅ کشور جدید با موفقیت اضافه شد\.", reply_markup=kb)

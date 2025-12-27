@@ -114,34 +114,42 @@ async def auth_choice_callback(call: types.CallbackQuery):
         
         await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
         
+    # --- گزینه ۲: دریافت سرویس تست ---
     elif action == 'new':
-        # --- گزینه ۲: دریافت سرویس تست ---
         
-        # ✅ بررسی سابقه کلی کاربر (جلوگیری از دور زدن محدودیت با حذف اکانت)
+        # بررسی سابقه
         has_history = await db.has_ever_had_account(user_id)
-        
         if has_history:
-            await bot.answer_callback_query(
-                call.id, 
-                "❌ شما قبلاً از خدمات استفاده کرده‌اید.\nاکانت تست فقط برای کاربران جدید است.", 
-                show_alert=True
-            )
+            await bot.answer_callback_query(call.id, "❌ اکانت تست فقط برای کاربران جدید است.", show_alert=True)
             return
 
-        # ادامه مراحل ساخت اکانت (اگر کاربر جدید بود)
         try:
-            # دریافت لیست کشورها
-            categories = await db.get_server_categories()
+            # 1. دریافت همه کشورها
+            all_categories = await db.get_server_categories()
             
-            if not categories:
-                await bot.answer_callback_query(call.id, "❌ هیچ کشوری فعال نیست.", show_alert=True)
+            # 2. دریافت لیست کدهای فعال (کشورهایی که پنل دارند)
+            try:
+                active_codes = await db.get_active_location_codes()
+            except AttributeError:
+                active_panels = await db.get_active_panels()
+                active_codes = set(p['category'] for p in active_panels if p.get('category'))
+
+            # 3. فیلتر کردن: فقط کشورهایی که در لیست فعال‌ها هستند
+            filtered_categories = [
+                cat for cat in all_categories 
+                if cat['code'] in active_codes
+            ]
+            
+            if not filtered_categories:
+                await bot.answer_callback_query(call.id, "❌ در حال حاضر هیچ سرور فعالی برای تست موجود نیست.", show_alert=True)
                 return
 
-            # دریافت متن و اسکیپ کردن برای جلوگیری از ارور پرانتز
+            # آماده‌سازی متن
             raw_text = get_string('select_country_prompt')
             text = escape_markdown(raw_text)
             
-            markup = await user_menu.country_selection(categories, lang)
+            # ارسال لیست فیلتر شده به کیبورد
+            markup = await user_menu.country_selection(filtered_categories, lang)
             
             await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
             

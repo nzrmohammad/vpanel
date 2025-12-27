@@ -137,23 +137,30 @@ class UserMenu(BaseMenu):
 
 
     async def plan_categories_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب دسته‌بندی (کاملاً داینامیک از دیتابیس)"""
         kb = self.create_markup(row_width=2)
         
-        # 1. دریافت لیست فعال کشورها از دیتابیس
-        categories = await db.get_server_categories()
+        # 1. دریافت همه تعاریف کشورها (نام و پرچم)
+        all_categories = await db.get_server_categories()
         
-        # 2. ساخت دکمه‌ها
+        # 2. دریافت لیست کدهایی که واقعاً سرور دارند (تابع جدید)
+        active_codes = await db.get_active_location_codes()
+        
+        # 3. فیلتر کردن و ساخت دکمه‌ها
         cat_buttons = []
-        for cat in categories:
-            # cat شامل: code, name, emoji
-            text = f"{cat['emoji']} {cat['name']}"
-            cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
+        for cat in all_categories:
+            # فقط اگر کد کشور در لیست فعال‌ها بود، دکمه‌اش را بساز
+            if cat['code'] in active_codes:
+                text = f"{cat['emoji']} {cat['name']}"
+                cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
 
-        kb.add(*cat_buttons)
+        # اگر هیچ کشوری فعال نبود، یک پیام نشان بده
+        if not cat_buttons:
+             kb.add(self.btn("⚠️ در حال حاضر سروری موجود نیست", "noop"))
+        else:
+             kb.add(*cat_buttons)
         
-        # 3. دکمه‌های ثابت پایین
-        kb.add(self.btn("➕ حجم یا زمان", "show_addons"),self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
+        # دکمه‌های ثابت پایین
+        kb.add(self.btn("➕ حجم یا زمان", "show_addons"), self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
         kb.add(self.back_btn("back", lang_code))
         
         return kb
