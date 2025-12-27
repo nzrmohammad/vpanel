@@ -179,19 +179,18 @@ class UserMenu(BaseMenu):
         
         return kb
 
-
     async def plan_category_menu(self, lang_code: str, user_balance: float, plans: list) -> types.InlineKeyboardMarkup:
         """
-        نمایش لیست پلن‌های موجود به صورت تک ستونه
+        نمایش لیست پلن‌ها با دکمه‌های موجودی و شارژ در یک ردیف (کنار هم)
         """
         kb = self.create_markup(row_width=1)
         
-        # نمایش موجودی
         balance_str = "{:,.0f}".format(user_balance)
-        kb.row(self.btn(f"موجودی: {balance_str} تومان", "wallet:main"))
+        btn_balance = self.btn(f"💰 {balance_str} تومان", "wallet:main")
+        btn_charge = self.btn(f"➕ {get_string('charge_wallet', lang_code)}", "wallet:charge")
+        kb.row(btn_balance, btn_charge)
         
         for plan in plans:
-            # فراخوانی تابع فرمتر (حتماً با await)
             btn_text = await user_formatter.format_plan_btn(plan, user_balance)
             
             is_affordable = user_balance >= plan.get('price', 0)
@@ -199,7 +198,6 @@ class UserMenu(BaseMenu):
             
             kb.add(self.btn(btn_text, cb_data))
 
-        kb.row(self.btn(f"➕ {get_string('charge_wallet', lang_code)}", "wallet:charge"))
         kb.row(self.back_btn("view_plans", lang_code))
         
         return kb

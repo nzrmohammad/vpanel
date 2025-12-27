@@ -147,7 +147,7 @@ class AdminMenu(BaseMenu):
 
         # 2. دکمه‌های مدیریتی
         kb.row(
-            self.btn("🌍 مدیریت کشورها", "admin:cat_manage"),
+            self.btn("🌍 مدیریت دسته بندی کشورها", "admin:cat_manage"),
             self.btn("➕ افزودن پلن جدید", "admin:plan_add_start")
         )
         
@@ -204,7 +204,7 @@ class AdminMenu(BaseMenu):
             kb.add(*panel_buttons)
             
         kb.row(
-            self.btn("🌍 مدیریت کشورها", "admin:cat_manage"),
+            self.btn("🌍 مدیریت دسته بندی کشورها", "admin:cat_manage"),
             self.btn("➕ افزودن پنل", "admin:panel_add_start")
         )
         

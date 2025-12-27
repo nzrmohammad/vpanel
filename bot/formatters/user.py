@@ -549,20 +549,36 @@ class UserFormatter:
 
     async def format_plan_btn(self, plan: dict, user_balance: float) -> str:
         """
-        ساخت متن دکمه خرید پلن (تک ستونه)
-        فرمت: خرید نام (قیمت) علامت
+        نسخه اصلاح شده طبق درخواست:
+        1. حذف اعشار (100.0 -> 100)
+        2. تغییر جداکننده
+        3. نمایش قیمت به تومان کامل
         """
-        price = plan.get('price', 0)
-        name = plan.get('name', 'Unknown')
-        price_str = "{:,.0f}".format(price)
+        # دریافت اطلاعات حجم
+        raw_vol = plan.get('volume_gb') or plan.get('total_volume') or 0
         
-        # اگر موجودی کافی است
-        if user_balance >= price:
-            # مثال: خرید سرویس آلمان (50,000) ✅
-            return f"خرید {name} ({price_str}) ✅"
-        else:
-            # مثال: سرویس آلمان (50,000) ❌
-            return f"{name} ({price_str}) ❌"
+        # ترفند حذف اعشار: اگر عدد اعشار ندارد، int کن. اگر دارد، همان float بماند.
+        # روش ساده و مطمئن با فرمت g (جنرال):
+        # 100.0 -> 100
+        # 1.5 -> 1.5
+        vol_str = f"{float(raw_vol):g}"
+        vol = f"{vol_str}GB"
+
+        # دریافت نام و کوتاه‌سازی
+        name = plan.get('name', 'General')
+        short_name = name.replace("سرویس", "").replace("اختصاصی", "").strip()
+        
+        # زمان
+        days = f"{plan.get('days', 0)}d" 
+        
+        # قیمت: تبدیل به فرمت 120,000 تومان
+        price_val = plan.get('price', 0)
+        price = "{:,.0f} تومان".format(price_val)
+            
+        # ایموجی وضعیت
+        status_emoji = "✅" if user_balance >= price_val else "❌"
+        
+        return f"{short_name} » {vol} » {days} » {price} {status_emoji}"
 
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:
