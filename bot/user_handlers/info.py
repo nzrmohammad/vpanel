@@ -58,18 +58,3 @@ async def show_tutorial_link(call: types.CallbackQuery):
         )
     else:
         await bot.answer_callback_query(call.id, "Link not found.")
-
-@bot.callback_query_handler(func=lambda call: call.data == "support:new")
-async def support_info(call: types.CallbackQuery):
-    lang = await db.get_user_language(call.from_user.id)
-    
-    support_contact = await db.get_config('admin_support_contact', '@Nzrmohammad')
-    
-    text = get_string('support_guidance_body', lang).format(admin_contact=support_contact)
-    
-    await bot.edit_message_text(
-        text,
-        call.from_user.id,
-        call.message.message_id,
-        reply_markup=user_menu.back_btn("back", lang)
-    )

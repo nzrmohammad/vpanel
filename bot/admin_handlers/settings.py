@@ -16,7 +16,6 @@ admin_conversations = {}
 # =========================================================
 # 🛠 تنظیمات مرکزی ربات (قابل تغییر در دیتابیس)
 # =========================================================
-# تمام متغیرهایی که می‌خواهید ادمین بتواند تغییر دهد اینجا تعریف می‌شوند.
 
 BOT_CONFIGS = {
     # --- 📢 کانال‌ها و تاپیک‌های مدیریتی ---
@@ -35,6 +34,13 @@ BOT_CONFIGS = {
     'topic_id_proof': {
         'category': 'channels', 'title': '🧾 تاپیک رسیدها', 'type': 'int',
         'desc': 'آیدی تاپیک برای ارسال رسیدهای واریزی', 'def': '0'
+    },
+    'ticket_auto_delete_time': {
+        'category': 'channels',
+        'title': '⏳ حذف خودکار تیکت (ثانیه)', 
+        'type': 'int',
+        'desc': 'مدت زمان مکث قبل از حذف پیام تیکت پاسخ داده شده (0 = غیرفعال)', 
+        'def': '30'
     },
 
     # --- 👥 سیستم رفرال (دعوت دوستان) ---
@@ -199,26 +205,42 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
 # =========================================================
 
 async def list_config_category(call: types.CallbackQuery, params: list):
-    """نمایش آیتم‌های یک دسته‌بندی"""
+    """نمایش آیتم‌های یک دسته‌بندی با قابلیت نمایش نام گروه"""
     if not params: return
     category = params[0]
     user_id = call.from_user.id
     
     markup = types.InlineKeyboardMarkup(row_width=1)
     
-    # مرتب‌سازی کلیدها برای نمایش منظم
     sorted_keys = sorted([k for k, v in BOT_CONFIGS.items() if v.get('category') == category])
     
     for key in sorted_keys:
         info = BOT_CONFIGS[key]
         val = await db.get_config(key, info['def'])
         
+        btn_text = ""
+        
+        # --- نمایش وضعیت بولین ---
         if info['type'] == 'bool':
             status = "✅ فعال" if str(val).lower() == 'true' else "❌ غیرفعال"
             btn_text = f"{info['title']}: {status}"
+        
+        # --- ✅ تغییر جدید: نمایش نام گروه برای main_group_id ---
+        elif key == 'main_group_id' and val and str(val) != '0':
+            try:
+                # تلاش برای دریافت نام گروه از تلگرام
+                chat = await bot.get_chat(int(val))
+                chat_title = chat.title if chat.title else "بدون نام"
+                # کوتاه کردن اسم اگر خیلی طولانی بود
+                if len(chat_title) > 20: chat_title = chat_title[:17] + "..."
+                btn_text = f"{info['title']}: {chat_title}"
+            except Exception as e:
+                # اگر ربات در گروه نباشد یا آیدی اشتباه باشد
+                btn_text = f"{info['title']}: ❌ نامعتبر/عدم دسترسی"
+        
+        # --- حالت پیش‌فرض برای سایر موارد ---
         else:
             val_str = str(val)
-            # نمایش خلاصه‌تر برای متن‌های طولانی
             if len(val_str) > 20: val_str = val_str[:17] + "..."
             btn_text = f"{info['title']}: {val_str}"
             
