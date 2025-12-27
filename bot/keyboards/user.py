@@ -174,7 +174,7 @@ class UserMenu(BaseMenu):
              kb.add(*cat_buttons)
         
         # دکمه‌های ثابت پایین
-        kb.add(self.btn("➕ حجم یا زمان", "show_addons"), self.btn("🛍️ فروشگاه دستاوردها", "shop:main"))
+        kb.add(self.btn("➕ حجم یا زمان", "show_addons"))
         kb.add(self.back_btn("back", lang_code))
         
         return kb

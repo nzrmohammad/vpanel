@@ -7,10 +7,8 @@ from bot.user_handlers import (
     settings,
     info,
     feedback,
-    shop_actions,
     support,
     help,
-    achievements,
     features
 )
 
@@ -35,9 +33,7 @@ def register_user_handlers():
         info,
         feedback,
         main_menu,
-        shop_actions,
         support,
         help,
-        achievements,
         features
     ]

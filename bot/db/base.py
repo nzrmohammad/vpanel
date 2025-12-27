@@ -40,7 +40,6 @@ class User(Base):
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
     referred_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     referral_reward_applied: Mapped[bool] = mapped_column(Boolean, default=False)
-    achievement_points: Mapped[int] = mapped_column(Integer, default=0)
     wallet_balance: Mapped[float] = mapped_column(Float, default=0.0)
     auto_renew: Mapped[bool] = mapped_column(Boolean, default=False)
     plan_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("plans.id", ondelete="SET NULL"))
@@ -294,21 +293,6 @@ class TrafficTransfer(Base):
     amount_gb: Mapped[float] = mapped_column(Float)
     transferred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-class UserAchievement(Base):
-    __tablename__ = "user_achievements"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
-    badge_code: Mapped[str] = mapped_column(String(50))
-    awarded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-class AchievementShopLog(Base):
-    __tablename__ = "achievement_shop_log"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
-    item_key: Mapped[str] = mapped_column(String(50))
-    cost: Mapped[int] = mapped_column(Integer)
-    purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 class BirthdayGiftLog(Base):
     __tablename__ = "birthday_gift_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -348,12 +332,6 @@ class AutoRenewalLog(Base):
     plan_price: Mapped[float] = mapped_column(Float)
     renewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-class LotteryTicket(Base):
-    __tablename__ = "lottery_tickets"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger)
-    purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 class Notification(Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -366,12 +344,6 @@ class Notification(Base):
     __table_args__ = (
         Index('idx_notif_user_unread', 'user_id', 'is_read'),
     )
-
-class WeeklyChampionLog(Base):
-    __tablename__ = "weekly_champion_log"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
-    win_date: Mapped[date] = mapped_column(Date)
 
 class MonthlyCost(Base):
     __tablename__ = "monthly_costs"
