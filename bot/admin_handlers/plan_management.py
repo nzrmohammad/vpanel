@@ -189,12 +189,24 @@ async def handle_plan_add_start(call, params):
     else:
         # اگر کشوری انتخاب نشده، کیبورد انتخاب نوع پلن را نمایش بده
         categories = await db.get_server_categories()
+        
+        # --- شروع تغییر: افزودن علامت هشدار به لیست انتخاب پلن ---
+        try:
+            active_codes = await db.get_active_location_codes()
+            for cat in categories:
+                if cat['code'] not in active_codes:
+                    cat['name'] = f"{cat['name']} (⚠️)"
+        except:
+            pass
+        # --- پایان تغییر ---
+
         admin_conversations[uid]['step'] = 'plan_add_type'
         
-        # استفاده از کیبورد جدید که در فایل admin.py ساختیم
+        # استفاده از کیبورد جدید
         kb = await admin_menu.plan_type_selection_menu(categories)
         
-        await _safe_edit(uid, msg_id, "1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
+        # متن را هم با r نوشتم که وارنینگ ندهد
+        await _safe_edit(uid, msg_id, r"1️⃣ *نوع پلن* را انتخاب کنید:", reply_markup=kb)
 
 async def get_plan_add_type(call, params):
     """دریافت نوع پلن (ترکیبی یا کشور خاص)"""

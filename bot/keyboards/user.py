@@ -114,20 +114,33 @@ class UserMenu(BaseMenu):
         return kb
 
     async def server_selection_menu(self, uuid_id: int, access_rights: Dict[str, bool], lang_code: str) -> types.InlineKeyboardMarkup:
-        """منوی انتخاب سرور برای مشاهده آمار (بر اساس دسترسی کاربر)"""
+        """منوی انتخاب سرور برای مشاهده آمار (اصلاح شده: خواندن از دیتابیس)"""
         kb = self.create_markup(row_width=2)
         buttons = []
         
-        # تولید دکمه‌ها بر اساس دسترسی‌های کاربر
+        # 1. دریافت اطلاعات کامل کشورها از دیتابیس (به جای CATEGORY_META)
+        categories_db = await db.get_server_categories()
+        # تبدیل لیست به دیکشنری برای جستجوی سریع
+        # خروجی: {'de': {'emoji': '🇩🇪', 'name': 'Germany'}, ...}
+        cat_map = {c['code']: c for c in categories_db}
+
+        # 2. تولید دکمه‌ها بر اساس دسترسی کاربر
         for key, has_access in access_rights.items():
             if not has_access: continue
             
-            # استخراج کد کشور از کلید (مثلاً has_access_de -> de)
-            category = key.replace('has_access_', '')
-            meta = CATEGORY_META.get(category, {'emoji': '', 'name': category.upper()})
+            # استخراج کد کشور (مثلاً has_access_de -> de)
+            cat_code = key.replace('has_access_', '')
             
-            btn_text = f"{meta['name']} {meta['emoji']}"
-            buttons.append(self.btn(btn_text, f"win_srv:{uuid_id}:{category}"))
+            # پیدا کردن اطلاعات کشور از دیتابیس
+            cat_info = cat_map.get(cat_code)
+            
+            if cat_info:
+                # اگر کشور در دیتابیس بود، از نام و پرچم دیتابیس استفاده کن
+                btn_text = f"{cat_info['emoji']} {cat_info['name']}"
+                buttons.append(self.btn(btn_text, f"win_srv:{uuid_id}:{cat_code}"))
+            else:
+                # اگر کشور در دیتابیس نبود (مثلاً حذف شده)، کدش را نشان بده
+                buttons.append(self.btn(f"🚩 {cat_code.upper()}", f"win_srv:{uuid_id}:{cat_code}"))
         
         if buttons:
             kb.add(*buttons)
