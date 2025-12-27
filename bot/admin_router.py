@@ -75,7 +75,7 @@ def register_admin_handlers(bot_instance, scheduler_instance):
     # Modules that need access to state
     modules_to_init = [
         user_management, plan_management, panel_management,
-        wallet_admin, support, settings, shop_management
+        support, settings, shop_management
     ]
     
     # Pass bot.context_state as the shared dictionary
@@ -83,6 +83,8 @@ def register_admin_handlers(bot_instance, scheduler_instance):
         init_func_name = f"initialize_{module.__name__.split('.')[-1]}_handlers"
         if hasattr(module, init_func_name):
             getattr(module, init_func_name)(bot_instance, bot.context_state)
+
+    wallet_admin.admin_conversations.update(bot.context_state)
 
     if hasattr(group_actions, 'initialize_group_actions_handlers'):
         group_actions.initialize_group_actions_handlers(bot_instance, bot.context_state)
