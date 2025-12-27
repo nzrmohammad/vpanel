@@ -149,7 +149,7 @@ async def get_panel_token1(message: types.Message):
     admin_conversations[uid]['next_handler'] = get_panel_token2
 
     if panel_type == 'hiddify':
-        prompt = f"5️⃣ {escape_markdown('(اختیاری) لطفاً')} `Proxy Path` {escape_markdown('را وارد کنید. اگر ندارید، کلمه')} `ندارم` {escape_markdown('را ارسال کنید:')}"
+        prompt = f"5️⃣ {escape_markdown('لطفاً')} `Proxy Path` {escape_markdown('را وارد کنید. اگر ندارید، کلمه')} `ندارم` {escape_markdown('را ارسال کنید:')}"
     else: # Marzban
         prompt = f"5️⃣ {escape_markdown('لطفاً')} `Password` {escape_markdown('(رمز عبور) ادمین مرزبان را وارد کنید:')}"
         

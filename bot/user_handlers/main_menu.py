@@ -80,6 +80,16 @@ async def start_language_callback(call: types.CallbackQuery):
     lang_code = call.data.split(':')[1]
     await db.set_user_language(user_id, lang_code)
 
+    # --- بررسی دسترسی ادمین ---
+    # اگر کاربر ادمین است، مستقیم به منوی اصلی برود تا بتواند پنل را مدیریت کند
+    if user_id in ADMIN_IDS:
+        text = get_string('main_menu_title', lang_code)
+        # فراخوانی منوی اصلی با دسترسی ادمین (True)
+        markup = await user_menu.main(True, lang_code)
+        await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
+        return
+    # -------------------------
+
     welcome_text = get_string('welcome_choose_option', lang_code)
     markup = await user_menu.auth_selection(lang_code)
     
@@ -109,7 +119,7 @@ async def auth_choice_callback(call: types.CallbackQuery):
         text = escape_markdown(raw_text)
         
         markup = types.InlineKeyboardMarkup()
-        # ✅ تغییر: بازگشت به back_to_welcome به جای start_reset
+        # بازگشت به back_to_welcome
         markup.add(user_menu.btn(f"🔙 {get_string('back', lang)}", "back_to_welcome"))
         
         await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
@@ -163,6 +173,15 @@ async def back_to_welcome_handler(call: types.CallbackQuery):
     """بازگشت به منوی انتخاب مسیر (بعد از تایید زبان)"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
+
+    # --- بررسی دسترسی ادمین در بازگشت ---
+    if user_id in ADMIN_IDS:
+        text = get_string('main_menu_title', lang)
+        markup = await user_menu.main(True, lang)
+        await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
+        return
+    # -----------------------------------
+
     welcome_text = get_string('welcome_choose_option', lang)
     
     markup = await user_menu.auth_selection(lang)
@@ -232,7 +251,7 @@ async def create_test_account_callback(call: types.CallbackQuery):
 
             asyncio.create_task(cache_manager.fetch_and_update_cache())
             
-            # 2. رفع ارور علامت تعجب (!) در پیام موفقیت
+            # رفع ارور علامت تعجب (!) در پیام موفقیت
             raw_success = get_string('test_account_created', lang)
             raw_title = get_string('account_list_title', lang)
             
@@ -261,85 +280,7 @@ async def create_test_account_callback(call: types.CallbackQuery):
 
 
 # =============================================================================
-# 5. هندلر دریافت UUID متنی (وقتی کاربر گزینه ورود را انتخاب کرده)
-# =============================================================================
-
-@bot.message_handler(func=lambda m: (
-    (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
-    or _UUID_RE.match(m.text or "")
-))
-async def handle_uuid_login(message: types.Message):
-    """مدیریت دریافت UUID از کاربر"""
-    user_id = message.from_user.id
-    input_text = message.text.strip() if message.text else ""
-    lang = await db.get_user_language(user_id)
-    
-    state = getattr(bot, 'user_states', {}).get(user_id)
-    menu_msg_id = state.get('msg_id') if state else None
-
-    # حذف پیام ارسالی کاربر برای تمیزی چت
-    try:
-        await bot.delete_message(message.chat.id, message.message_id)
-    except: pass
-
-    # اعتبارسنجی
-    if not _UUID_RE.match(input_text):
-        if menu_msg_id:
-            try:
-                err_text = get_string('uuid_invalid', lang)
-                markup = types.InlineKeyboardMarkup()
-                markup.add(user_menu.back_btn("start_reset", lang))
-                await bot.edit_message_text(err_text, message.chat.id, menu_msg_id, reply_markup=markup)
-            except: pass
-        return
-
-    # پیام "در حال بررسی"
-    wait_text = "⏳ ..."
-    target_msg_id = menu_msg_id
-    if not target_msg_id:
-        msg = await bot.send_message(message.chat.id, wait_text)
-        target_msg_id = msg.message_id
-    else:
-        try:
-            await bot.edit_message_text(wait_text, message.chat.id, target_msg_id)
-        except: pass
-
-    # استعلام از پنل‌ها
-    try:
-        uuid_str = input_text
-        info = await combined_handler.get_combined_user_info(uuid_str)
-        
-        if info:
-            # موفقیت: ثبت در دیتابیس
-            name = info.get('name') or message.from_user.first_name or "My Config"
-            result = await db.add_uuid(user_id, uuid_str, name)
-            
-            # پاک کردن استیت
-            if user_id in getattr(bot, 'user_states', {}):
-                del bot.user_states[user_id]
-            
-            # نمایش لیست اکانت‌ها
-            success_text = get_string('db_msg_uuid_added', lang)
-            user_uuids = await db.uuids(user_id)
-            markup = await user_menu.accounts(user_uuids, lang)
-            
-            final_text = f"{success_text}\n\n{get_string('account_list_title', lang)}"
-            await bot.edit_message_text(final_text, message.chat.id, target_msg_id, reply_markup=markup)
-            
-        else:
-            # یافت نشد
-            not_found = get_string('uuid_not_found', lang)
-            markup = types.InlineKeyboardMarkup()
-            markup.add(user_menu.back_btn("start_reset", lang))
-            await bot.edit_message_text(not_found, message.chat.id, target_msg_id, reply_markup=markup)
-
-    except Exception as e:
-        logger.error(f"Login Error: {e}")
-        await bot.edit_message_text("❌ Error.", message.chat.id, target_msg_id)
-
-
-# =============================================================================
-# 6. دکمه بازگشت به اول (Reset)
+# 5. دکمه بازگشت به اول (Reset)
 # =============================================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "start_reset")
@@ -365,7 +306,7 @@ async def reset_start_flow(call: types.CallbackQuery):
     )
 
 # =============================================================================
-# 2. هندلر ورود با کانفیگ (UUID Login)
+# 6. هندلر ورود با کانفیگ (UUID Login)
 # =============================================================================
 
 @bot.message_handler(func=lambda m: (
@@ -459,9 +400,6 @@ async def handle_uuid_login(message: types.Message):
                                     if clean_raw.isdigit():
                                         raw_expire = int(clean_raw)
 
-                                # لاگ برای دیباگ دقیق
-                                logger.info(f"User: {acc.get('name')} | Final Raw Expire: {raw_expire} | Type: {type(raw_expire)}")
-
                                 # حالت ۱: تایم‌استمپ (عدد بزرگ)
                                 if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
                                     try:
@@ -527,7 +465,7 @@ async def handle_uuid_login(message: types.Message):
         except: pass
 
 # =============================================================================
-# 3. دکمه بازگشت (Back)
+# 7. دکمه بازگشت (Back)
 # =============================================================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "back")
