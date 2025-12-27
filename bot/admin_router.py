@@ -269,7 +269,6 @@ ADMIN_CALLBACK_HANDLERS = {
     "ga_confirm": group_actions.ga_execute,
     "awd_b_menu": user_management.handle_award_badge_menu,
     "awd_b": user_management.handle_award_badge,
-    "support_reply": support.prompt_for_reply,
 
     # Tools
     "system_tools_menu": user_management.handle_system_tools_menu,
