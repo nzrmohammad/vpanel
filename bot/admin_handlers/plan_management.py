@@ -429,8 +429,9 @@ async def handle_category_management_menu(call, params):
         kb.add(*buttons)
         
     kb.row(
-        types.InlineKeyboardButton("➕ افزودن کشور", callback_data="admin:cat_add_start"),
-        types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel_manage")
+        types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel_manage"),
+        types.InlineKeyboardButton("➕ افزودن کشور", callback_data="admin:cat_add_start")
+        
     )
     
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")
