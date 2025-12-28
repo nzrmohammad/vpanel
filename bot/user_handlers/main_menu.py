@@ -7,10 +7,12 @@ from telebot import types
 from datetime import datetime
 from bot.services import cache_manager
 import asyncio
+from sqlalchemy import select
 
 # --- Imports ---
 from bot.bot_instance import bot
 from bot.database import db
+from bot.db.base import UserUUID
 from bot.keyboards import user as user_menu
 from bot.utils.network import _safe_edit
 from bot.utils.parsers import _UUID_RE
@@ -19,6 +21,7 @@ from bot.language import get_string
 from bot.config import ADMIN_IDS
 from bot import combined_handler
 from bot.services.panels.factory import PanelFactory
+from bot.user_handlers.sharing import handle_uuid_conflict
 
 logger = logging.getLogger(__name__)
 
@@ -321,18 +324,18 @@ async def handle_uuid_login(message: types.Message):
     input_text = message.text.strip() if message.text else ""
     lang = await db.get_user_language(user_id)
     
-    # 1. تشخیص اینکه آیا کاربر از طریق دکمه "افزودن اکانت" آمده یا مستقیم پیام داده
+    # 1. تشخیص وضعیت افزودن اکانت
     state = getattr(bot, 'user_states', {}).get(user_id)
     is_in_add_flow = state and state.get('step') == 'waiting_for_uuid'
     menu_msg_id = state.get('msg_id') if is_in_add_flow else None
 
-    # 2. حذف پیام کاربر (برای تمیز ماندن چت)
+    # 2. حذف پیام کاربر
     try:
         await bot.delete_message(message.chat.id, message.message_id)
     except:
         pass
 
-    # 3. اعتبارسنجی فرمت UUID
+    # 3. اعتبارسنجی
     if not _UUID_RE.match(input_text):
         if is_in_add_flow and menu_msg_id:
             try:
@@ -345,7 +348,7 @@ async def handle_uuid_login(message: types.Message):
                 logger.error(f"Error editing menu for invalid input: {e}")
         return
 
-    # 4. آماده‌سازی پیام "در حال بررسی"
+    # 4. پیام انتظار
     wait_text = "⏳ در حال بررسی ..."
     target_msg_id = None
 
@@ -360,9 +363,37 @@ async def handle_uuid_login(message: types.Message):
         msg = await bot.send_message(message.chat.id, wait_text)
         target_msg_id = msg.message_id
 
-    # 5. استعلام از پنل‌ها
+    # 5. پردازش
     try:
         uuid_str = input_text
+        
+        # ---------------------------------------------------------------------
+        # ✅ [بخش جدید] بررسی تکراری بودن UUID قبل از استعلام از پنل
+        # ---------------------------------------------------------------------
+        async with db.get_session() as session:
+             stmt = select(UserUUID).where(UserUUID.uuid == uuid_str)
+             res = await session.execute(stmt)
+             existing_uuid_obj = res.scalars().first()
+             
+             if existing_uuid_obj:
+                 # اگر صاحب اکانت شخص دیگری است
+                 if existing_uuid_obj.user_id != user_id:
+                     # حذف پیام "در حال بررسی"
+                     try: await bot.delete_message(message.chat.id, target_msg_id)
+                     except: pass
+                     
+                     # شروع پروسه اشتراک‌گذاری (کدش در sharing.py است)
+                     await handle_uuid_conflict(message, uuid_str)
+                     
+                     # پاک کردن استیت
+                     if is_in_add_flow and hasattr(bot, 'user_states'):
+                        del bot.user_states[user_id]
+                     return
+                 else:
+                     # اگر صاحب اکانت خود کاربر است، ادامه میدیم تا ارور استاندارد "تکراری" پایین رو بگیره
+                     pass
+        # ---------------------------------------------------------------------
+
         info = await combined_handler.get_combined_user_info(uuid_str)
         
         if info:
@@ -373,65 +404,47 @@ async def handle_uuid_login(message: types.Message):
             if result in ["db_msg_uuid_added", "db_msg_uuid_reactivated"]:
                 success_text = get_string(result, lang)
                 
-                # پاک کردن استیت چون کار تمام شد
                 if is_in_add_flow and hasattr(bot, 'user_states'):
                     del bot.user_states[user_id]
 
-                # دریافت لیست اکانت‌ها برای نمایش نهایی
+                # دریافت لیست اکانت‌ها و نمایش
                 accounts = await db.uuids(user_id)
                 if accounts:
                     for acc in accounts:
                         try:
-                            # تلاش برای دریافت اطلاعات از کش
+                            # آپدیت کش و اطلاعات
                             u_str = str(acc['uuid'])
                             cached_info = await combined_handler.get_combined_user_info(u_str)
                             
                             if cached_info:
-                                # 1. تنظیم درصد مصرف
                                 acc['usage_percentage'] = cached_info.get('usage_percentage', 0)
-                                
-                                # --- اصلاحیه هوشمند تاریخ انقضا ---
                                 raw_expire = cached_info.get('expire')
-                                
-                                # تبدیل رشته به عدد (اگر پنل تاریخ را به صورت رشته فرستاده باشد)
-                                if isinstance(raw_expire, str):
-                                    # حذف اعشار احتمالی و بررسی عددی بودن
-                                    clean_raw = raw_expire.split('.')[0]
-                                    if clean_raw.isdigit():
-                                        raw_expire = int(clean_raw)
+                                if isinstance(raw_expire, str) and raw_expire.split('.')[0].isdigit():
+                                    raw_expire = int(raw_expire.split('.')[0])
 
-                                # حالت ۱: تایم‌استمپ (عدد بزرگ)
                                 if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
                                     try:
                                         expire_dt = datetime.fromtimestamp(raw_expire)
                                         now = datetime.now()
                                         rem_days = (expire_dt - now).days
-                                        acc['expire'] = max(0, rem_days) # جلوگیری از عدد منفی
+                                        acc['expire'] = max(0, rem_days)
                                     except:
                                         acc['expire'] = '?'
-
-                                # حالت ۲: تعداد روز (عدد کوچک)
                                 elif isinstance(raw_expire, (int, float)):
                                     acc['expire'] = int(raw_expire)
-                                
-                                # حالت ۳: نامحدود یا نامشخص
                                 else:
                                     acc['expire'] = None
-                                # ----------------------------------
                             else:
                                 acc['usage_percentage'] = 0
                                 acc['expire'] = None
-                                
                         except Exception as e:
-                            logger.error(f"Error calculating stats for menu: {e}")
+                            logger.error(f"Error calculating stats: {e}")
                             acc['usage_percentage'] = 0
                             acc['expire'] = None
                 
-                # ساخت منوی لیست اکانت‌ها
                 markup = await user_menu.accounts(accounts, lang)
                 final_text = f"✅ {success_text}\n\n{get_string('account_list_title', lang)}"
                 
-                # ویرایش پیام نهایی
                 await bot.edit_message_text(
                     final_text, 
                     message.chat.id, 
@@ -441,18 +454,16 @@ async def handle_uuid_login(message: types.Message):
                 )
                     
             elif result == "db_err_uuid_already_active_self":
-                # اکانت تکراری است
+                # اکانت تکراری برای خود کاربر
                 err_txt = get_string(result, lang)
                 markup = types.InlineKeyboardMarkup()
                 markup.add(user_menu.back_btn("manage", lang))
                 await bot.edit_message_text(err_txt, message.chat.id, target_msg_id, reply_markup=markup)
             else:
-                # خطای دیتابیس
                 markup = types.InlineKeyboardMarkup()
                 markup.add(user_menu.back_btn("manage", lang))
                 await bot.edit_message_text("❌ خطا در ثبت اطلاعات.", message.chat.id, target_msg_id, reply_markup=markup)
         else:
-            # یافت نشد (در هیچ پنلی)
             not_found_txt = get_string("uuid_not_found", lang)
             markup = types.InlineKeyboardMarkup()
             markup.add(user_menu.back_btn("manage", lang))

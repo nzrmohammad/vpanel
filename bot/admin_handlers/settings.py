@@ -21,16 +21,23 @@ admin_conversations = {}
 BOT_CONFIGS = {
     # --- 📢 کانال‌ها و تاپیک‌های مدیریتی ---
     'main_group_id': {
-        'category': 'channels', 'title': '🏢 سوپرگروه اصلی', 'type': 'int',
+        'category': 'channels', 'title': '🏢 سوپرگروه', 'type': 'int',
         'desc': 'آیدی عددی سوپرگروهی که تاپیک‌ها در آن قرار دارند', 'def': '0'
     },
     'topic_id_support': {
         'category': 'channels', 'title': '🆘 تاپیک پشتیبانی', 'type': 'int',
-        'desc': 'آیدی تاپیک (Thread ID) برای ارسال تیکت‌ها', 'def': '0'
+        'desc': 'آیدی تاپیک برای ارسال تیکت‌ها', 'def': '0'
     },
     'topic_id_log': {
         'category': 'channels', 'title': '📝 تاپیک گزارشات (Log)', 'type': 'int',
         'desc': 'آیدی تاپیک برای لاگ‌های سیستم', 'def': '0'
+    },
+    'topic_id_shop': {
+        'category': 'channels', 
+        'title': '🛒 خریدها', 
+        'type': 'int',
+        'desc': 'آیدی تاپیک برای ارسال گزارش خرید و تمدید', 
+        'def': '0'
     },
     'topic_id_proof': {
         'category': 'channels', 'title': '🧾 تاپیک رسیدها', 'type': 'int',
@@ -38,7 +45,7 @@ BOT_CONFIGS = {
     },
     'ticket_auto_delete_time': {
         'category': 'channels',
-        'title': '⏳ حذف خودکار تیکت (ثانیه)', 
+        'title': '⏳ حذف خودکار تیکت', 
         'type': 'int',
         'desc': 'مدت زمان مکث قبل از حذف پیام تیکت پاسخ داده شده', 
         'def': '30'
@@ -70,7 +77,7 @@ BOT_CONFIGS = {
 
     # --- ⚠️ تنظیمات هشدار ---
     'warning_usage_threshold': {
-        'category': 'warning', 'title': '⚠️ درصد هشدار مصرف', 'type': 'int',
+        'category': 'warning', 'title': '⚠️ هشدار مصرف', 'type': 'int',
         'desc': 'هشدار در درصد مصرف', 'def': '95'
     },
 
@@ -136,20 +143,19 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
     # ردیف 1
     markup.add(
         types.InlineKeyboardButton("📢 کانال‌ها", callback_data="admin:sys_conf:list:channels"),
-        types.InlineKeyboardButton("⚙️ سیستم و زمان‌بندی", callback_data="admin:sys_conf:list:system")
+        types.InlineKeyboardButton("⚙️ زمان‌بندی", callback_data="admin:sys_conf:list:system")
     )
     # ردیف 2
     markup.add(
-        types.InlineKeyboardButton("👥 رفرال و دعوت", callback_data="admin:sys_conf:list:referral"),
-        types.InlineKeyboardButton("🔄 انتقال حجم", callback_data="admin:sys_conf:list:transfer")
+        types.InlineKeyboardButton("👥 دعوت", callback_data="admin:sys_conf:list:referral"),
+        types.InlineKeyboardButton("💰 کیف پول", callback_data="admin:settings:wallet")
     )
     # ردیف 3
     markup.add(
-        types.InlineKeyboardButton("🎁 جوایز و قرعه‌کشی", callback_data="admin:sys_conf:list:gift"),
+        types.InlineKeyboardButton("🎁 جوایز", callback_data="admin:sys_conf:list:gift"),
         types.InlineKeyboardButton("⚠️ هشدارها", callback_data="admin:sys_conf:list:warning")
     )
-    
-    markup.add(types.InlineKeyboardButton("💰 مدیریت کیف پول و کارت‌ها", callback_data="admin:settings:wallet"))
+
     markup.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
     
     text = (
@@ -169,9 +175,12 @@ async def list_config_category(call: types.CallbackQuery, params: list):
     category = params[0]
     user_id = call.from_user.id
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    # 1. تغییر row_width از 1 به 2
+    markup = types.InlineKeyboardMarkup(row_width=2)
     
     sorted_keys = sorted([k for k, v in BOT_CONFIGS.items() if v.get('category') == category])
+    
+    buttons = [] # 2. ایجاد لیست برای جمع‌آوری دکمه‌ها
     
     for key in sorted_keys:
         info = BOT_CONFIGS[key]
@@ -181,24 +190,30 @@ async def list_config_category(call: types.CallbackQuery, params: list):
         
         # --- نمایش وضعیت بولین ---
         if info['type'] == 'bool':
-            status = "✅ فعال" if str(val).lower() == 'true' else "❌ غیرفعال"
-            btn_text = f"{info['title']}: {status}"
+            status = "✅" if str(val).lower() == 'true' else "❌"
+            # کوتاه کردن متن برای جا شدن در دو ستون
+            btn_text = f"{status} {info['title']}"
         
         elif key == 'main_group_id' and val and str(val) != '0':
             try:
                 chat = await bot.get_chat(int(val))
-                chat_title = chat.title if chat.title else "بدون نام"
-                if len(chat_title) > 20: chat_title = chat_title[:17] + "..."
+                chat_title = chat.title if chat.title else "نامشخص"
+                if len(chat_title) > 15: chat_title = chat_title[:12] + "..."
                 btn_text = f"{info['title']}: {chat_title}"
             except Exception as e:
-                btn_text = f"{info['title']}: ❌ نامعتبر/عدم دسترسی"
+                btn_text = f"{info['title']}: ❌"
         
         else:
             val_str = str(val)
-            if len(val_str) > 20: val_str = val_str[:17] + "..."
+            if len(val_str) > 10: val_str = val_str[:7] + "..."
             btn_text = f"{info['title']}: {val_str}"
             
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"admin:sys_conf:edit:{key}"))
+        # 3. دکمه را به لیست اضافه کنید (نه مستقیم به مارک‌آپ)
+        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:sys_conf:edit:{key}"))
+        
+    # 4. افزودن تمام دکمه‌ها به صورت یکجا (تا خاصیت row_width اعمال شود)
+    if buttons:
+        markup.add(*buttons)
         
     markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:settings:main"))
     
@@ -208,7 +223,6 @@ async def list_config_category(call: types.CallbackQuery, params: list):
         'warning': 'هشدارهای سیستم', 
         'system': 'سیستمی و زمان‌بندی',
         'referral': 'سیستم رفرال',
-        'transfer': 'انتقال حجم'
     }
     cat_title = cat_names.get(category, category)
     safe_cat_title = escape_markdown(cat_title)

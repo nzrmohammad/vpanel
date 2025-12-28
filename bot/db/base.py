@@ -53,6 +53,10 @@ class UserUUID(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"))
     uuid: Mapped[uuid_lib.UUID] = mapped_column(UUID(as_uuid=True), default=uuid_lib.uuid4)
     name: Mapped[Optional[str]] = mapped_column(String(128))
+    traffic_limit: Mapped[float] = mapped_column(Float, default=0.0)
+    traffic_used: Mapped[float] = mapped_column(Float, default=0.0)
+    expire_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True)) 
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now())
@@ -395,6 +399,21 @@ class BroadcastTask(Base):
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now())
+
+class SharedRequest(Base):
+    """جدول درخواست‌های اشتراک‌گذاری سرویس"""
+    __tablename__ = "shared_requests"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    requester_id: Mapped[int] = mapped_column(BigInteger)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    uuid_str: Mapped[str] = mapped_column(String(64))
+    
+    requester_msg_id: Mapped[Optional[int]] = mapped_column(Integer)
+    owner_msg_id: Mapped[Optional[int]] = mapped_column(Integer)
+    
+    status: Mapped[str] = mapped_column(String(20), default='pending')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 # ---------------------------------------------------------
 # 4. مدیریت دیتابیس

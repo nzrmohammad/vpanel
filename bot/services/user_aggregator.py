@@ -2,9 +2,11 @@
 
 import logging
 import asyncio
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from bot.services.panels.factory import PanelFactory
 from bot.database import db
+from bot.db.base import UserUUID  # ایمپورت مدل برای Type Hinting
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,54 @@ async def _get_handler(panel_name: str):
     except Exception as e:
         logger.error(f"Failed to get handler for panel {panel_name}: {e}")
         return None
+
+async def sync_user_service(uuid_obj: UserUUID):
+    """
+    یک سرویس خاص را از پنل استعلام گرفته و دیتابیس را آپدیت می‌کند.
+    این تابع توسط بخش‌های مختلف (مثل خرید یا مشاهده حساب) صدا زده می‌شود.
+    """
+    try:
+        # اگر لیست پنل‌ها لود نشده یا خالی است
+        if not uuid_obj.allowed_panels:
+            return
+
+        # فرض بر این است که اولین پنل، پنل اصلی سرویس است
+        target_panel = uuid_obj.allowed_panels[0]
+        panel_api = await PanelFactory.get_panel(target_panel.name)
+        
+        if not panel_api:
+            return
+
+        # استعلام وضعیت کاربر از پنل (با تبدیل UUID به رشته)
+        info = await panel_api.get_user(str(uuid_obj.uuid))
+        
+        if info:
+            # استفاده از یک سشن جدید برای اعمال تغییرات اتمیک و مطمئن
+            async with db.get_session() as session:
+                # لود مجدد آبجکت از دیتابیس برای اطمینان از اتصال به سشن جاری
+                u = await session.get(UserUUID, uuid_obj.id)
+                if not u: return
+
+                # استخراج مقادیر از خروجی پنل
+                # فرض: خروجی get_user یک دیکشنری استاندارد است
+                limit_bytes = info.get('data_limit', 0) or 0
+                used_bytes = info.get('used_traffic', 0) or 0
+                expire_ts = info.get('expire_date', 0)
+
+                # تبدیل بایت به گیگابایت و ذخیره در دیتابیس
+                u.traffic_limit = limit_bytes / (1024**3)
+                u.traffic_used = used_bytes / (1024**3)
+                
+                if expire_ts:
+                    u.expire_date = datetime.fromtimestamp(expire_ts)
+                
+                u.last_synced_at = datetime.now()
+                
+                await session.commit()
+                # logger.info(f"Synced UserUUID {u.id} successfully.")
+                
+    except Exception as e:
+        logger.error(f"Sync error for UUID {uuid_obj.uuid}: {e}")
 
 def _process_and_merge_user_data(all_users_map: dict) -> List[Dict[str, Any]]:
     """تبدیل دیکشنری تجمیع شده به لیست نهایی"""
@@ -132,11 +182,10 @@ async def fetch_all_users_from_panels() -> List[Dict[str, Any]]:
             new_expire = user.get('expire')
             
             # --- اصلاحیه برای هیدیفای ---
-            # اگر پارامتر expire وجود نداشت، پارامترهای دیگر مثل package_days بررسی می‌شوند
             if new_expire is None:
-                new_expire = user.get('package_days')  # این معمولا در هیدیفای عدد روز است
+                new_expire = user.get('package_days')
                 if new_expire is None:
-                     new_expire = user.get('expiry_time') # برای اطمینان
+                     new_expire = user.get('expiry_time')
             # ---------------------------
 
             if new_expire:

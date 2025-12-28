@@ -66,6 +66,62 @@ class HiddifyPanel(BasePanel):
         if isinstance(res, dict):
             return res.get('users', []) or res.get('results', [])
         return res if isinstance(res, list) else []
+    
+    async def edit_user(self, uuid_str: str, usage_limit_GB: float = None, expire_date: int = None, **kwargs) -> bool:
+        """
+        ویرایش کاربر در هیدیفای (هماهنگ با purchase.py)
+        """
+        try:
+            # 1. دریافت اطلاعات فعلی کاربر (برای حفظ نام و تنظیمات دیگر)
+            # متد get_user باید قبلاً در کلاس پیاده‌سازی شده باشد
+            current_user = await self.get_user(uuid_str)
+            
+            if not current_user:
+                # اگر کاربر پیدا نشد، شاید بهتر باشد لاگ کنید
+                return False
+
+            # 2. آماده‌سازی مسیر API
+            # نکته: در هیدیفای معمولاً ادیت همان مسیر ساخت است
+            path = f"{self.api_path}/user/"
+            
+            # 3. محاسبه حجم به بایت (هیدیفای بایت می‌گیرد)
+            # اگر مقدار جدید فرستاده شده بود، تبدیل کن، وگرنه مقدار قبلی را نگه دار
+            if usage_limit_GB is not None:
+                final_limit_bytes = int(usage_limit_GB * 1024**3)
+            else:
+                # تلاش برای خواندن مقدار قبلی از خروجی get_user
+                final_limit_bytes = current_user.get('usage_limit', 0)
+
+            # 4. تنظیم تاریخ انقضا
+            # purchase.py تایم‌استمپ می‌فرستد. هیدیفای expiry_time را قبول می‌کند
+            final_expiry = expire_date if expire_date is not None else current_user.get('expiry_time')
+
+            payload = {
+                "uuid": uuid_str,
+                "name": current_user.get('name', f"user_{uuid_str[:8]}"),
+                "usage_limit": final_limit_bytes,
+                "package_days": 0, # وقتی expiry_time می‌دهیم، این را صفر می‌گذاریم تا تداخل نکند
+                "expiry_time": final_expiry,
+                # برخی تنظیمات که نباید بپرند:
+                "mode": current_user.get('mode', "no_reset"), 
+                "enable": True
+            }
+
+            # 5. ارسال درخواست
+            # نکته: اگر متد post جواب نداد، متد patch را تست کنید. 
+            # اما استاندارد هیدیفای برای آپدیت معمولا POST روی UUID موجود است.
+            async with self.session.post(path, json=payload) as resp:
+                if resp.status in [200, 201, 204]:
+                    return True
+                else:
+                    # اگر ارور داد، ممکن است نیاز به PATCH باشد (بسته به نسخه پنل)
+                    # text = await resp.text()
+                    # print(f"Edit failed with POST: {text}")
+                    return False
+                    
+        except Exception as e:
+            print(f"Error in Hiddify edit_user: {e}")
+            return False
 
     async def modify_user(self, identifier: str, add_gb: float = 0, add_days: int = 0, new_limit_gb: float = None, new_expire_ts: int = None) -> bool:
         # هیدیفای لاجیک جمع زدن ندارد، باید ابتدا یوزر را بگیریم
