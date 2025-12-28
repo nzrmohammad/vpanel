@@ -503,3 +503,18 @@ class UserMenu(BaseMenu):
         kb.add(self.btn(del_text, f"del_{acc_id}"))
         kb.add(self.back_btn("manage", lang_code))
         return kb
+    
+    async def tutorial_link_menu(self, url: str, os_type: str, lang_code: str) -> types.InlineKeyboardMarkup:
+        kb = self.create_markup(row_width=1)
+        kb.add(types.InlineKeyboardButton(get_string("btn_view_tutorial", lang_code), url=url))
+        kb.add(self.back_btn(f"tutorial_os:{os_type}", lang_code)) # دکمه بازگشت به لیست اپ‌ها
+        return kb
+
+    async def language_change_menu(self) -> types.InlineKeyboardMarkup:
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn("🇮🇷 فارسی", "set_lang:fa"),
+            self.btn("🇺🇸 English", "set_lang:en")
+        )
+        kb.add(self.btn("🔙 Back", "settings"))
+        return kb

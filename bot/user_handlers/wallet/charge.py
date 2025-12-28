@@ -6,6 +6,7 @@ from bot.bot_instance import bot
 from bot.keyboards import user as user_menu
 from bot.database import db
 from bot.language import get_string
+from bot.formatters import user_formatter
 from bot.utils.formatters import escape_markdown
 from .states import user_payment_states
 

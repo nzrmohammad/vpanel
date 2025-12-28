@@ -11,6 +11,7 @@ from bot.utils.network import _safe_edit
 from bot.utils.formatters import escape_markdown
 from bot.language import get_string
 from bot.config import ADMIN_IDS
+from bot.formatters import user_formatter
 
 logger = logging.getLogger(__name__)
 

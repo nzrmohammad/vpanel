@@ -89,8 +89,8 @@ async def handle_birthday_gift_request(call: types.CallbackQuery):
     
     # بررسی اینکه آیا تاریخ تولد ست شده است یا خیر
     if user_data and user_data.get('birthday'):
-        text = _fmt_birthday_info(user_data, lang_code=lang_code)
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)}", callback_data="back"))
+        text = user_formatter.birthday_status_text(user_data)
+        kb = await user_menu.simple_back_menu("back", lang_code)
         await _safe_edit(uid, msg_id, text, reply_markup=kb, parse_mode="MarkdownV2")
     else:
         # نمایش پرامپت دریافت تاریخ

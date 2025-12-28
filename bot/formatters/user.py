@@ -829,6 +829,32 @@ class UserFormatter:
             f"⏳ {escape_markdown(f'بازگشت به منوی اصلی تا {delay_seconds} ثانیه دیگر...')}"
         )
 
+    @staticmethod
+    def birthday_status_text(user_data):
+        """وضعیت هدیه تولد"""
+        # (کد تابع _fmt_birthday_info از features.py رو بیار اینجا و مرتبش کن)
+        bday = user_data.get('birthday')
+        if not bday: return "تاریخ تولدی ثبت نشده است."
+        
+        days_left = days_until_next_birthday(bday)
+        shamsi_date = to_shamsi(bday, include_time=False)
+        line_sep = "────────────────────"
+        
+        return (
+            f"🎁 *وضعیت هدیه تولد شما*\n"
+            f"`{line_sep}`\n"
+            f"تاریخ ثبت شده: *{escape_markdown(shamsi_date)}*\n"
+            f"شمارش معکوس: *{days_left}* روز تا تولد بعدی شما باقی مانده است\\.\n"
+            f"`{line_sep}`\n"
+            f"⚠️ نکته: تاریخ تولد ثبت شده قابل ویرایش نیست\\."
+        )
+
+    @staticmethod
+    def test_account_created_text(username, password, link, lang_code):
+        # اینجا متنی که بعد از ساخت اکانت تست نشون میدی رو فرمت کن
+        # فعلا بر اساس کد main_menu.py شما فقط پیام موفقیت ساده بود، ولی اینجا جای خوبیه برای توسعه
+        pass
+
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:
     return f"*{escape_markdown(panel_name)}*\n\nمصرف: {stats}" 

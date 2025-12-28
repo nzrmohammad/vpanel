@@ -10,6 +10,7 @@ from bot.database import db
 from bot.db.base import User, UserUUID, SharedRequest, Panel
 from bot.services.panels import PanelFactory
 from bot.utils.formatters import escape_markdown
+from bot.formatters import user_formatter
 
 logger = logging.getLogger(__name__)
 

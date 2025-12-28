@@ -259,14 +259,8 @@ async def handle_test_name_input(message: types.Message):
     # 2. اعتبارسنجی نام (طول و کاراکترهای مجاز)
     # چک کردن طول و اینکه فقط حروف و عدد باشد (برای جلوگیری از باگ در پنل‌ها)
     if not (3 <= len(input_name) <= 12) or not input_name.replace('_', '').isalnum():
-        error_text = (
-            "📛 **انتخاب نام سرویس**\n\n"
-            "❌ نام وارد شده معتبر نیست!\n"
-            "لطفاً نامی بین ۳ تا ۱۲ کاراکتر (حروف انگلیسی و اعداد) وارد کنید:\n\n"
-            "👇 مجدداً تلاش کنید:"
-        )
-        markup = types.InlineKeyboardMarkup()
-        markup.add(user_menu.btn(f"🔙 {get_string('back', lang)}", "back_to_welcome"))
+        error_text = get_string('err_invalid_test_name', lang)
+        markup = await user_menu.simple_back_menu("back_to_welcome", lang)
         
         # ویرایش پیام قبلی با متن خطا
         try:
