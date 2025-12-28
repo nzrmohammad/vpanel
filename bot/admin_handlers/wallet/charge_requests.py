@@ -46,7 +46,6 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
         lang_code = user.lang_code if user else 'fa'
 
         try:
-            # ===============================================================
             # حالت تایید (Confirm)
             # ===============================================================
             if decision == 'confirm':
@@ -61,8 +60,9 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                     await session.commit()
                     
                     amount_str = f"{amount:,.0f}"
+                    
                     success_text = (
-                        f"✅ *واریزی شما تایید شد!* \n\n"
+                        f"✅ *واریزی شما تایید شد\\!* \n\n"
                         f"💰 مبلغ: `{amount_str} تومان`\n"
                         f"💳 موجودی فعلی: `{int(user.wallet_balance):,} تومان`\n\n"
                         f"👇 حالا می‌توانید سرویس مورد نظر خود را خریداری کنید:"
@@ -80,11 +80,31 @@ async def handle_charge_request_callback(call: types.CallbackQuery, params: list
                             await bot.send_message(user_id, success_text, reply_markup=post_charge_kb, parse_mode="MarkdownV2")
                         except: pass
                     
-                    # حذف فوری پیام از گروه مدیریت (چون کار تمام شده است)
+                    # --- مدیریت پیام ادمین (ویرایش + حذف با تاخیر) ---
                     try: 
-                        await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+                        status_text = f"✅ تایید شد توسط {call.from_user.first_name}"
+                        if call.message.caption:
+                            await bot.edit_message_caption(
+                                chat_id=call.message.chat.id, 
+                                message_id=call.message.message_id, 
+                                caption=status_text, 
+                                reply_markup=None
+                            )
+                        else:
+                            await bot.edit_message_text(
+                                chat_id=call.message.chat.id, 
+                                message_id=call.message.message_id, 
+                                text=status_text, 
+                                reply_markup=None
+                            )
                     except Exception as e: 
-                        logger.warning(f"Admin msg delete error: {e}")
+                        logger.warning(f"Admin msg edit error: {e}")
+
+                    # زمان‌بندی برای حذف پیام ادمین
+                    delete_delay = int(await db.get_config('ticket_auto_delete_time', 60))
+                    asyncio.create_task(
+                        delete_message_delayed(call.message.chat.id, call.message.message_id, delete_delay)
+                    )
 
                     await bot.answer_callback_query(call.id, "✅ تایید شد.")
                 else:
