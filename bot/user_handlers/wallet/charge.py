@@ -37,7 +37,7 @@ async def wallet_charge_start(call: types.CallbackQuery):
 
     text = "💰 *شارژ کیف پول*\n\nلطفاً مبلغ مورد نظر خود را به تومان وارد کنید:\nمثال: `50000`"
     kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+    kb = await user_menu.user_cancel_action("wallet:main", lang)
     
     msg = await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
     user_payment_states[user_id] = {'step': 'waiting_amount', 'msg_id': msg.message_id}

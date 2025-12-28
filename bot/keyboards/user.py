@@ -477,3 +477,24 @@ class UserMenu(BaseMenu):
         kb = self.create_markup()
         kb.add(self.back_btn(callback_data, lang_code))
         return kb
+    
+    async def select_destination_menu(self, service_list: list, plan_id: int, lang_code: str) -> types.InlineKeyboardMarkup:
+        """
+        منوی انتخاب مقصد برای خرید (جدید یا تمدید)
+        service_list: لیستی از دیکشنری‌ها شامل {'id': ..., 'text': ...}
+        """
+        kb = self.create_markup(row_width=1)
+        
+        # ۱. دکمه ایجاد سرویس جدید
+        # (متن دکمه را می‌توانید هاردکود کنید یا از get_string بگیرید)
+        new_service_text = "🆕 ایجاد سرویس جدید" 
+        kb.add(self.btn(new_service_text, f"wallet:preview_new:{plan_id}"))
+        
+        # ۲. دکمه‌های سرویس‌های موجود
+        for item in service_list:
+            kb.add(self.btn(item['text'], f"wallet:preview_renew:{item['id']}:{plan_id}"))
+            
+        # ۳. دکمه بازگشت
+        kb.add(self.back_btn("view_plans", lang_code))
+        
+        return kb

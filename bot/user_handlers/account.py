@@ -239,8 +239,7 @@ async def change_name_prompt(call: types.CallbackQuery):
     }
     
     # دکمه بازگشت (ضروری است چون فورس ریپلای نداریم)
-    markup = types.InlineKeyboardMarkup()
-    markup.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    markup = await user_menu.simple_back_menu(f"acc_{acc_id}", lang)
     
     # به جای ارسال پیام جدید، پیام فعلی را ویرایش می‌کنیم
     await bot.edit_message_text(
@@ -359,10 +358,8 @@ async def payment_history_handler(call: types.CallbackQuery):
             dt_str = h['payment_date'].strftime("%Y-%m-%d %H:%M")
             text += f"📅 {dt_str}\n"
             
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    kb = await user_menu.simple_back_menu(f"acc_{acc_id}", lang)
     
-    # ✅ اصلاح مهم: متن باید escape شود
     safe_text = escape_markdown(text)
     await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
 
@@ -385,10 +382,8 @@ async def usage_history_handler(call: types.CallbackQuery):
             d_str = day['date'].strftime("%Y-%m-%d")
             text += f"📅 {d_str}: {day['total_usage']} GB\n"
             
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    kb = await user_menu.simple_back_menu(f"acc_{acc_id}", lang)
     
-    # ✅ اصلاح مهم: متن باید escape شود تا پرانتزها درست ارسال شوند
     safe_text = escape_markdown(text)
     await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
 
@@ -403,8 +398,7 @@ async def user_account_page_handler(call: types.CallbackQuery):
     text = await user_formatter.user_account_page(user_id, lang)
     
     # دکمه بازگشت
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn("back", lang))
+    kb = await user_menu.simple_back_menu("back", lang)
     
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2')
 

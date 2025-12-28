@@ -188,10 +188,14 @@ async def show_plans_list(call: types.CallbackQuery):
 
 
 # --- مرحله ۱: انتخاب مقصد ---
+# در فایل bot/user_handlers/wallet/purchase.py
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('wallet:buy_confirm:'))
 async def select_service_destination(call: types.CallbackQuery):
     plan_id = int(call.data.split(':')[2])
     user_id = call.from_user.id
+    # دریافت زبان برای دکمه بازگشت
+    lang = await db.get_user_language(user_id)
     
     await bot.edit_message_text("⏳ در حال دریافت لیست سرویس‌ها...", user_id, call.message.message_id)
     
@@ -204,8 +208,10 @@ async def select_service_destination(call: types.CallbackQuery):
         await _show_new_service_preview(call, plan_id, user_id)
         return
 
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("🆕 ایجاد سرویس جدید", callback_data=f"wallet:preview_new:{plan_id}"))
+    # --- شروع تغییرات (ریفکتور) ---
+    
+    # ۱. آماده‌سازی لیست داده‌ها برای ارسال به کیبورد
+    services_data = []
     
     for srv in user_services:
         uuid_str = str(srv.uuid)
@@ -224,17 +230,30 @@ async def select_service_destination(call: types.CallbackQuery):
                         now = datetime.now()
                         rem_days = (expire_dt - now).days
                         days_str = str(max(0, rem_days))
-                    except Exception as e:
+                    except:
                         days_str = "?"
                 elif isinstance(raw_expire, (int, float)):
                     days_str = str(int(raw_expire))
                 else: days_str = "∞"
         except: pass
         
+        # ساخت متن دکمه
         btn_text = f"📊 {srv_name} ({percent}% - {days_str} روز)"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"wallet:preview_renew:{srv.id}:{plan_id}"))
+        
+        # اضافه کردن به لیست
+        services_data.append({
+            'id': srv.id,
+            'text': btn_text
+        })
     
-    markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="view_plans"))
+    # ۲. فراخوانی کیبورد جدید
+    markup = await user_menu.select_destination_menu(
+        service_list=services_data,
+        plan_id=plan_id,
+        lang_code=lang
+    )
+    
+    # --- پایان تغییرات ---
     
     await bot.edit_message_text(
         "🤔 شما سرویس‌های فعالی دارید.\nبرای این خرید، می‌خواهید سرویس جدید بسازید یا یکی از سرویس‌های موجود را تمدید کنید؟",
