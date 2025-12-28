@@ -4,6 +4,7 @@ import time
 import logging
 from telebot import types
 from bot.database import db
+from bot.db.base import PaymentMethod  # ایمپورت مدل برای کوئری مستقیم
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
 
@@ -225,20 +226,15 @@ async def list_config_category(call: types.CallbackQuery, params: list):
             status = "✅ فعال" if str(val).lower() == 'true' else "❌ غیرفعال"
             btn_text = f"{info['title']}: {status}"
         
-        # --- ✅ تغییر جدید: نمایش نام گروه برای main_group_id ---
         elif key == 'main_group_id' and val and str(val) != '0':
             try:
-                # تلاش برای دریافت نام گروه از تلگرام
                 chat = await bot.get_chat(int(val))
                 chat_title = chat.title if chat.title else "بدون نام"
-                # کوتاه کردن اسم اگر خیلی طولانی بود
                 if len(chat_title) > 20: chat_title = chat_title[:17] + "..."
                 btn_text = f"{info['title']}: {chat_title}"
             except Exception as e:
-                # اگر ربات در گروه نباشد یا آیدی اشتباه باشد
                 btn_text = f"{info['title']}: ❌ نامعتبر/عدم دسترسی"
         
-        # --- حالت پیش‌فرض برای سایر موارد ---
         else:
             val_str = str(val)
             if len(val_str) > 20: val_str = val_str[:17] + "..."
@@ -305,12 +301,11 @@ async def edit_config_start(call: types.CallbackQuery, params: list):
     }
 
 async def process_config_save(message: types.Message):
-    """ذخیره نهایی (اصلاح شده: ویرایش پیام قبلی + دکمه بازگشت)"""
+    """ذخیره نهایی"""
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
     
-    # حذف پیام ارسالی کاربر (عدد یا متن جدید)
     try: await bot.delete_message(user_id, message.message_id)
     except: pass
     
@@ -318,44 +313,39 @@ async def process_config_save(message: types.Message):
     info = BOT_CONFIGS[key]
     value = message.text.strip()
     
-    # دکمه بازگشت برای مواقع خطا یا موفقیت
     back_markup = types.InlineKeyboardMarkup()
     back_markup.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:sys_conf:list:{info['category']}"))
 
-    # اعتبارسنجی عددی
     if info['type'] == 'int':
         if not (value.lstrip('-').isdigit()):
             err_text = "❌ خطا: لطفاً فقط *عدد* وارد کنید\\."
             await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=back_markup, parse_mode='MarkdownV2')
             return
             
-    # اعتبارسنجی زمان
     if 'time' in key and ':' not in value:
          err_text = "❌ خطا: لطفاً فرمت زمان را به صورت *HH:MM* (مثلاً 23:57) وارد کنید\\."
          await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=back_markup, parse_mode='MarkdownV2')
          return
 
-    # ذخیره در دیتابیس
     await db.set_config(key, value)
     del admin_conversations[user_id]
     
     safe_title = escape_markdown(info['title'])
     safe_val = escape_markdown(value)
     
-    # ✅ پیام موفقیت که جایگزین پیام قبلی می‌شود
     msg_text = (
         f"✅ تنظیمات *{safe_title}* با موفقیت ذخیره شد\\.\n\n"
         f"🔹 مقدار جدید: `{safe_val}`"
     )
     
-    # ویرایش پیام قبلی (msg_id ذخیره شده در state) به جای ارسال پیام جدید
     await _safe_edit(user_id, state['msg_id'], msg_text, reply_markup=back_markup, parse_mode='MarkdownV2')
 
 # =========================================================
-# 3. بخش‌های قدیمی (کارت بانکی و کیف پول)
+# 3. بخش مدیریت کارت‌های بانکی و کیف پول (اصلاح شده)
 # =========================================================
 
 async def list_payment_methods(call: types.CallbackQuery, params: list):
+    """نمایش لیست روش‌ها (کلیک برای جزئیات)"""
     user_id = call.from_user.id
     if user_id in admin_conversations: del admin_conversations[user_id]
 
@@ -365,6 +355,7 @@ async def list_payment_methods(call: types.CallbackQuery, params: list):
     markup = types.InlineKeyboardMarkup(row_width=1)
     header_text = ""
 
+    # بخش نرخ تتر برای کریپتو
     if method_type == 'crypto':
         current_rate = await db.get_config('usdt_rate', '60000')
         markup.add(types.InlineKeyboardButton(
@@ -375,33 +366,24 @@ async def list_payment_methods(call: types.CallbackQuery, params: list):
         safe_rate = escape_markdown(f"{int(current_rate):,}")
         header_text = f"💵 *نرخ فعلی تتر:* `{safe_rate}` تومان\n\n"
 
+    # دریافت لیست متدها
     methods = await db.get_payment_methods(method_type, active_only=False)
     type_title = "کارت‌های بانکی" if method_type == 'card' else "کیف پول‌های کریپتو"
     
     safe_header = escape_markdown(f"مدیریت {type_title}")
-    text = f"📋 *{safe_header}*\n\n{header_text}لیست روش‌های تعریف شده:\n"
+    text = f"📋 *{safe_header}*\n\n{header_text}👇 برای مدیریت هر مورد روی آن کلیک کنید:"
     
     if not methods:
-        text += "_هیچ موردی یافت نشد\\._"
+        text += "\n\n_هیچ موردی یافت نشد\\._"
     else:
         for m in methods:
-            safe_title = escape_markdown(m['title'])
+            # فقط عنوان نمایش داده شود (وضعیت با آیکون)
             is_active = m.get('is_active', True)
             status_icon = "✅" if is_active else "❌"
+            btn_text = f"{status_icon} {m['title']}"
             
-            markup.add(types.InlineKeyboardButton(
-                f"{status_icon} {m['title']}", 
-                callback_data=f"admin:toggle_method:{m['id']}:{method_type}"
-            ))
-            markup.add(types.InlineKeyboardButton(
-                f"🗑 حذف {m['title']}", 
-                callback_data=f"admin:del_method:{m['id']}:{method_type}"
-            ))
-            
-            raw_details = m['details'].get('card_number') if method_type == 'card' else m['details'].get('network')
-            safe_details = escape_markdown(str(raw_details)) if raw_details else ""
-            
-            text += f"🔹 {safe_title}\n`{safe_details}`\n\n"
+            # کلیک روی دکمه -> رفتن به منوی مدیریت تکی (manage)
+            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"admin:pm_manage:{m['id']}:{method_type}"))
 
     add_text = "➕ افزودن کارت جدید" if method_type == 'card' else "➕ افزودن ولت جدید"
     markup.add(types.InlineKeyboardButton(add_text, callback_data=f"admin:add_method:{method_type}"))
@@ -409,17 +391,76 @@ async def list_payment_methods(call: types.CallbackQuery, params: list):
     
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup, parse_mode='MarkdownV2')
 
+async def manage_single_payment_method(call: types.CallbackQuery, params: list):
+    """منوی مدیریت تکی (حذف / تغییر وضعیت)"""
+    if len(params) < 2: return
+    method_id = int(params[0])
+    method_type = params[1]
+    
+    user_id = call.from_user.id
+    
+    # دریافت اطلاعات دقیق متد
+    method = await db.get_by_id(PaymentMethod, method_id)
+    if not method:
+        await bot.answer_callback_query(call.id, "❌ آیتم یافت نشد.")
+        return await list_payment_methods(call, [method_type])
+        
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # دکمه‌های عملیاتی
+    status_text = "غیرفعال کردن ❌" if method.is_active else "فعال کردن ✅"
+    markup.add(
+        types.InlineKeyboardButton(status_text, callback_data=f"admin:pm_toggle:{method_id}:{method_type}"),
+        types.InlineKeyboardButton("🗑 حذف", callback_data=f"admin:pm_del:{method_id}:{method_type}")
+    )
+    markup.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data=f"admin:pay_methods:{method_type}"))
+    
+    # آماده‌سازی متن نمایش
+    safe_title = escape_markdown(method.title)
+    status_label = "فعال ✅" if method.is_active else "غیرفعال ❌"
+    
+    details_text = ""
+    if method_type == 'card':
+        bn = escape_markdown(str(method.details.get('bank_name', '')))
+        cn = escape_markdown(str(method.details.get('card_number', '')))
+        ch = escape_markdown(str(method.details.get('card_holder', '')))
+        details_text = (
+            f"🏦 بانک: {bn}\n"
+            f"💳 شماره: `{cn}`\n"
+            f"👤 صاحب حساب: {ch}"
+        )
+    else:
+        addr = escape_markdown(str(method.details.get('address', '')))
+        net = escape_markdown(str(method.details.get('network', '')))
+        details_text = (
+            f"🌐 شبکه: {net}\n"
+            f"💎 آدرس: `{addr}`"
+        )
+
+    text = (
+        f"⚙️ *مدیریت: {safe_title}*\n\n"
+        f"وضعیت: {status_label}\n\n"
+        f"{details_text}\n\n"
+        f"👇 عملیات مورد نظر را انتخاب کنید:"
+    )
+    
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup, parse_mode='MarkdownV2')
+
 async def delete_payment_method_handler(call: types.CallbackQuery, params: list):
+    """حذف و بازگشت به لیست اصلی"""
     if len(params) < 2: return
     await db.delete_payment_method(int(params[0]))
-    await bot.answer_callback_query(call.id, "✅ حذف شد.")
+    await bot.answer_callback_query(call.id, "✅ با موفقیت حذف شد.")
+    # بازگشت به لیست
     await list_payment_methods(call, [params[1]])
 
 async def toggle_payment_method_handler(call: types.CallbackQuery, params: list):
+    """تغییر وضعیت و بازگشت به منوی تکی"""
     if len(params) < 2: return
     await db.toggle_payment_method(int(params[0]))
     await bot.answer_callback_query(call.id, "✅ وضعیت تغییر کرد.")
-    await list_payment_methods(call, [params[1]])
+    # بازگشت به منوی تکی (رفرش شدن صفحه)
+    await manage_single_payment_method(call, params)
 
 async def edit_usdt_rate_start(call: types.CallbackQuery, params: list):
     user_id = call.from_user.id
