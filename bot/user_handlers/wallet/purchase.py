@@ -78,8 +78,9 @@ async def generate_renewal_preview_text(current_uuid_obj, plan, plan_cat_info, c
         limit = current_uuid_obj.traffic_limit or 0
         used = current_uuid_obj.traffic_used or 0
         curr_rem_gb = max(0.0, limit - used)
-        if current_uuid_obj.expire_date and current_uuid_obj.expire_date > datetime.now():
-            curr_rem_days = (current_uuid_obj.expire_date - datetime.now()).days
+        now_aware = datetime.now().astimezone()
+        if current_uuid_obj.expire_date and current_uuid_obj.expire_date > now_aware:
+            curr_rem_days = (current_uuid_obj.expire_date - now_aware).days
 
     # 2. اطلاعات پلن
     plan_gb = plan['volume_gb']
@@ -220,9 +221,11 @@ async def select_service_destination(call: types.CallbackQuery):
                 if isinstance(raw_expire, (int, float)) and raw_expire > 100_000_000:
                     try:
                         expire_dt = datetime.fromtimestamp(raw_expire)
-                        rem_days = (expire_dt - datetime.now()).days
+                        now = datetime.now()
+                        rem_days = (expire_dt - now).days
                         days_str = str(max(0, rem_days))
-                    except: days_str = "?"
+                    except Exception as e:
+                        days_str = "?"
                 elif isinstance(raw_expire, (int, float)):
                     days_str = str(int(raw_expire))
                 else: days_str = "∞"
@@ -280,29 +283,79 @@ async def handler_preview_renew(call: types.CallbackQuery):
         uuid_obj = await session.get(UserUUID, uuid_id)
         if not uuid_obj: return
         
-        # دریافت اطلاعات زنده
+        # --- اصلاح: دریافت اطلاعات زنده (اول پنل، بعد دیتابیس) ---
         current_stats = {}
+        fetched_from_panel = False
+        
+        # 1. تلاش اول: اتصال مستقیم به پنل (برای دقت ۱۰۰٪)
         try:
-            info = await combined_handler.get_combined_user_info(str(uuid_obj.uuid))
-            if info:
-                limit = 0; used = 0
-                if 'usage' in info and isinstance(info['usage'], dict):
-                    limit = info['usage'].get('data_limit_GB', 0)
-                    used = info['usage'].get('total_usage_GB', 0)
-                current_stats = {'traffic_limit': limit, 'traffic_used': used, 'expire_date': info.get('expire')}
-        except: pass
+            if uuid_obj.allowed_panels:
+                # گرفتن پنل کاربر
+                target_panel = uuid_obj.allowed_panels[0]
+                panel_api = await PanelFactory.get_panel(target_panel.name)
+                
+                if panel_api:
+                    # درخواست مستقیم به API پنل
+                    raw_user = await panel_api.get_user(str(uuid_obj.uuid))
+                    if raw_user:
+                        # تبدیل بایت به گیگابایت (چون اکثر پنل‌ها بایت برمی‌گردانند)
+                        limit_bytes = 0
+                        if 'data_limit' in raw_user and raw_user['data_limit']: 
+                            limit_bytes = float(raw_user['data_limit'])
+                        elif 'usage_limit_GB' in raw_user: 
+                            limit_bytes = float(raw_user['usage_limit_GB']) * (1024**3)
+                        
+                        used_bytes = 0
+                        if 'used_traffic' in raw_user and raw_user['used_traffic']: 
+                            used_bytes = float(raw_user['used_traffic'])
+                        
+                        expire_ts = 0
+                        if 'expire_date' in raw_user: expire_ts = raw_user['expire_date']
+                        elif 'expire' in raw_user: expire_ts = raw_user['expire']
+                        
+                        current_stats = {
+                            'traffic_limit': limit_bytes / (1024**3),
+                            'traffic_used': used_bytes / (1024**3),
+                            'expire_date': expire_ts
+                        }
+                        fetched_from_panel = True
+        except Exception as e:
+            logger.error(f"Live panel fetch failed (Fallback to cache): {e}")
 
+        # 2. تلاش دوم: اگر پنل جواب نداد، دریافت از کش (Combined Handler)
+        if not fetched_from_panel:
+            try:
+                info = await combined_handler.get_combined_user_info(str(uuid_obj.uuid))
+                if info:
+                    # پشتیبانی از ساختارهای مختلف کش
+                    limit = info.get('usage_limit_GB', 0)
+                    used = info.get('current_usage_GB', 0)
+                    
+                    # اگر ساختار قدیمی بود
+                    if limit == 0 and 'usage' in info and isinstance(info['usage'], dict):
+                        limit = info['usage'].get('data_limit_GB', 0)
+                        used = info['usage'].get('total_usage_GB', 0)
+                        
+                    current_stats = {
+                        'traffic_limit': limit, 
+                        'traffic_used': used, 
+                        'expire_date': info.get('expire')
+                    }
+            except Exception as e:
+                logger.error(f"Cache fetch failed: {e}")
+
+        # دریافت اطلاعات کتگوری و پلن
         categories = await db.get_server_categories()
         plan_cat_code = plan['allowed_categories'][0] if plan['allowed_categories'] else None
         plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
         
+        # تولید متن پیش‌نمایش
         text = await generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"),
             types.InlineKeyboardButton("✅ پرداخت", callback_data=f"wallet:do_renew:{uuid_id}:{plan_id}")
-            
         )
         
         try:
