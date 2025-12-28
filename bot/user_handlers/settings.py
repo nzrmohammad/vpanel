@@ -46,7 +46,6 @@ async def toggle_setting_handler(call: types.CallbackQuery):
 @bot.callback_query_handler(func=lambda call: call.data == "change_language")
 async def change_language_handler(call: types.CallbackQuery):
     markup = await user_menu.language_change_menu()
-    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="settings"))
     
     await bot.edit_message_text("Language / زبان:", call.from_user.id, call.message.message_id, reply_markup=markup)
 

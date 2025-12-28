@@ -834,7 +834,8 @@ class UserFormatter:
         """وضعیت هدیه تولد"""
         # (کد تابع _fmt_birthday_info از features.py رو بیار اینجا و مرتبش کن)
         bday = user_data.get('birthday')
-        if not bday: return "تاریخ تولدی ثبت نشده است."
+        if not bday: 
+            return escape_markdown("تاریخ تولدی ثبت نشده است.")
         
         days_left = days_until_next_birthday(bday)
         shamsi_date = to_shamsi(bday, include_time=False)

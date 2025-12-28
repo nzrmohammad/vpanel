@@ -4,8 +4,10 @@ from telebot import types
 from bot.bot_instance import bot
 from bot.keyboards import user as user_menu
 from bot.database import db
-from bot.formatters import user_formatter
+from bot.utils.date_helpers import to_shamsi
+from bot.utils.formatters import escape_markdown
 from .states import user_payment_states
+from bot.formatters import user_formatter
 
 # --- منوی اصلی کیف پول ---
 @bot.callback_query_handler(func=lambda call: call.data == "wallet:main")
@@ -35,11 +37,7 @@ async def wallet_history_handler(call: types.CallbackQuery):
     lang = await db.get_user_language(user_id)
     
     transactions = await db.get_wallet_history(user_id, limit=10)
-    
-    if not transactions:
-        text += "──────────────────\nتراکنشی یافت نشد"
-    else:
-        text = user_formatter.wallet_history_list(transactions)
+    text = user_formatter.wallet_history_list(transactions)
 
     kb = await user_menu.wallet_history_menu(lang)
     await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')

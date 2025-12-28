@@ -27,7 +27,6 @@ class UserMenu(BaseMenu):
             (f"📚 {get_string('btn_tutorials', lang_code)}", "tutorials"),
             (f"👤 {get_string('user_account_page_title', lang_code)}", "user_account"),
             (f"👥 {get_string('btn_referrals', lang_code)}", "referral:info"),
-            (f"🏆 {get_string('btn_achievements', lang_code)}", "achievements"),
             (f"⚙️ {get_string('settings', lang_code)}", "settings"),
             (f"🎁 {get_string('birthday_gift', lang_code)}", "birthday_gift"),
             (f"💬 {get_string('support', lang_code)}", "support:new"),
