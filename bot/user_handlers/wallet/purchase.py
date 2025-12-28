@@ -20,118 +20,6 @@ from bot import combined_handler
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------
-# 1. توابع کمکی (محاسبه و نمایش)
-# ---------------------------------------------------------
-
-def generate_new_preview_text(plan, plan_cat_info):
-    """پیش‌نمایش خرید سرویس جدید"""
-    plan_gb = plan['volume_gb']
-    plan_days = plan['days']
-    plan_name = escape_markdown(plan['name'])
-    
-    # اصلاح نمایش پرچم تکراری
-    plan_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
-    if plan_emoji and plan_emoji in plan['name']:
-        display_name = plan_name
-    else:
-        display_name = f"{plan_name} {plan_emoji}"
-
-    price_comma = f"{int(plan['price']):,}"
-
-    text = "🔍 *پیش‌نمایش خرید سرویس جدید*\n"
-    text += "──────────────────\n"
-    text += "پلن انتخابی:\n"
-    text += f"{display_name}\n"
-    text += f"📦 {int(plan_gb)} GB \| ⏳ {plan_days} روز\n\n"
-    text += f"💰 مبلغ: {price_comma} تومان\n"
-    text += "──────────────────\n"
-    text += "❓ آیا از ایجاد سرویس جدید اطمینان دارید؟"
-    return text
-
-async def generate_renewal_preview_text(current_uuid_obj, plan, plan_cat_info, categories, current_stats=None):
-    """
-    پیش‌نمایش تمدید سرویس (نسخه Async) - فرمت جدید مطابق درخواست
-    """
-    # 1. محاسبه وضعیت فعلی
-    curr_rem_gb = 0
-    curr_rem_days = 0
-    
-    if current_stats:
-        limit = current_stats.get('traffic_limit', 0)
-        used = current_stats.get('traffic_used', 0)
-        curr_rem_gb = max(0.0, limit - used)
-        
-        expire_ts = current_stats.get('expire_date')
-        if expire_ts:
-             if isinstance(expire_ts, datetime):
-                 now = datetime.now()
-                 if expire_ts > now: curr_rem_days = (expire_ts - now).days
-             elif isinstance(expire_ts, (int, float)):
-                 if expire_ts > 1000000000:
-                     dt = datetime.fromtimestamp(expire_ts)
-                     now = datetime.now()
-                     if dt > now: curr_rem_days = (dt - now).days
-                 else:
-                     curr_rem_days = int(expire_ts)
-    else:
-        limit = current_uuid_obj.traffic_limit or 0
-        used = current_uuid_obj.traffic_used or 0
-        curr_rem_gb = max(0.0, limit - used)
-        now_aware = datetime.now().astimezone()
-        if current_uuid_obj.expire_date and current_uuid_obj.expire_date > now_aware:
-            curr_rem_days = (current_uuid_obj.expire_date - now_aware).days
-
-    # 2. اطلاعات پلن
-    plan_gb = plan['volume_gb']
-    plan_days = plan['days']
-    plan_name = escape_markdown(plan['name'])
-    
-    plan_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
-    # جلوگیری از تکرار پرچم اگر در نام پلن وجود دارد
-    if plan_emoji and plan_emoji in plan['name']:
-        plan_display_name = plan_name
-    else:
-        plan_display_name = f"{plan_name} {plan_emoji}"
-
-    price_comma = f"{int(plan['price']):,}"
-
-    # 3. محاسبه آینده
-    new_total_gb = curr_rem_gb + plan_gb
-    new_total_days = curr_rem_days + plan_days
-    
-    def fmt(num):
-        return f"{int(num)}" if num == int(num) else f"{num:.1f}"
-
-    # --- تولید متن با فرمت درخواستی ---
-    text = "🔄 *پیش‌نمایش تمدید سرویس*\n"
-    text += "➖➖➖➖➖➖➖➖\n"
-    
-    # بخش مشخصات پلن (جابجایی به بالا)
-    text += "🏷 *پلن انتخابی*\n"
-    text += f"{plan_display_name}\n"
-    text += f"📊 {int(plan_gb)} GB\n"
-    text += f"⏳ {plan_days} Day\n"
-    text += "➖➖➖➖➖➖➖➖\n"
-    
-    # بخش تغییرات حجم
-    text += "📦 *تغییرات حجم*\n"
-    text += f"{fmt(curr_rem_gb)}GB ➔ \+{fmt(plan_gb)} GB ➔ *{fmt(new_total_gb)} GB*\n"
-    
-    # بخش تغییرات زمان
-    text += "⏳ *تغییرات زمان*\n"
-    text += f"{curr_rem_days} ➔ \+{plan_days} ➔ *{new_total_days}*\n"
-    
-    text += "➖➖➖➖➖\n"
-    text += f"💰 *مبلغ قابل پرداخت :* {price_comma} تومان\n"
-    text += "❓ آیا عملیات تایید است؟"
-    
-    return text
-
-# ---------------------------------------------------------
-# 2. هندلرهای منو و انتخاب
-# ---------------------------------------------------------
-
 @bot.callback_query_handler(func=lambda call: call.data == "view_plans")
 async def view_plans_categories(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -188,13 +76,10 @@ async def show_plans_list(call: types.CallbackQuery):
 
 
 # --- مرحله ۱: انتخاب مقصد ---
-# در فایل bot/user_handlers/wallet/purchase.py
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('wallet:buy_confirm:'))
 async def select_service_destination(call: types.CallbackQuery):
     plan_id = int(call.data.split(':')[2])
     user_id = call.from_user.id
-    # دریافت زبان برای دکمه بازگشت
     lang = await db.get_user_language(user_id)
     
     await bot.edit_message_text("⏳ در حال دریافت لیست سرویس‌ها...", user_id, call.message.message_id)
@@ -275,7 +160,7 @@ async def _show_new_service_preview(call, plan_id, user_id):
     plan_cat_code = plan['allowed_categories'][0] if plan['allowed_categories'] else None
     plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
     
-    text = generate_new_preview_text(plan, plan_cat_info)
+    text = user_formatter.generate_new_preview_text(plan, plan_cat_info)
     
     markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_buy_new:{plan_id}",lang_code=lang)
     
@@ -366,7 +251,7 @@ async def handler_preview_renew(call: types.CallbackQuery):
         plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
         
         # تولید متن پیش‌نمایش
-        text = await generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
+        text = await user_formatter.generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
         
         markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_renew:{uuid_id}:{plan_id}",cancel_callback="view_plans",lang_code=lang)
         
@@ -580,7 +465,6 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
     else:
         await bot.send_message(user_id, success_text, reply_markup=markup, parse_mode='HTML')
 
-    # 4. 📢 ارسال گزارش به سوپرگروه (با استفاده از متد جدید در AdminFormatter)
     try:
         main_group_id = await db.get_config('main_group_id')
         shop_topic_id = await db.get_config('topic_id_shop')

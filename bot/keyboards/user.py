@@ -498,3 +498,13 @@ class UserMenu(BaseMenu):
         kb.add(self.back_btn("view_plans", lang_code))
         
         return kb
+    
+    async def account_not_found_menu(self, acc_id: int, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی زمانی که اکانت در سرور پیدا نمیشود"""
+        kb = self.create_markup(row_width=1)
+        # متن دکمه را از فایل زبان می‌خوانیم
+        del_text = get_string('btn_delete_from_bot', lang_code)
+        
+        kb.add(self.btn(del_text, f"del_{acc_id}"))
+        kb.add(self.back_btn("manage", lang_code))
+        return kb

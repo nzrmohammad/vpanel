@@ -580,7 +580,6 @@ class UserFormatter:
         
         return f"{short_name} » {vol} » {days} » {price} {status_emoji}"
 
-# داخل کلاس UserFormatter اضافه کنید:
 
     def purchase_receipt(self, plan_name, limit_gb, days, service_name, server_name) -> str:
         """
@@ -597,6 +596,112 @@ class UserFormatter:
             f"➖➖➖➖➖➖➖\n"
             f"از خرید شما متشکریم 🌹"
         )
+
+    @staticmethod
+    def generate_new_preview_text(plan, plan_cat_info):
+        """پیش‌نمایش خرید سرویس جدید"""
+        plan_gb = plan['volume_gb']
+        plan_days = plan['days']
+        plan_name = escape_markdown(plan['name'])
+        
+        # اصلاح نمایش پرچم تکراری
+        plan_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
+        if plan_emoji and plan_emoji in plan['name']:
+            display_name = plan_name
+        else:
+            display_name = f"{plan_name} {plan_emoji}"
+
+        price_comma = f"{int(plan['price']):,}"
+
+        text = "🔍 *پیش‌نمایش خرید سرویس جدید*\n"
+        text += "──────────────────\n"
+        text += "پلن انتخابی:\n"
+        text += f"{display_name}\n"
+        text += f"📦 {int(plan_gb)} GB \| ⏳ {plan_days} روز\n\n"
+        text += f"💰 مبلغ: {price_comma} تومان\n"
+        text += "──────────────────\n"
+        text += "❓ آیا از ایجاد سرویس جدید اطمینان دارید؟"
+        return text
+
+    @staticmethod
+    async def generate_renewal_preview_text(current_uuid_obj, plan, plan_cat_info, categories, current_stats=None):
+        """
+        پیش‌نمایش تمدید سرویس (نسخه Async) - فرمت جدید مطابق درخواست
+        """
+        # 1. محاسبه وضعیت فعلی
+        curr_rem_gb = 0
+        curr_rem_days = 0
+        
+        if current_stats:
+            limit = current_stats.get('traffic_limit', 0)
+            used = current_stats.get('traffic_used', 0)
+            curr_rem_gb = max(0.0, limit - used)
+            
+            expire_ts = current_stats.get('expire_date')
+            if expire_ts:
+                if isinstance(expire_ts, datetime):
+                    now = datetime.now()
+                    if expire_ts > now: curr_rem_days = (expire_ts - now).days
+                elif isinstance(expire_ts, (int, float)):
+                    if expire_ts > 1000000000:
+                        dt = datetime.fromtimestamp(expire_ts)
+                        now = datetime.now()
+                        if dt > now: curr_rem_days = (dt - now).days
+                    else:
+                        curr_rem_days = int(expire_ts)
+        else:
+            limit = current_uuid_obj.traffic_limit or 0
+            used = current_uuid_obj.traffic_used or 0
+            curr_rem_gb = max(0.0, limit - used)
+            now_aware = datetime.now().astimezone()
+            if current_uuid_obj.expire_date and current_uuid_obj.expire_date > now_aware:
+                curr_rem_days = (current_uuid_obj.expire_date - now_aware).days
+
+        # 2. اطلاعات پلن
+        plan_gb = plan['volume_gb']
+        plan_days = plan['days']
+        plan_name = escape_markdown(plan['name'])
+        
+        plan_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
+        # جلوگیری از تکرار پرچم اگر در نام پلن وجود دارد
+        if plan_emoji and plan_emoji in plan['name']:
+            plan_display_name = plan_name
+        else:
+            plan_display_name = f"{plan_name} {plan_emoji}"
+
+        price_comma = f"{int(plan['price']):,}"
+
+        # 3. محاسبه آینده
+        new_total_gb = curr_rem_gb + plan_gb
+        new_total_days = curr_rem_days + plan_days
+        
+        def fmt(num):
+            return f"{int(num)}" if num == int(num) else f"{num:.1f}"
+
+        # --- تولید متن با فرمت درخواستی ---
+        text = "🔄 *پیش‌نمایش تمدید سرویس*\n"
+        text += "➖➖➖➖➖➖➖➖\n"
+        
+        # بخش مشخصات پلن (جابجایی به بالا)
+        text += "🏷 *پلن انتخابی*\n"
+        text += f"{plan_display_name}\n"
+        text += f"📊 {int(plan_gb)} GB\n"
+        text += f"⏳ {plan_days} Day\n"
+        text += "➖➖➖➖➖➖➖➖\n"
+        
+        # بخش تغییرات حجم
+        text += "📦 *تغییرات حجم*\n"
+        text += f"{fmt(curr_rem_gb)}GB ➔ \+{fmt(plan_gb)} GB ➔ *{fmt(new_total_gb)} GB*\n"
+        
+        # بخش تغییرات زمان
+        text += "⏳ *تغییرات زمان*\n"
+        text += f"{curr_rem_days} ➔ \+{plan_days} ➔ *{new_total_days}*\n"
+        
+        text += "➖➖➖➖➖\n"
+        text += f"💰 *مبلغ قابل پرداخت :* {price_comma} تومان\n"
+        text += "❓ آیا عملیات تایید است؟"
+        
+        return text
 
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:

@@ -139,13 +139,7 @@ async def account_detail_handler(call: types.CallbackQuery):
             # ✅✅✅ اضافه کردن دکمه حذف به پیام خطا ✅✅✅
             error_text = "❌ اطلاعات اکانت در سرور یافت نشد. ممکن است حذف شده باشد.\n\nمی‌توانید این اکانت را از لیست خود پاک کنید:"
             
-            markup = types.InlineKeyboardMarkup()
-            
-            # 1. دکمه حذف از دیتابیس ربات (با استفاده از هندلر موجود del_)
-            markup.add(types.InlineKeyboardButton("🗑 حذف از لیست ربات", callback_data=f"del_{acc_id}"))
-            
-            # 2. دکمه بازگشت
-            markup.add(user_menu.back_btn("manage", lang))
+            markup = await user_menu.account_not_found_menu(acc_id, lang)
             
             await bot.edit_message_text(error_text, user_id, call.message.message_id, reply_markup=markup)
             
