@@ -485,16 +485,12 @@ class UserMenu(BaseMenu):
         """
         kb = self.create_markup(row_width=1)
         
-        # ۱. دکمه ایجاد سرویس جدید
-        # (متن دکمه را می‌توانید هاردکود کنید یا از get_string بگیرید)
-        new_service_text = "🆕 ایجاد سرویس جدید" 
+        new_service_text = f"🆕 {get_string('btn_create_new_service', lang_code)}" 
         kb.add(self.btn(new_service_text, f"wallet:preview_new:{plan_id}"))
         
-        # ۲. دکمه‌های سرویس‌های موجود
         for item in service_list:
             kb.add(self.btn(item['text'], f"wallet:preview_renew:{item['id']}:{plan_id}"))
             
-        # ۳. دکمه بازگشت
         kb.add(self.back_btn("view_plans", lang_code))
         
         return kb
@@ -502,7 +498,6 @@ class UserMenu(BaseMenu):
     async def account_not_found_menu(self, acc_id: int, lang_code: str) -> types.InlineKeyboardMarkup:
         """منوی زمانی که اکانت در سرور پیدا نمیشود"""
         kb = self.create_markup(row_width=1)
-        # متن دکمه را از فایل زبان می‌خوانیم
         del_text = get_string('btn_delete_from_bot', lang_code)
         
         kb.add(self.btn(del_text, f"del_{acc_id}"))

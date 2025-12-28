@@ -273,6 +273,7 @@
   "msg_confirm_delete_account": "⚠️ **Are you sure you want to remove this account from your list?**\n\n(Note: This only removes it from the bot, the service remains on the server)",
   
   "err_account_not_found_server": "❌ Account info not found on server. It might have been deleted.\n\nYou can remove this account from your list:",
-  "btn_delete_from_bot": "🗑 Remove from Bot List"
+  "btn_delete_from_bot": "🗑 Remove from Bot List",
+  "btn_create_new_service": "Create New Service"
 
 }

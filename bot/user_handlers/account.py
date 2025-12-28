@@ -136,8 +136,7 @@ async def account_detail_handler(call: types.CallbackQuery):
                 reply_markup=markup, parse_mode='MarkdownV2'
             )
         else:
-            # ✅✅✅ اضافه کردن دکمه حذف به پیام خطا ✅✅✅
-            error_text = "❌ اطلاعات اکانت در سرور یافت نشد. ممکن است حذف شده باشد.\n\nمی‌توانید این اکانت را از لیست خود پاک کنید:"
+            error_text = get_string('err_account_not_found_server', lang)
             
             markup = await user_menu.account_not_found_menu(acc_id, lang)
             
