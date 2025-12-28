@@ -4,6 +4,7 @@ from .base import BasePanel
 from .hiddify import HiddifyPanel
 from .remnawave import RemnawavePanel
 from .marzban import MarzbanPanel
+from .pasarguard import PasarGuardPanel
 
 
 class PanelFactory:
@@ -52,7 +53,15 @@ class PanelFactory:
                 api_token=panel_data['api_token1'] # توکن در فیلد token1 ذخیره می‌شود
             )
 
-
+        elif p_type == "pasarguard":
+            instance = PasarGuardPanel(
+                api_url=panel_data['api_url'],
+                # نگاشت فیلدهای دیتابیس به ورودی‌های کلاس پاسارگاد
+                username=panel_data['api_token1'],  # معمولاً توکن ۱ به عنوان یوزرنیم استفاده می‌شود
+                password=panel_data['api_token2'],  # معمولاً توکن ۲ به عنوان پسورد استفاده می‌شود
+                extra_config={} 
+            )
+            
         else:
             raise ValueError(f"Unknown panel type: {p_type}")
 

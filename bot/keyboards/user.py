@@ -89,10 +89,6 @@ class UserMenu(BaseMenu):
             self.btn(f"🗑 {get_string('btn_delete', lang_code)}", f"del_{uuid_id}"),
             self.btn(f"📈 {get_string('btn_usage_history', lang_code)}", f"usage_history_{uuid_id}")
         )
-        
-        # اصلاح شرط: چک کردن مقدار رشته‌ای به صورت حروف کوچک
-        if str(enable_transfer).lower() == 'true':
-            kb.add(self.btn("💸 انتقال ترافیک", f"transfer_start_{uuid_id}"))
             
         kb.add(self.back_btn("manage", lang_code))
         return kb
@@ -321,21 +317,7 @@ class UserMenu(BaseMenu):
             self.btn(f"📜 {get_string('transaction_history', lang_code)}", "wallet:history"),
             self.btn(f"➕ {get_string('charge_wallet', lang_code)}", "wallet:charge")
         )
-        kb.add(
-            self.btn("💸 انتقال موجودی", "wallet:transfer_start"),
-            self.btn("⚙️ تمدید خودکار", "wallet:settings")
-        )
-        kb.add(self.btn("🎁 خرید برای دیگران", "wallet:gift_start"))
         kb.add(self.back_btn("back", lang_code))
-        return kb
-
-    async def wallet_settings_menu(self, auto_renew_status: bool, lang_code: str) -> types.InlineKeyboardMarkup:
-        """تنظیمات تمدید خودکار کیف پول"""
-        kb = self.create_markup(row_width=1)
-        status_text = "✅ فعال" if auto_renew_status else "❌ غیرفعال"
-        
-        kb.add(self.btn(f"تمدید خودکار: {status_text}", "wallet:toggle_auto_renew"))
-        kb.add(self.back_btn("wallet:main", lang_code))
         return kb
     
     async def payment_options_menu(self, lang_code: str, payment_methods: list, back_callback: str = "wallet:main") -> types.InlineKeyboardMarkup:

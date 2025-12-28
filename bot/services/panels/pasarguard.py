@@ -1,67 +1,59 @@
-# bot/services/panels/marzban.py
-import aiohttp
+# bot/services/panels/pasarguard.py
 import logging
+import aiohttp
 import time
-from datetime import datetime, timedelta
 from typing import Optional, List, Any
+from datetime import datetime, timedelta
 from .base import BasePanel
 
 logger = logging.getLogger(__name__)
 
-class MarzbanPanel(BasePanel):
+class PasarGuardPanel(BasePanel):
     def __init__(self, api_url: str, username: str, password: str, extra_config: dict = None):
         super().__init__(api_url, username, extra_config)
         self.username = username
         self.password = password
         self.access_token = None
         
-        # هدرهای پیش‌فرض (بدون توکن در ابتدا)
+        # هدرهای پیش‌فرض
         self.headers = {
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
         
-        # ✅ بهینه‌سازی ۱: ایجاد سشن پایدار
-        # تایم‌اوت‌ها را کمی بیشتر می‌گیریم تا در شبکه ضعیف اذیت نکند
+        # ایجاد سشن پایدار (Connection Pooling)
         timeout = aiohttp.ClientTimeout(total=20, connect=10)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
     async def close(self):
-        """بستن سشن طبق استاندارد"""
         if not self.session.closed:
             await self.session.close()
 
     async def _get_access_token(self) -> bool:
-        """دریافت توکن جدید از مرزبان و ذخیره آن"""
+        """دریافت توکن ادمین از پاسارگارد"""
+        # نکته: در اکثر پنل‌های FastAPI آدرس توکن به این صورت است
         url = f"{self.api_url}/api/admin/token"
-        # مرزبان انتظار فرم‌دیتا (x-www-form-urlencoded) دارد
         data = {
             "username": self.username,
             "password": self.password
         }
         
         try:
-            # اینجا از self.session استفاده می‌کنیم ولی بدون هدر Auth
+            # ارسال به صورت x-www-form-urlencoded
             async with self.session.post(url, data=data) as resp:
                 if resp.status == 200:
                     json_resp = await resp.json()
                     self.access_token = json_resp.get("access_token")
-                    
-                    # ✅ آپدیت هدرها: از این لحظه به بعد همه درخواست‌ها این توکن را دارند
                     self.headers["Authorization"] = f"Bearer {self.access_token}"
                     return True
                 else:
-                    logger.error(f"Marzban Login Failed: {resp.status} | {await resp.text()}")
+                    logger.error(f"PasarGuard Login Failed: {resp.status} | {await resp.text()}")
                     return False
         except Exception as e:
-            logger.error(f"Marzban Token Error: {e}")
+            logger.error(f"PasarGuard Token Error: {e}")
             return False
 
     async def _request(self, method: str, endpoint: str, json: dict = None, retry_auth: bool = True) -> Any:
-        """
-        ارسال درخواست به مرزبان با قابلیت تلاش مجدد خودکار (Auto-Retry) هنگام انقضای توکن
-        """
-        # اگر اولین بار است و توکن نداریم، بگیر
         if not self.access_token:
             if not await self._get_access_token():
                 return None
@@ -69,42 +61,33 @@ class MarzbanPanel(BasePanel):
         url = f"{self.api_url}/api/{endpoint.lstrip('/')}"
         
         try:
-            # درخواست با هدرهای حاوی توکن ارسال می‌شود
             async with self.session.request(method, url, json=json, headers=self.headers) as resp:
-                
-                # ✅ بهینه‌سازی ۲: مدیریت هوشمند انقضای توکن
-                # اگر ارور 401 داد، یعنی توکن منقضی شده. یک بار رفرش کن و دوباره تلاش کن.
                 if resp.status == 401 and retry_auth:
-                    logger.warning("Marzban Token Expired. Refreshing...")
+                    logger.warning("PasarGuard Token Expired. Refreshing...")
                     if await self._get_access_token():
-                        # فراخوانی مجدد همین تابع (Recursion) با retry_auth=False
                         return await self._request(method, endpoint, json, retry_auth=False)
-                    else:
-                        return None
+                    return None
 
-                if resp.status == 204: # موفقیت‌آمیز بدون محتوا
+                if resp.status == 204:
                     return True
 
                 if resp.status >= 400:
-                    logger.error(f"Marzban API Error [{resp.status}]: {await resp.text()}")
+                    logger.error(f"PasarGuard API Error [{resp.status}]: {await resp.text()}")
                     return None
                 
                 return await resp.json()
-                
         except Exception as e:
-            logger.error(f"Marzban Request Exception [{endpoint}]: {e}")
+            logger.error(f"PasarGuard Request Exception: {e}")
             return None
 
-    # --- پیاده‌سازی متدهای استاندارد ---
+    # --- پیاده‌سازی متدها ---
 
     async def add_user(self, name: str, limit_gb: int, expire_days: int, uuid: str = None, telegram_id: str = None, squad_uuid: str = None) -> Optional[dict]:
-        # محاسبه زمان انقضا
         expire_ts = 0
         if expire_days > 0:
-            # استفاده از UTC برای جلوگیری از باگ‌های زمانی سرور
             expire_ts = int((datetime.utcnow() + timedelta(days=expire_days)).timestamp())
         
-        # این بخش را می‌توانید بر اساس نیازتان کاستوم کنید (مثلاً پروتکل‌های خاص)
+        # تنظیمات پروکسی (ممکن است بسته به کانفیگ پنل شما متفاوت باشد)
         proxies = {"vless": {}, "vmess": {}, "trojan": {}, "shadowsocks": {}}
 
         payload = {
@@ -112,51 +95,40 @@ class MarzbanPanel(BasePanel):
             "proxies": proxies,
             "data_limit": int(limit_gb * (1024**3)) if limit_gb else 0,
             "expire": expire_ts if expire_ts > 0 else None,
-            "status": "active"
+            "status": "active",
+            "note": f"Created by Bot (TG ID: {telegram_id})" if telegram_id else "Created by Bot"
         }
-        # مرزبان معمولاً خودش UUID می‌سازد، نیازی به ارسال نیست مگر در شرایط خاص
+        
         return await self._request("POST", "user", json=payload)
 
     async def get_user(self, identifier: str) -> Optional[dict]:
-        # در مرزبان identifier همان username است
         return await self._request("GET", f"user/{identifier}")
 
     async def get_all_users(self) -> List[dict]:
         resp = await self._request("GET", "users")
-        # خروجی مرزبان معمولاً به فرم {'users': [...], 'total': 10} است
+        # معمولاً {'users': [...]} برمی‌گرداند
         if isinstance(resp, dict):
             return resp.get("users", [])
-        return []
+        return resp if isinstance(resp, list) else []
 
     async def modify_user(self, identifier: str, add_gb: float = 0, add_days: int = 0, new_limit_gb: float = None, new_expire_ts: int = None) -> bool:
-        """
-        ویرایش کاربر در مرزبان.
-        نکته: مرزبان از PUT برای آپدیت استفاده می‌کند که معمولاً کل آبجکت را بازنویسی می‌کند،
-        اما در نسخه‌های جدید از Partial Update هم پشتیبانی می‌کند.
-        """
-        # اگر قرار است "اضافه" کنیم، ابتدا باید مقدار فعلی را بدانیم
         if add_gb or add_days:
             user = await self.get_user(identifier)
             if not user: return False
         
         payload = {}
         
-        # --- لاجیک حجم ---
         if new_limit_gb is not None:
             payload['data_limit'] = int(new_limit_gb * (1024**3))
         elif add_gb != 0:
             current = user.get('data_limit', 0) or 0
-            # اگر لیمیت 0 بود (یعنی نامحدود)، با افزودن حجم، محدود می‌شود
             payload['data_limit'] = int(current + (add_gb * (1024**3)))
             
-        # --- لاجیک زمان ---
         if new_expire_ts is not None:
             payload['expire'] = new_expire_ts
         elif add_days != 0:
             current_expire = user.get('expire', 0)
             now_ts = int(time.time())
-            
-            # اگر اشتراک تمام شده، از "همین لحظه" تمدید کن. اگر نه، از "انتهای اشتراک قبلی".
             base_time = max(current_expire, now_ts) if current_expire else now_ts
             payload['expire'] = base_time + (add_days * 86400)
 
@@ -170,7 +142,6 @@ class MarzbanPanel(BasePanel):
         return res is True
 
     async def reset_user_usage(self, identifier: str) -> bool:
-        # مرزبان اندپوینت مخصوص ریست دارد که عالی است
         res = await self._request("POST", f"user/{identifier}/reset")
         return res is not None
         
@@ -178,6 +149,5 @@ class MarzbanPanel(BasePanel):
         return await self._request("GET", "system") or {}
 
     async def check_connection(self) -> bool:
-        # اگر بتوانیم استت بگیریم یعنی هم اتصال وصل است هم لاگین (توکن) درست است
         stats = await self.get_system_stats()
         return bool(stats)

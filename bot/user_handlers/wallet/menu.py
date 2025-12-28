@@ -60,24 +60,6 @@ async def wallet_history_handler(call: types.CallbackQuery):
     kb.add(user_menu.back_btn("wallet:main", lang))
     await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
 
-# --- تنظیمات و دکمه‌های دیگر ---
-@bot.callback_query_handler(func=lambda call: call.data == "wallet:settings")
-async def wallet_settings_handler(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    lang = await db.get_user_language(user_id)
-    user_data = await db.user(user_id)
-    markup = await user_menu.wallet_settings_menu(user_data.get('auto_renew', False), lang)
-    await bot.edit_message_text("⚙️ **تنظیمات تمدید خودکار**", user_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-
-@bot.callback_query_handler(func=lambda call: call.data == "wallet:toggle_auto_renew")
-async def toggle_auto_renew_handler(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    user_data = await db.user(user_id)
-    new_status = not user_data.get('auto_renew', False)
-    await db.update_auto_renew_setting(user_id, new_status)
-    await wallet_settings_handler(call)
-    await bot.answer_callback_query(call.id, f"تمدید خودکار {'✅ فعال' if new_status else '❌ غیرفعال'} شد")
-
-@bot.callback_query_handler(func=lambda call: call.data in ["show_addons", "wallet:transfer_start", "wallet:gift_start"])
+@bot.callback_query_handler(func=lambda call: call.data == "show_addons")
 async def placeholder_handler(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 این قابلیت به زودی فعال می‌شود.", show_alert=True)

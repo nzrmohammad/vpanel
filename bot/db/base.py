@@ -41,7 +41,6 @@ class User(Base):
     referred_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     referral_reward_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     wallet_balance: Mapped[float] = mapped_column(Float, default=0.0)
-    auto_renew: Mapped[bool] = mapped_column(Boolean, default=False)
     plan_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("plans.id", ondelete="SET NULL"))
     uuids: Mapped[List["UserUUID"]] = relationship("UserUUID", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     transactions: Mapped[List["WalletTransaction"]] = relationship("WalletTransaction", back_populates="user")
@@ -148,21 +147,6 @@ class Addon(Base):
     extra_days: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
-
-
-class Badge(Base):
-    """🔥 جدید: مدیریت نشان‌ها و دستاوردها"""
-    __tablename__ = "badges"
-    
-    code: Mapped[str] = mapped_column(String(50), primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    icon: Mapped[str] = mapped_column(String(20)) # 🎖️
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    points: Mapped[int] = mapped_column(Integer, default=0)
-    condition_type: Mapped[Optional[str]] = mapped_column(String(50))
-    condition_value: Mapped[Optional[float]] = mapped_column(Float)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
 
 class PaymentMethod(Base):
     """🔥 جدید: روش‌های پرداخت (کارت به کارت، کریپتو)"""
@@ -288,24 +272,8 @@ class ClientUserAgent(Base):
     user_agent: Mapped[str] = mapped_column(String(255))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-class TrafficTransfer(Base):
-    __tablename__ = "traffic_transfers"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sender_uuid_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_uuids.id", ondelete="CASCADE"))
-    receiver_uuid_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_uuids.id", ondelete="CASCADE"))
-    panel_type: Mapped[str] = mapped_column(String(20))
-    amount_gb: Mapped[float] = mapped_column(Float)
-    transferred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 class BirthdayGiftLog(Base):
     __tablename__ = "birthday_gift_log"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger)
-    gift_year: Mapped[int] = mapped_column(Integer)
-    given_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-class AnniversaryGiftLog(Base):
-    __tablename__ = "anniversary_gift_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger)
     gift_year: Mapped[int] = mapped_column(Integer)
@@ -320,22 +288,6 @@ class ChargeRequest(Base):
     request_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_pending: Mapped[bool] = mapped_column(Boolean, default=True)
 
-class WalletTransfer(Base):
-    __tablename__ = "wallet_transfers"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sender_user_id: Mapped[int] = mapped_column(BigInteger)
-    receiver_user_id: Mapped[int] = mapped_column(BigInteger)
-    amount: Mapped[float] = mapped_column(Float)
-    transferred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-class AutoRenewalLog(Base):
-    __tablename__ = "auto_renewal_log"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger)
-    uuid_id: Mapped[int] = mapped_column(Integer)
-    plan_price: Mapped[float] = mapped_column(Float)
-    renewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
 class Notification(Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -348,15 +300,6 @@ class Notification(Base):
     __table_args__ = (
         Index('idx_notif_user_unread', 'user_id', 'is_read'),
     )
-
-class MonthlyCost(Base):
-    __tablename__ = "monthly_costs"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    year: Mapped[int] = mapped_column(Integer)
-    month: Mapped[int] = mapped_column(Integer)
-    cost: Mapped[float] = mapped_column(Float)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class UserFeedback(Base):
     __tablename__ = "user_feedback"
@@ -415,6 +358,14 @@ class SharedRequest(Base):
     status: Mapped[str] = mapped_column(String(20), default='pending')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+class MonthlyCost(Base):
+    __tablename__ = "monthly_costs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    year: Mapped[int] = mapped_column(Integer)
+    month: Mapped[int] = mapped_column(Integer)
+    cost: Mapped[float] = mapped_column(Float)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 # ---------------------------------------------------------
 # 4. مدیریت دیتابیس
 # ---------------------------------------------------------

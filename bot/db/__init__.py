@@ -7,7 +7,6 @@ from .financials import FinancialsDB
 from .panel import PanelDB
 from .product import ProductDB
 from .support import SupportDB
-from .transfer import TransferDB
 from .wallet import WalletDB
 from .notifications import NotificationsDB
 from .feedback import FeedbackDB
@@ -15,7 +14,7 @@ from .admin_log import AdminLogDB
 from .settings import SettingsDB
 
 class BotDatabase(DatabaseManager, UserDB, UsageDB, FinancialsDB, PanelDB, 
-                  ProductDB, SupportDB, TransferDB, WalletDB, NotificationsDB, 
+                  ProductDB, SupportDB, WalletDB, NotificationsDB, 
                   FeedbackDB, AdminLogDB, SettingsDB):
     
     def __init__(self, db_url: str = None):

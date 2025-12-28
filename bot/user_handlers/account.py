@@ -395,13 +395,6 @@ async def usage_history_handler(call: types.CallbackQuery):
     safe_text = escape_markdown(text)
     await _safe_edit(user_id, call.message.message_id, safe_text, reply_markup=kb, parse_mode='MarkdownV2')
 
-# --- 9. انتقال ترافیک (Transfer) ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_start_'))
-async def transfer_traffic_start(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    acc_id = int(call.data.split('_')[2])
-    await bot.answer_callback_query(call.id, "این قابلیت به زودی فعال می‌شود.")
-
 # --- 10. صفحه حساب کاربری (User Account) ---
 @bot.callback_query_handler(func=lambda call: call.data == "user_account")
 async def user_account_page_handler(call: types.CallbackQuery):
