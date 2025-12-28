@@ -295,6 +295,9 @@ ADMIN_CALLBACK_HANDLERS = {
     "del_method": settings.delete_payment_method_handler,
     "toggle_method": settings.toggle_payment_method_handler,
     "edit_usdt_rate": settings.edit_usdt_rate_start,
+    "pm_manage": settings.manage_single_payment_method,
+    "pm_toggle": settings.toggle_payment_method_handler,
+    "pm_del": settings.delete_payment_method_handler,
 }
 
 # ===================================================================

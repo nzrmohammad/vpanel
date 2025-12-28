@@ -103,14 +103,6 @@ BOT_CONFIGS = {
         'category': 'warning', 'title': '⚠️ درصد هشدار مصرف', 'type': 'int',
         'desc': 'هشدار در درصد مصرف (مثلاً 80)', 'def': '80'
     },
-    'daily_usage_alert_threshold_gb': {
-        'category': 'warning', 'title': '📈 هشدار مصرف روزانه', 'type': 'int',
-        'desc': 'هشدار مصرف بیش از حد مجاز در یک روز (GB)', 'def': '2'
-    },
-    'notify_admin_on_usage': {
-        'category': 'warning', 'title': '🔔 اطلاع به ادمین', 'type': 'bool',
-        'desc': 'ارسال گزارش مصرف بالا به ادمین', 'def': 'True'
-    },
 
     # --- ⚙️ تنظیمات سیستمی و زمان‌بندی ---
     'daily_report_time': {
@@ -132,10 +124,6 @@ BOT_CONFIGS = {
     'welcome_message_delay_hours': {
         'category': 'system', 'title': '⏳ تاخیر خوش‌آمد', 'type': 'int',
         'desc': 'تاخیر پیام خوش‌آمد (ساعت)', 'def': '24'
-    },
-    'usage_warning_check_hours': {
-        'category': 'system', 'title': '⏰ بازه چک هشدار', 'type': 'int',
-        'desc': 'فاصله چک کردن مصرف (ساعت)', 'def': '6'
     },
     'online_report_update_hours': {
         'category': 'system', 'title': '🔄 آپدیت آنلاین', 'type': 'int',
@@ -482,18 +470,32 @@ async def process_usdt_rate_input(message: types.Message):
     user_id = message.from_user.id
     if user_id not in admin_conversations: return
     state = admin_conversations[user_id]
+    
     try: await bot.delete_message(user_id, message.message_id)
     except: pass
     
-    if not message.text.isdigit():
-        return await bot.send_message(user_id, "❌ لطفاً عدد وارد کنید.")
+    # دکمه انصراف برای مواقعی که کاربر منصرف می‌شود
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="admin:pay_methods:crypto"))
 
+    # اعتبارسنجی ورودی
+    if not message.text.isdigit():
+        err_text = (
+            "❌ *خطا: مقدار وارد شده معتبر نیست\\.*\n\n"
+            "لطفاً فقط *عدد* \\(قیمت به تومان\\) وارد کنید:"
+        )
+        await _safe_edit(user_id, state['msg_id'], err_text, reply_markup=markup, parse_mode='MarkdownV2')
+        return 
+
+    # ذخیره در دیتابیس
     await db.set_config('usdt_rate', message.text.strip())
     del admin_conversations[user_id]
+    
     class FakeCall:
         def __init__(self): 
             self.from_user = type('U',(),{'id':user_id})()
             self.message = type('M',(),{'message_id':state['msg_id']})()
+            
     await list_payment_methods(FakeCall(), ['crypto'])
 
 async def start_add_method(call: types.CallbackQuery, params: list):
