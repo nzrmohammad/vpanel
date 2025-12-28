@@ -441,3 +441,39 @@ class UserMenu(BaseMenu):
         
         kb.add(self.back_btn("start_reset", lang_code)) # دکمه بازگشت به اول
         return kb
+    
+    async def confirm_action_menu(self, yes_callback: str, no_callback: str, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی تایید عملیات خطرناک"""
+        kb = self.create_markup(row_width=2)
+        # متن‌ها را هم می‌توانید از فایل زبان بخوانید
+        kb.add(
+            self.btn(f"❌ {get_string('no', lang_code)}", no_callback),
+            self.btn(f"✅ {get_string('yes', lang_code)}", yes_callback)
+        )
+        return kb
+
+    async def wallet_history_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:
+        """منوی تاریخچه تراکنش‌ها"""
+        # ۱. ساخت یک کیبورد خالی
+        kb = self.create_markup(row_width=1)
+        
+        # ۲. اضافه کردن دکمه بازگشت به منوی اصلی کیف پول
+        kb.add(self.back_btn("wallet:main", lang_code))
+        
+        # ۳. تحویل دادن کیبورد آماده
+        return kb
+
+    async def confirm_payment_menu(self, confirm_callback: str, cancel_callback: str = "view_plans", lang_code: str = 'fa') -> types.InlineKeyboardMarkup:
+        """منوی تایید پرداخت"""
+        kb = self.create_markup(row_width=2)
+        kb.add(
+            self.btn(f"❌ {get_string('btn_cancel', lang_code)}", cancel_callback),
+            self.btn(f"✅ {get_string('btn_pay', lang_code)}", confirm_callback)
+        )
+        return kb
+
+    async def simple_back_menu(self, callback_data: str, lang_code: str) -> types.InlineKeyboardMarkup:
+        """یک کیبورد ساده که فقط دکمه بازگشت دارد"""
+        kb = self.create_markup()
+        kb.add(self.back_btn(callback_data, lang_code))
+        return kb

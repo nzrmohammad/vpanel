@@ -311,21 +311,18 @@ async def process_change_name_step(message: types.Message):
 # --- 5. حذف اکانت (Delete) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
 async def delete_account_confirm(call: types.CallbackQuery):
-    """تایید حذف"""
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
     acc_id = int(call.data.split('_')[1])
     
-    # منوی تایید ساده
-    kb = types.InlineKeyboardMarkup()
-    kb.add(
-        types.InlineKeyboardButton("❌ خیر، پشیمون شدم", callback_data=f"acc_{acc_id}"),
-        types.InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"confirm_del_{acc_id}")
-        
+    # --- استفاده از متد جدید ---
+    kb = await user_menu.confirm_action_menu(
+        yes_callback=f"confirm_del_{acc_id}",
+        no_callback=f"acc_{acc_id}",
+        lang_code=lang
     )
     
-    # متن فارسی شده
-    warning_text = "⚠️ **آیا مطمئن هستید که می‌خواهید این اکانت را از لیست خود حذف کنید؟**\n\n(توجه: اکانت فقط از ربات حذف می‌شود و در سرور باقی می‌ماند)"
+    warning_text = get_string('msg_confirm_delete_account', lang) 
     
     await _safe_edit(user_id, call.message.message_id, warning_text, reply_markup=kb, parse_mode="Markdown")
 
@@ -434,7 +431,6 @@ async def periodic_usage_handler(call: types.CallbackQuery):
             f"📆 مصرف ۳۰ روز گذشته: `{total_month:.2f} GB`\n"
         )
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn(f"acc_{acc_id}", lang))
+    kb = await user_menu.simple_back_menu(f"acc_{acc_id}", lang)
     
     await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="Markdown")

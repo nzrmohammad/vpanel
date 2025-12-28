@@ -251,18 +251,14 @@ async def _show_new_service_preview(call, plan_id, user_id):
     plan = await db.get_plan_by_id(plan_id)
     if not plan: return
 
+    lang = await db.get_user_language(user_id)
     categories = await db.get_server_categories()
     plan_cat_code = plan['allowed_categories'][0] if plan['allowed_categories'] else None
     plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
     
     text = generate_new_preview_text(plan, plan_cat_info)
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"),
-        types.InlineKeyboardButton("✅ پرداخت", callback_data=f"wallet:do_buy_new:{plan_id}")
-        
-    )
+    markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_buy_new:{plan_id}",lang_code=lang)
     
     try:
         await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode='MarkdownV2')
@@ -284,6 +280,7 @@ async def handler_preview_renew(call: types.CallbackQuery):
         if not uuid_obj: return
         
         # --- اصلاح: دریافت اطلاعات زنده (اول پنل، بعد دیتابیس) ---
+        lang = await db.get_user_language(user_id)
         current_stats = {}
         fetched_from_panel = False
         
@@ -352,11 +349,7 @@ async def handler_preview_renew(call: types.CallbackQuery):
         # تولید متن پیش‌نمایش
         text = await generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
         
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"),
-            types.InlineKeyboardButton("✅ پرداخت", callback_data=f"wallet:do_renew:{uuid_id}:{plan_id}")
-        )
+        markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_renew:{uuid_id}:{plan_id}",cancel_callback="view_plans",lang_code=lang)
         
         try:
             await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode='MarkdownV2')

@@ -250,5 +250,29 @@
   "purchase_in_progress": "⏳ Processing your purchase... Please wait.",
   "payment_reminder_message": "🔔 Payment Reminder\n\nDear user, your payment for the new service period has not been registered in our system yet.\n\nIf you have already made the payment, please send the receipt to support. Otherwise, to avoid service interruption, please proceed with the payment.\n\nThank you for your cooperation.",
   "disconnection_warning_message": "🚨 Service Disconnection Warning\n\nDear user, despite our previous reminder, your payment has not yet been registered.\n\n❗️Your service will be disconnected within the next 24 hours.\n\nTo prevent this, please make the payment immediately or contact support.",
-  "disconnection_warning_sent_confirmation": "✅ Disconnection warning sent successfully."
+  "disconnection_warning_sent_confirmation": "✅ Disconnection warning sent successfully.",
+  "yes": "Yes",
+  "no": "No",
+  "btn_cancel": "Cancel",
+  "btn_pay": "Pay",
+  
+  "title_preview_new_buy": "🔍 New Service Preview",
+  "title_preview_renew": "🔄 Renewal Preview",
+  
+  "label_selected_plan": "Selected Plan",
+  "label_volume_gb": "Volume",
+  "label_days": "Days",
+  "label_price": "Price",
+  "label_volume_changes": "📦 Volume Changes",
+  "label_time_changes": "⏳ Time Changes",
+  "label_payable_amount": "💰 Payable Amount",
+  
+  "msg_confirm_new_buy": "❓ Are you sure you want to create a new service?",
+  "msg_confirm_action": "❓ Do you confirm this action?",
+  
+  "msg_confirm_delete_account": "⚠️ **Are you sure you want to remove this account from your list?**\n\n(Note: This only removes it from the bot, the service remains on the server)",
+  
+  "err_account_not_found_server": "❌ Account info not found on server. It might have been deleted.\n\nYou can remove this account from your list:",
+  "btn_delete_from_bot": "🗑 Remove from Bot List"
+
 }

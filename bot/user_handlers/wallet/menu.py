@@ -56,8 +56,7 @@ async def wallet_history_handler(call: types.CallbackQuery):
                 f" {escape_markdown(raw_date)}\n"
             )
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn("wallet:main", lang))
+    kb = await user_menu.wallet_history_menu(lang)
     await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_addons")
