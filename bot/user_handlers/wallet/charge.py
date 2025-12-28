@@ -84,15 +84,67 @@ async def show_payment_details(call: types.CallbackQuery):
     methods = await db.get_payment_methods(active_only=True)
     selected = next((m for m in methods if m['id'] == method_id), None)
     
-    details = selected['details']
-    # ساخت متن اطلاعات (کارت یا کریپتو) ...
-    info_text = f"📝 *اطلاعات پرداخت: {selected['title']}*" # (متن کامل را اینجا قرار دهید)
+    if not selected:
+        await bot.answer_callback_query(call.id, "روش پرداخت یافت نشد.", show_alert=True)
+        return
 
-    text = f"{info_text}\n\n📸 *لطفاً تصویر رسید را ارسال کنید.*"
+    # 1. دریافت و ایمن‌سازی عنوان
+    raw_title = selected.get('title', '')
+    safe_title = escape_markdown(raw_title)
+    
+    # 2. پردازش جزئیات
+    details = selected.get('details', {})
+    details_lines = []
+    
+    if isinstance(details, dict):
+        labels = {
+            'bank_name': '🏦 نام بانک',
+            'card_holder': '👤 صاحب حساب',
+            'card_number': '💳 شماره کارت',
+            'address': '📍 آدرس',
+            'network': '🌐 شبکه'
+        }
+        for k, v in details.items():
+            label = labels.get(k, k)
+            val_str = str(v)
+
+            # --- تغییر اصلی اینجاست ---
+            if k == 'card_number':
+                # حذف فاصله و خط تیره برای کپی تمیز
+                clean_num = val_str.replace('-', '').replace(' ', '')
+                # قرار دادن در ` ` برای کپی شدن (در MarkdownV2 اعداد داخل کد نیاز به اسکیپ ندارند)
+                safe_value = f"`{clean_num}`"
+            else:
+                # برای سایر موارد، کاراکترها را ایمن کن
+                safe_value = escape_markdown(val_str)
+            # --------------------------
+
+            details_lines.append(f"{label}: {safe_value}")
+    else:
+        details_lines.append(escape_markdown(str(details)))
+
+    safe_details_text = "\n".join(details_lines)
+
+    text = (
+        f"📝 *اطلاعات پرداخت:*\n"
+        f"{safe_title}\n"
+        f"────────────────────\n"
+        f"{safe_details_text}\n"
+        f"────────────────────\n\n"
+        f"📸 *لطفاً تصویر رسید را ارسال کنید\\.*"
+    )
+
     kb = types.InlineKeyboardMarkup()
     kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
 
-    await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
+    try:
+        await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
+    except Exception as e:
+        logger.error(f"Error in show_payment_details: {e}")
+        # در صورت خطا، فرمت‌دهی را حذف کن تا پیام حداقل ارسال شود
+        fallback_text = text.replace('*', '').replace('\\', '').replace('`', '')
+        await bot.edit_message_text(fallback_text, user_id, call.message.message_id, reply_markup=kb)
+        
     user_payment_states[user_id]['step'] = 'waiting_receipt'
 
 # --- 5. پردازش رسید و ارسال به ادمین (تاپیک دار) ---
