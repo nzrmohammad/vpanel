@@ -198,18 +198,99 @@ async def back_to_welcome_handler(call: types.CallbackQuery):
 # 4. هندلر ساخت اکانت تستی (پس از انتخاب کشور)
 # =============================================================================
 
+# =============================================================================
+# 4. هندلر درخواست نام برای اکانت تستی (پس از انتخاب کشور)
+# =============================================================================
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('new_acc_country:'))
 async def create_test_account_callback(call: types.CallbackQuery):
     user_id = call.from_user.id
     country_code = call.data.split(':')[1]
     lang = await db.get_user_language(user_id)
     
+    # 1. ذخیره وضعیت کاربر و کشور انتخاب شده
+    if not hasattr(bot, 'user_states'):
+        bot.user_states = {}
+    
+    bot.user_states[user_id] = {
+        'step': 'waiting_for_test_name',
+        'country': country_code,
+        'msg_id': call.message.message_id
+    }
+
+    # 2. درخواست نام از کاربر
+    text = (
+        "📛 **انتخاب نام سرویس**\n\n"
+        "لطفاً یک نام دلخواه برای سرویس خود ارسال کنید.\n"
+        "⚠️ شرایط نام:\n"
+        "▫️ بین ۳ تا ۱۲ کاراکتر باشد.\n"
+        "▫️ فقط شامل حروف انگلیسی و اعداد باشد.\n\n"
+        "✍️ نام مورد نظر را تایپ کنید:"
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(user_menu.btn(f"🔙 {get_string('back', lang)}", "back_to_welcome"))
+
+    # استفاده از parse_mode Markdown برای نمایش بولد
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup, parse_mode='Markdown')
+
+# =============================================================================
+# هندلر دریافت نام سرویس تست و ساخت نهایی
+# =============================================================================
+
+@bot.message_handler(func=lambda m: (
+    hasattr(bot, 'user_states') and 
+    m.from_user.id in bot.user_states and 
+    bot.user_states[m.from_user.id].get('step') == 'waiting_for_test_name'
+))
+async def handle_test_name_input(message: types.Message):
+    user_id = message.from_user.id
+    state = bot.user_states[user_id]
+    msg_id = state.get('msg_id')
+    country_code = state.get('country')
+    input_name = message.text.strip()
+    lang = await db.get_user_language(user_id)
+
+    # 1. حذف پیام کاربر برای تمیز ماندن چت
+    try:
+        await bot.delete_message(message.chat.id, message.message_id)
+    except:
+        pass
+
+    # 2. اعتبارسنجی نام (طول و کاراکترهای مجاز)
+    # چک کردن طول و اینکه فقط حروف و عدد باشد (برای جلوگیری از باگ در پنل‌ها)
+    if not (3 <= len(input_name) <= 12) or not input_name.replace('_', '').isalnum():
+        error_text = (
+            "📛 **انتخاب نام سرویس**\n\n"
+            "❌ نام وارد شده معتبر نیست!\n"
+            "لطفاً نامی بین ۳ تا ۱۲ کاراکتر (حروف انگلیسی و اعداد) وارد کنید:\n\n"
+            "👇 مجدداً تلاش کنید:"
+        )
+        markup = types.InlineKeyboardMarkup()
+        markup.add(user_menu.btn(f"🔙 {get_string('back', lang)}", "back_to_welcome"))
+        
+        # ویرایش پیام قبلی با متن خطا
+        try:
+            await bot.edit_message_text(
+                error_text, 
+                message.chat.id, 
+                msg_id, 
+                reply_markup=markup, 
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Error editing message validation: {e}")
+        return
+
+    # 3. نام معتبر است -> شروع پروسه ساخت اکانت
     raw_processing = get_string('processing_create', lang)
     processing_text = escape_markdown(raw_processing)
     
-    await _safe_edit(user_id, call.message.message_id, processing_text, reply_markup=None)
-    
     try:
+        await bot.edit_message_text(processing_text, message.chat.id, msg_id, reply_markup=None)
+        
+        # --- کدهای اصلی ساخت اکانت (منتقل شده از تابع قبلی) ---
+        
         # دریافت لیست پنل‌های فعال
         active_panels = await db.get_active_panels()
         
@@ -233,11 +314,15 @@ async def create_test_account_callback(call: types.CallbackQuery):
         TEST_GIGS = 0.2  # 200 مگابایت
         TEST_DAYS = 1    # 1 روز
         new_uuid = str(uuid.uuid4())
-        username = f"Test_{user_id}_{random.randint(100,999)}"
+        
+        # استفاده از نام انتخابی کاربر
+        # برای اطمینان از یکتا بودن در پنل، می‌توان آیدی عددی را هم به صورت مخفی یا در توضیحات داشت
+        # اما اینجا نام نمایشی را همان چیزی می‌گذاریم که کاربر خواسته
+        final_username = input_name 
         
         # ساخت کاربر در پنل
         result = await panel_inst.add_user(
-            name=username,
+            name=final_username,
             limit_gb=TEST_GIGS,
             expire_days=TEST_DAYS,
             uuid=new_uuid
@@ -245,42 +330,40 @@ async def create_test_account_callback(call: types.CallbackQuery):
         
         if result:
             # ثبت در دیتابیس ربات
-            acc_name = f"Test Service {country_code.upper()}"
-            await db.add_uuid(user_id, new_uuid, acc_name)
+            # نام را همان چیزی ذخیره می‌کنیم که کاربر وارد کرده
+            await db.add_uuid(user_id, new_uuid, final_username)
             
             # محدود کردن دسترسی (اگر فعال است)
             if hasattr(db, 'set_uuid_access_categories'):
                 await db.set_uuid_access_categories(new_uuid, [country_code])
 
+            # پاک کردن استیت چون کار تمام شد
+            del bot.user_states[user_id]
+
             asyncio.create_task(cache_manager.fetch_and_update_cache())
             
-            # رفع ارور علامت تعجب (!) در پیام موفقیت
             raw_success = get_string('test_account_created', lang)
             raw_title = get_string('account_list_title', lang)
             
-            # ترکیب متن‌ها و سپس اسکیپ کردن کل آن
             final_raw_text = f"{raw_success}\n\n{raw_title}"
             final_text = escape_markdown(final_raw_text)
             
-            # دریافت لیست اکانت‌ها و ساخت کیبورد
             user_uuids = await db.uuids(user_id)
             markup = await user_menu.accounts(user_uuids, lang)
             
-            await _safe_edit(user_id, call.message.message_id, final_text, reply_markup=markup)
+            await _safe_edit(user_id, msg_id, final_text, reply_markup=markup)
             
         else:
             raise Exception("Panel returned False")
 
     except Exception as e:
         logger.error(f"Error creating test account: {e}")
-        # پیام خطا را هم اسکیپ می‌کنیم تا مطمئن شویم ارور نمی‌دهد
-        err_raw = "❌ متأسفانه خطایی در ساخت سرویس رخ داد. لطفاً با پشتیبانی تماس بگیرید."
+        err_raw = "❌ متأسفانه خطایی در ساخت سرویس رخ داد (ممکن است نام تکراری باشد). لطفاً نام دیگری امتحان کنید."
         err_msg = escape_markdown(err_raw)
         
         markup = types.InlineKeyboardMarkup()
         markup.add(user_menu.back_btn("start_reset", lang))
-        await _safe_edit(user_id, call.message.message_id, err_msg, reply_markup=markup)
-
+        await _safe_edit(user_id, msg_id, err_msg, reply_markup=markup)
 
 # =============================================================================
 # 5. دکمه بازگشت به اول (Reset)
