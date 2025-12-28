@@ -134,8 +134,7 @@ async def show_payment_details(call: types.CallbackQuery):
         f"📸 *لطفاً تصویر رسید را ارسال کنید\\.*"
     )
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.btn(f"✖️ {get_string('btn_cancel_action', lang)}", "wallet:main"))
+    kb = await user_menu.user_cancel_action("wallet:main", lang)
 
     try:
         await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
@@ -162,8 +161,7 @@ async def process_receipt_upload(message: types.Message):
 
     amount = state['amount']
     wait_text = "✅ رسید شما دریافت شد\\. پس از تایید توسط ادمین، حساب شما شارژ خواهد شد\\."
-    kb = types.InlineKeyboardMarkup()
-    kb.add(user_menu.back_btn("wallet:main", lang))
+    kb = await user_menu.simple_back_menu("wallet:main", lang)
     
     try: await bot.edit_message_text(wait_text, user_id, state['msg_id'], reply_markup=kb, parse_mode='MarkdownV2')
     except: await bot.send_message(user_id, wait_text, reply_markup=kb, parse_mode='MarkdownV2')

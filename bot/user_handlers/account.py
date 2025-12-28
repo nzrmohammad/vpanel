@@ -32,8 +32,7 @@ async def add_account_prompt(call: types.CallbackQuery):
     }
     # -----------------------------------------------
 
-    markup = types.InlineKeyboardMarkup()
-    markup.add(user_menu.back_btn("manage", lang))
+    markup = await user_menu.simple_back_menu("manage", lang)
     
     await bot.edit_message_text(
         get_string('prompt_add_uuid', lang),
