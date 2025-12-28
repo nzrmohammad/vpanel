@@ -52,31 +52,16 @@ async def coming_soon(call: types.CallbackQuery):
     await bot.answer_callback_query(call.id, "🔜 به زودی...", show_alert=True)
 
 # --- 3. Birthday Gift ---
-def _fmt_birthday_info(user_data, lang_code):
-    """فرمت‌دهی اطلاعات تولد مطابق درخواست کاربر"""
-    bday = user_data.get('birthday')
+@bot.callback_query_handler(func=lambda call: call.data == "birthday_gift")
+async def handle_birthday_gift_request(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    lang_code = await db.get_user_language(user_id)
+    user_data = await db.user(user_id)
     
-    # اگر به هر دلیلی تاریخ نبود (محض احتیاط)
-    if not bday:
-        return "تاریخ تولدی ثبت نشده است."
-        
-    # محاسبه روزهای باقی‌مانده و تبدیل تاریخ به شمسی
-    days_left = days_until_next_birthday(bday)
-    shamsi_date = to_shamsi(bday, include_time=False)
+    text = user_formatter.birthday_status_text(user_data)
+    kb = await user_menu.simple_back_menu("back", lang_code)
     
-    # متن دقیق درخواستی
-    # نکته: از escape_markdown برای متغیرها استفاده می‌کنیم
-    line_sep = "`────────────────────`"
-    
-    text = (
-        f"🎁 *وضعیت هدیه تولد شما*\n"
-        f"{line_sep}\n"
-        f"تاریخ ثبت شده: *{escape_markdown(shamsi_date)}*\n"
-        f"شمارش معکوس: *{days_left}* روز تا تولد بعدی شما باقی مانده است\\.\n"
-        f"{line_sep}\n"
-        f"⚠️ نکته: تاریخ تولد ثبت شده قابل ویرایش نیست\\. در صورت ورود اشتباه، لطفاً به ادمین اطلاع دهید\\."
-    )
-    return text
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=kb, parse_mode="MarkdownV2")
 
 @bot.callback_query_handler(func=lambda call: call.data == "birthday_gift")
 async def handle_birthday_gift_request(call: types.CallbackQuery):
