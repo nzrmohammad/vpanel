@@ -64,13 +64,16 @@ async def start_command(message: types.Message):
         markup = await user_menu.main(is_admin, lang)
         
         await bot.send_message(message.chat.id, text, reply_markup=markup)
-        return  # خروج از تابع
+        return
 
-    text = "👋 Welcome\\! \n 👋 خوش آمدید\\!\n\nplease select your language:\nلطفاً زبان خود را انتخاب کنید:"
-    
+    raw_text = "👋 Welcome!\n 👋 خوش آمدید!\n\nplease select your language:\nلطفاً زبان خود را انتخاب کنید:"
+    text = escape_markdown(raw_text)
     markup = await user_menu.language_selection_start()
     
-    await bot.send_message(message.chat.id, text, reply_markup=markup)
+    try:
+        await bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='MarkdownV2')
+    except Exception as e:
+        logger.error(f"Error in start_command: {e}")
 
 # =============================================================================
 # 2. هندلر انتخاب زبان (مخصوص Start)
@@ -193,10 +196,6 @@ async def back_to_welcome_handler(call: types.CallbackQuery):
     markup.add(types.InlineKeyboardButton(change_lang_txt, callback_data="start_reset"))
     
     await _safe_edit(user_id, call.message.message_id, welcome_text, reply_markup=markup)
-
-# =============================================================================
-# 4. هندلر ساخت اکانت تستی (پس از انتخاب کشور)
-# =============================================================================
 
 # =============================================================================
 # 4. هندلر درخواست نام برای اکانت تستی (پس از انتخاب کشور)
@@ -371,25 +370,22 @@ async def handle_test_name_input(message: types.Message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "start_reset")
 async def reset_start_flow(call: types.CallbackQuery):
-    """بازگشت به منوی انتخاب زبان (با فرمت MarkdownV2)"""
+    """بازگشت به منوی انتخاب زبان با استفاده از safe_edit"""
     user_id = call.from_user.id
 
-    # 1. پاک کردن استیت‌های احتمالی
     if hasattr(bot, 'user_states') and user_id in bot.user_states:
         del bot.user_states[user_id]
     
-    text = "👋 Welcome\\! \n 👋 خوش آمدید\\!\n\nplease select your language:\nلطفاً زبان خود را انتخاب کنید:"
+    raw_text = "👋 Welcome!\n 👋 خوش آمدید!\n\nplease select your language:\nلطفاً زبان خود را انتخاب کنید:"
+    text = escape_markdown(raw_text)
     
     markup = await user_menu.language_selection_start()
     
-    # 3. ویرایش پیام با حفظ حالت MarkdownV2
-    await _safe_edit(
-        user_id, 
-        call.message.message_id, 
-        text, 
-        reply_markup=markup,
-        parse_mode='MarkdownV2' 
-    )
+    # استفاده از _safe_edit برای ویرایش پیام و لاگ کردن خطاها
+    success = await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup,parse_mode='MarkdownV2' )
+    
+    if not success:
+        logger.error(f"Failed to edit message in reset_start_flow for user {user_id}")
 
 # =============================================================================
 # 6. هندلر ورود با کانفیگ (UUID Login)

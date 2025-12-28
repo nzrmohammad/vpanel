@@ -77,8 +77,6 @@ class UserDB:
 
     # --- تنظیمات داینامیک (Dynamic Settings) ---
 
-# جایگزین متد فعلی get_user_settings در UserDB شوید:
-
     async def get_user_settings(self, user_id: int) -> Dict[str, bool]:
         """
         تنظیمات کاربر را می‌خواند.
@@ -88,9 +86,7 @@ class UserDB:
         
         defaults = {
             'daily_reports': True, 'weekly_reports': True, 'monthly_reports': True,
-            'expiry_warnings': True, 'show_info_config': True, 
-            'achievement_alerts': True, 'promotional_alerts': True,
-            'auto_delete_reports': False,
+            'expiry_warnings': True, 'show_info_config': True, 'auto_delete_reports': False,
         }
 
         async with self.get_session() as session:
@@ -663,20 +659,28 @@ class UserDB:
     # --- توابع مربوط به سیستم معرفی (Referral) ---
 
     async def get_or_create_referral_code(self, user_id: int) -> str:
+        """
+        کد معرف کاربر را برمی‌گرداند. اگر وجود نداشته باشد، آیدی عددی او را تنظیم می‌کند.
+        """
         user_data = await self.user(user_id)
         if user_data and user_data.get('referral_code'):
             return user_data['referral_code']
             
         async with self.get_session() as session:
-            while True:
-                new_code = "REF-" + secrets.token_urlsafe(4).upper().replace("_", "").replace("-", "")
-                exists = await session.execute(select(User).where(User.referral_code == new_code))
-                if not exists.first():
-                    await session.execute(update(User).where(User.user_id == user_id).values(referral_code=new_code))
-                    await session.commit()
-                    if hasattr(self, 'clear_user_cache'):
-                        self.clear_user_cache(user_id)
-                    return new_code
+            # استفاده از آیدی عددی کاربر به عنوان کد معرف
+            referral_code = str(user_id)
+            
+            await session.execute(
+                update(User)
+                .where(User.user_id == user_id)
+                .values(referral_code=referral_code)
+            )
+            await session.commit()
+            
+            if hasattr(self, 'clear_user_cache'):
+                self.clear_user_cache(user_id)
+                
+            return referral_code
 
     async def set_referrer(self, user_id: int, referrer_code: str):
         async with self.get_session() as session:

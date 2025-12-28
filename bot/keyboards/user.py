@@ -152,25 +152,27 @@ class UserMenu(BaseMenu):
         # 1. دریافت همه تعاریف کشورها (نام و پرچم)
         all_categories = await db.get_server_categories()
         
-        # 2. دریافت لیست کدهایی که واقعاً سرور دارند (تابع جدید)
+        # 2. دریافت لیست کدهایی که واقعاً سرور دارند
         active_codes = await db.get_active_location_codes()
         
         # 3. فیلتر کردن و ساخت دکمه‌ها
         cat_buttons = []
         for cat in all_categories:
-            # فقط اگر کد کشور در لیست فعال‌ها بود، دکمه‌اش را بساز
             if cat['code'] in active_codes:
                 text = f"{cat['emoji']} {cat['name']}"
                 cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
 
-        # اگر هیچ کشوری فعال نبود، یک پیام نشان بده
+        # بررسی وجود سرویس‌ها
         if not cat_buttons:
+             # اگر هیچ کشوری فعال نبود، فقط پیام هشدار را نشان بده
              kb.add(self.btn("⚠️ در حال حاضر سروری موجود نیست", "noop"))
         else:
+             # اگر سرویس وجود داشت، هم دسته‌بندی‌ها و هم دکمه حجم/زمان را نشان بده
              kb.add(*cat_buttons)
+             # انتقال دکمه حجم یا زمان به اینجا برای نمایش مشروط
+             kb.add(self.btn("➕ حجم یا زمان", "show_addons"))
         
-        # دکمه‌های ثابت پایین
-        kb.add(self.btn("➕ حجم یا زمان", "show_addons"))
+        # دکمه بازگشت همیشه نمایش داده می‌شود
         kb.add(self.back_btn("back", lang_code))
         
         return kb
@@ -208,10 +210,10 @@ class UserMenu(BaseMenu):
         # بخش ۱: گزارش‌ها
         kb.add(self.btn(f"🗓️ {get_string('reports_category', lang_code)}", "noop"))
         kb.row(
-            self.btn(f"📊 {get_string('daily_report', lang_code)} {status('daily_reports')}", "toggle:daily_reports"),
-            self.btn(f"📅 {get_string('weekly_report', lang_code)} {status('weekly_reports')}", "toggle:weekly_reports")
+            self.btn(f"📆 {get_string('monthly_report', lang_code)} {status('monthly_reports')}", "toggle:monthly_reports"),
+            self.btn(f"📅 {get_string('weekly_report', lang_code)} {status('weekly_reports')}", "toggle:weekly_reports"),
+            self.btn(f"📊 {get_string('daily_report', lang_code)} {status('daily_reports')}", "toggle:daily_reports")
         )
-        kb.add(self.btn(f"📆 {get_string('monthly_report', lang_code)} {status('monthly_reports')}", "toggle:monthly_reports"))
 
         # بخش ۲: هشدارها (فیلتر شده بر اساس دسترسی کاربر)
         kb.add(self.btn(f"🪫 {get_string('alerts_category', lang_code)}", "noop"))
@@ -245,13 +247,6 @@ class UserMenu(BaseMenu):
         else:
             # اگر لیست خالی بود، یعنی کاربر به هیچ کشوری دسترسی ندارد (سرویس فعال ندارد)
             kb.add(self.btn("⚠️ سرویس فعالی ندارید", "noop"))
-
-        # بخش ۳: عمومی
-        kb.add(self.btn(f"📢 {get_string('general_notifications_category', lang_code)}", "noop"))
-        kb.row(
-            self.btn(f"🏆 {status('achievement_alerts')}", "toggle:achievement_alerts"),
-            self.btn(f"🎁 {status('promotional_alerts')}", "toggle:promotional_alerts")
-        )
 
         kb.add(
             self.btn(f"🌐 {get_string('change_language', lang_code)}", "change_language"),
