@@ -28,19 +28,7 @@ async def handle_support_request(call: types.CallbackQuery):
 async def start_support_session(user_id, msg_id, is_reply=False):
     lang_code = await db.get_user_language(user_id)
     
-    if is_reply:
-        title = "✍️ ارسال پاسخ"
-        desc = "لطفاً پاسخ خود را بنویسید."
-    else:
-        title = "📝 تیکت پشتیبانی جدید"
-        desc = "لطفاً پیام، عکس یا ویدیوی خود را ارسال کنید."
-    
-    prompt = (
-        f"*{escape_markdown(title)}*\n\n"
-        f"{escape_markdown(desc)}\n"
-        f"{escape_markdown('پیام شما مستقیماً برای تیم پشتیبانی ارسال می‌شود.')}\n\n"
-        f"{escape_markdown('برای انصراف دکمه زیر را بزنید.')}"
-    )
+    prompt = user_formatter.support_prompt_text(is_reply)
     
     kb = await user_menu.user_cancel_action(back_callback="back", lang_code=lang_code)
     try:
@@ -145,11 +133,7 @@ async def process_support_ticket(message: types.Message):
         # 3. پیام موفقیت
         delay_seconds = 10
         
-        success_text = (
-            f"✅ *پیام شما با موفقیت ارسال شد\\.*\n\n"
-            f"{escape_markdown('پاسخ مدیریت برای شما ارسال خواهد شد.')}\n\n"
-            f"⏳ {escape_markdown(f'بازگشت به منوی اصلی تا {delay_seconds} ثانیه دیگر...')}"
-        )
+        success_text = user_formatter.support_success_text(delay_seconds)
         
         kb_back = types.InlineKeyboardMarkup().add(
             types.InlineKeyboardButton(f"🔙 {get_string('back', lang_code)} (الان برگرد)", callback_data="back")

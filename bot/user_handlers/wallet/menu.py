@@ -37,24 +37,10 @@ async def wallet_history_handler(call: types.CallbackQuery):
     
     transactions = await db.get_wallet_history(user_id, limit=10)
     
-    text = "📜 *تاریخچه تراکنش‌ها*\n"
     if not transactions:
         text += "──────────────────\nتراکنشی یافت نشد"
     else:
-        for t in transactions:
-            amount = t.get('amount', 0)
-            raw_desc = t.get('description') or t.get('type', 'Unknown')
-            raw_date = to_shamsi(t.get('transaction_date'), include_time=True)
-            
-            icon = "➕" if amount > 0 else "➖"
-            amount_str = f"{int(abs(amount)):,}"
-            
-            text += (
-                "──────────────────\n"
-                f"{icon} {escape_markdown(amount_str)} تومان \n"
-                f" {escape_markdown(raw_desc)} \n"
-                f" {escape_markdown(raw_date)}\n"
-            )
+        text = user_formatter.wallet_history_list(transactions)
 
     kb = await user_menu.wallet_history_menu(lang)
     await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')

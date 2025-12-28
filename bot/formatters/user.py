@@ -703,6 +703,132 @@ class UserFormatter:
         
         return text
 
+    @staticmethod
+    def wallet_history_list(transactions):
+        """لیست تراکنش‌های کیف پول"""
+        text = "📜 *تاریخچه تراکنش‌ها*\n"
+        if not transactions:
+            text += "──────────────────\nتراکنشی یافت نشد"
+        else:
+            for t in transactions:
+                amount = t.get('amount', 0)
+                raw_desc = t.get('description') or t.get('type', 'Unknown')
+                raw_date = to_shamsi(t.get('transaction_date'), include_time=True)
+                
+                icon = "➕" if amount > 0 else "➖"
+                amount_str = f"{int(abs(amount)):,}"
+                
+                text += (
+                    "──────────────────\n"
+                    f"{icon} {escape_markdown(amount_str)} تومان \n"
+                    f" {escape_markdown(raw_desc)} \n"
+                    f" {escape_markdown(raw_date)}\n"
+                )
+        return text
+
+    # --- متدهای مربوط به charge.py (نمایش اطلاعات پرداخت) ---
+    @staticmethod
+    def payment_details_text(selected_method):
+        """جزئیات روش پرداخت انتخابی"""
+        raw_title = selected_method.get('title', '')
+        safe_title = escape_markdown(raw_title)
+        
+        details = selected_method.get('details', {})
+        details_lines = []
+        
+        if isinstance(details, dict):
+            labels = {
+                'bank_name': '🏦 نام بانک',
+                'card_holder': '👤 صاحب حساب',
+                'card_number': '💳 شماره کارت',
+                'address': '📍 آدرس',
+                'network': '🌐 شبکه'
+            }
+            for k, v in details.items():
+                label = labels.get(k, k)
+                val_str = str(v)
+
+                if k == 'card_number':
+                    clean_num = val_str.replace('-', '').replace(' ', '')
+                    safe_value = f"`{clean_num}`"
+                else:
+                    safe_value = escape_markdown(val_str)
+
+                details_lines.append(f"{label}: {safe_value}")
+        else:
+            details_lines.append(escape_markdown(str(details)))
+
+        safe_details_text = "\n".join(details_lines)
+
+        text = (
+            f"📝 *اطلاعات پرداخت:*\n"
+            f"{safe_title}\n"
+            f"────────────────────\n"
+            f"{safe_details_text}\n"
+            f"────────────────────\n\n"
+            f"📸 *لطفاً تصویر رسید را ارسال کنید\\.*"
+        )
+        return text
+
+    # --- متدهای مربوط به sharing.py (اشتراک گذاری) ---
+    @staticmethod
+    def sharing_request_text():
+        return (
+            "⛔️ *این اکانت متعلق به کاربر دیگری است*\\.\n\n"
+            "درخواست شما برای استفاده مشترک به ایشان ارسال شد\\. لطفاً منتظر تایید بمانید\\.\\.\\."
+        )
+
+    @staticmethod
+    def sharing_owner_alert(requester_user, uuid_name):
+        r_name = escape_markdown(requester_user.first_name or "Unknown")
+        r_id = requester_user.id
+        r_username = f"@{escape_markdown(requester_user.username)}" if requester_user.username else "ندارد"
+        safe_uuid_name = escape_markdown(uuid_name)
+
+        return (
+            f"⚠️ *یک کاربر دیگر قصد دارد به اکانت «{safe_uuid_name}» شما متصل شود*\\.\n\n"
+            f"👤 *اطلاعات درخواست دهنده:*\n"
+            f"نام: {r_name}\n"
+            f"آیدی: `{r_id}`\n"
+            f"یوزرنیم: {r_username}\n\n"
+            f"❓ آیا اجازه می‌دهید این کاربر به صورت مشترک از این اکانت استفاده کند؟"
+        )
+    
+    @staticmethod
+    def sharing_reject_alert(owner_name, owner_id, service_name):
+        safe_owner = escape_markdown(owner_name)
+        safe_srv = escape_markdown(service_name)
+        return (
+            f"❌ متاسفانه درخواست شما برای اکانت «{safe_srv}» توسط کاربر زیر رد شد:\n\n"
+            f"نام: {safe_owner}\n"
+            f"آیدی: `{owner_id}`"
+        )
+
+    # --- متدهای مربوط به support.py (پشتیبانی) ---
+    @staticmethod
+    def support_prompt_text(is_reply: bool):
+        if is_reply:
+            title = "✍️ ارسال پاسخ"
+            desc = "لطفاً پاسخ خود را بنویسید."
+        else:
+            title = "📝 تیکت پشتیبانی جدید"
+            desc = "لطفاً پیام، عکس یا ویدیوی خود را ارسال کنید."
+        
+        return (
+            f"*{escape_markdown(title)}*\n\n"
+            f"{escape_markdown(desc)}\n"
+            f"{escape_markdown('پیام شما مستقیماً برای تیم پشتیبانی ارسال می‌شود.')}\n\n"
+            f"{escape_markdown('برای انصراف دکمه زیر را بزنید.')}"
+        )
+
+    @staticmethod
+    def support_success_text(delay_seconds):
+        return (
+            f"✅ *پیام شما با موفقیت ارسال شد\\.*\n\n"
+            f"{escape_markdown('پاسخ مدیریت برای شما ارسال خواهد شد.')}\n\n"
+            f"⏳ {escape_markdown(f'بازگشت به منوی اصلی تا {delay_seconds} ثانیه دیگر...')}"
+        )
+
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:
     return f"*{escape_markdown(panel_name)}*\n\nمصرف: {stats}" 

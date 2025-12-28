@@ -88,52 +88,7 @@ async def show_payment_details(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id, "روش پرداخت یافت نشد.", show_alert=True)
         return
 
-    # 1. دریافت و ایمن‌سازی عنوان
-    raw_title = selected.get('title', '')
-    safe_title = escape_markdown(raw_title)
-    
-    # 2. پردازش جزئیات
-    details = selected.get('details', {})
-    details_lines = []
-    
-    if isinstance(details, dict):
-        labels = {
-            'bank_name': '🏦 نام بانک',
-            'card_holder': '👤 صاحب حساب',
-            'card_number': '💳 شماره کارت',
-            'address': '📍 آدرس',
-            'network': '🌐 شبکه'
-        }
-        for k, v in details.items():
-            label = labels.get(k, k)
-            val_str = str(v)
-
-            # --- تغییر اصلی اینجاست ---
-            if k == 'card_number':
-                # حذف فاصله و خط تیره برای کپی تمیز
-                clean_num = val_str.replace('-', '').replace(' ', '')
-                # قرار دادن در ` ` برای کپی شدن (در MarkdownV2 اعداد داخل کد نیاز به اسکیپ ندارند)
-                safe_value = f"`{clean_num}`"
-            else:
-                # برای سایر موارد، کاراکترها را ایمن کن
-                safe_value = escape_markdown(val_str)
-            # --------------------------
-
-            details_lines.append(f"{label}: {safe_value}")
-    else:
-        details_lines.append(escape_markdown(str(details)))
-
-    safe_details_text = "\n".join(details_lines)
-
-    text = (
-        f"📝 *اطلاعات پرداخت:*\n"
-        f"{safe_title}\n"
-        f"────────────────────\n"
-        f"{safe_details_text}\n"
-        f"────────────────────\n\n"
-        f"📸 *لطفاً تصویر رسید را ارسال کنید\\.*"
-    )
-
+    text = user_formatter.payment_details_text(selected)
     kb = await user_menu.user_cancel_action("wallet:main", lang)
 
     try:

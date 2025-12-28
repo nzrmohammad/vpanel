@@ -46,10 +46,7 @@ async def handle_uuid_conflict(message, uuid_str: str):
 
     # 3. ارسال پیام به درخواست‌دهنده (Requester)
     # نکته: از \\. استفاده می‌کنیم تا ارور سینتکس ندهد
-    req_text = (
-        "⛔️ *این اکانت متعلق به کاربر دیگری است*\\.\n\n"
-        "درخواست شما برای استفاده مشترک به ایشان ارسال شد\\. لطفاً منتظر تایید بمانید\\.\\.\\."
-    )
+    req_text = user_formatter.sharing_request_text()
     req_markup = types.InlineKeyboardMarkup()
     req_markup.add(types.InlineKeyboardButton("❌ لغو درخواست", callback_data=f"share:cancel:{uuid_str}"))
     
@@ -60,16 +57,8 @@ async def handle_uuid_conflict(message, uuid_str: str):
     r_name = escape_markdown(requester_user.first_name or "Unknown")
     r_id = requester_user.id
     r_username = f"@{escape_markdown(requester_user.username)}" if requester_user.username else "ندارد"
-    uuid_name = escape_markdown(existing_uuid.name or "Unknown")
-
-    owner_text = (
-        f"⚠️ *یک کاربر دیگر قصد دارد به اکانت «{uuid_name}» شما متصل شود*\\.\n\n"
-        f"👤 *اطلاعات درخواست دهنده:*\n"
-        f"نام: {r_name}\n"
-        f"آیدی: `{r_id}`\n"
-        f"یوزرنیم: {r_username}\n\n"
-        f"❓ آیا اجازه می‌دهید این کاربر به صورت مشترک از این اکانت استفاده کند؟"
-    )
+    uuid_name = existing_uuid.name or "Unknown"
+    owner_text = user_formatter.sharing_owner_alert(requester_user, uuid_name)
     
     owner_markup = types.InlineKeyboardMarkup()
     owner_markup.add(
@@ -176,7 +165,7 @@ async def handle_owner_decision(call: types.CallbackQuery):
             srv_stmt = select(UserUUID).where(UserUUID.uuid == uuid_str)
             srv_res = await session.execute(srv_stmt)
             orig_srv = srv_res.scalars().first()
-            acc_name_safe = escape_markdown(orig_srv.name if orig_srv else "Unknown")
+            acc_name = orig_srv.name if orig_srv else "Unknown"
 
             await session.commit()
             
@@ -190,10 +179,10 @@ async def handle_owner_decision(call: types.CallbackQuery):
                 logger.error(f"Error editing owner msg: {e}")
             
             # 2. پیام به درخواست‌دهنده (با اطلاعات صاحب)
-            reject_text = (
-                f"❌ متاسفانه درخواست شما برای اکانت «{acc_name_safe}» توسط کاربر زیر رد شد:\n\n"
-                f"نام: {owner_name}\n"
-                f"آیدی: `{owner_id}`"
+            reject_text = user_formatter.sharing_reject_alert(
+                owner_name=owner_user.first_name if owner_user else "Unknown",
+                owner_id=owner_id,
+                service_name=acc_name
             )
             try:
                 await bot.edit_message_text(
