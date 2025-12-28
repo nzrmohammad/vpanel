@@ -87,3 +87,20 @@ class AdminFormatter:
             f"\n"
             f"🔄 <i>به‌روزرسانی خودکار: هر 5 دقیقه</i>"
         )
+    @staticmethod
+    def purchase_report(user_name, user_id, service_name, type_text, plan_name, limit_gb, days, price, uuid_str, date_str, wallet_balance, server_name) -> str:
+        """
+        گزارش خرید برای ادمین (ارسال به سوپرگروه)
+        """
+        return (
+            f"🛒 <b>گزارش خرید جدید</b>\n"
+            f"👤 کاربر : {user_name} (<code>{user_id}</code>)\n"
+            f"🔑 نام سرویس : <code>{service_name}</code>\n"
+            f"🏷 نوع : {type_text}\n"
+            f"📦 پلن : {plan_name} ({limit_gb}GB - {days} روز)\n"
+            f"💰 مبلغ : {price:,} تومان\n"
+            f"💳 <b>مانده کیف پول : {wallet_balance:,} تومان</b>\n"
+            f"🖥 <b>سرور : {server_name}</b>\n"
+            f"شناسه ورود : <code>{uuid_str}</code>\n"
+            f"📅 تاریخ : {date_str}"
+        )

@@ -580,6 +580,24 @@ class UserFormatter:
         
         return f"{short_name} » {vol} » {days} » {price} {status_emoji}"
 
+# داخل کلاس UserFormatter اضافه کنید:
+
+    def purchase_receipt(self, plan_name, limit_gb, days, service_name, server_name) -> str:
+        """
+        رسید خرید برای نمایش به کاربر
+        """
+        return (
+            f"✅ <b>خرید با موفقیت انجام شد!</b>\n"
+            f"➖➖➖➖➖➖➖\n"
+            f"📦 پلن خریداری شده: {plan_name}\n"
+            f"💾 حجم: {limit_gb} گیگ\n"
+            f"⏳ مدت: {days} روز\n"
+            f"👤 نام سرویس: <code>{service_name}</code>\n"
+            f"🖥 سرور: {server_name}\n"
+            f"➖➖➖➖➖➖➖\n"
+            f"از خرید شما متشکریم 🌹"
+        )
+
 # --- توابع قدیمی ---
 def fmt_panel_quick_stats(panel_name: str, stats: dict, lang_code: str) -> str:
     return f"*{escape_markdown(panel_name)}*\n\nمصرف: {stats}" 

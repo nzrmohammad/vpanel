@@ -14,6 +14,7 @@ from bot.database import db
 from bot.db.base import UserUUID, Panel
 from bot.language import get_string
 from bot.services.panels import PanelFactory
+from bot.formatters.admin import AdminFormatter
 from bot.utils.formatters import escape_markdown
 from bot import combined_handler
 
@@ -50,7 +51,7 @@ def generate_new_preview_text(plan, plan_cat_info):
 
 async def generate_renewal_preview_text(current_uuid_obj, plan, plan_cat_info, categories, current_stats=None):
     """
-    پیش‌نمایش تمدید سرویس (نسخه Async)
+    پیش‌نمایش تمدید سرویس (نسخه Async) - فرمت جدید مطابق درخواست
     """
     # 1. محاسبه وضعیت فعلی
     curr_rem_gb = 0
@@ -101,25 +102,27 @@ async def generate_renewal_preview_text(current_uuid_obj, plan, plan_cat_info, c
     def fmt(num):
         return f"{int(num)}" if num == int(num) else f"{num:.1f}"
 
-    # --- تولید متن ---
+    # --- تولید متن با فرمت درخواستی ---
     text = "🔄 *پیش‌نمایش تمدید سرویس*\n"
     text += "➖➖➖➖➖➖➖➖\n"
     
-    # بخش حجم
-    text += "📦 *تغییرات حجم:*\n"
-    text += f"{fmt(curr_rem_gb)} GB  ➔  \+{fmt(plan_gb)} GB  ➔  *{fmt(new_total_gb)} GB*\n\n"
-    
-    # بخش زمان
-    text += "⏳ *تغییرات زمان (روز):*\n"
-    text += f"{curr_rem_days}  ➔  \+{plan_days}  ➔  *{new_total_days}*\n\n"
-    
-    # بخش مشخصات
-    text += "🏷 *پلن انتخابی:*\n"
+    # بخش مشخصات پلن (جابجایی به بالا)
+    text += "🏷 *پلن انتخابی*\n"
     text += f"{plan_display_name}\n"
-    text += f"└ 📊 {int(plan_gb)} گیگ  \|  ⏳ {plan_days} روز\n"
-    
+    text += f"📊 {int(plan_gb)} GB\n"
+    text += f"⏳ {plan_days} Day\n"
     text += "➖➖➖➖➖➖➖➖\n"
-    text += f"💰 *مبلغ قابل پرداخت:* {price_comma} تومان\n"
+    
+    # بخش تغییرات حجم
+    text += "📦 *تغییرات حجم*\n"
+    text += f"{fmt(curr_rem_gb)}GB ➔ \+{fmt(plan_gb)} GB ➔ *{fmt(new_total_gb)} GB*\n"
+    
+    # بخش تغییرات زمان
+    text += "⏳ *تغییرات زمان*\n"
+    text += f"{curr_rem_days} ➔ \+{plan_days} ➔ *{new_total_days}*\n"
+    
+    text += "➖➖➖➖➖\n"
+    text += f"💰 *مبلغ قابل پرداخت :* {price_comma} تومان\n"
     text += "❓ آیا عملیات تایید است؟"
     
     return text
@@ -252,8 +255,11 @@ async def _show_new_service_preview(call, plan_id, user_id):
     text = generate_new_preview_text(plan, plan_cat_info)
     
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("✅ تایید و پرداخت", callback_data=f"wallet:do_buy_new:{plan_id}"))
-    markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"))
+    markup.add(
+        types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"),
+        types.InlineKeyboardButton("✅ پرداخت", callback_data=f"wallet:do_buy_new:{plan_id}")
+        
+    )
     
     try:
         await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode='MarkdownV2')
@@ -293,8 +299,11 @@ async def handler_preview_renew(call: types.CallbackQuery):
         text = await generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
         
         markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(types.InlineKeyboardButton("✅ تایید تمدید", callback_data=f"wallet:do_renew:{uuid_id}:{plan_id}"))
-        markup.add(types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"))
+        markup.add(
+            types.InlineKeyboardButton("❌ انصراف", callback_data="view_plans"),
+            types.InlineKeyboardButton("✅ پرداخت", callback_data=f"wallet:do_renew:{uuid_id}:{plan_id}")
+            
+        )
         
         try:
             await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode='MarkdownV2')
@@ -460,7 +469,11 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
     full_desc = f"{desc_prefix} {plan['name']}"
     await db.update_wallet_balance(user_id, -plan['price'], 'purchase', full_desc)
     
-    # 2. ثبت سرویس جدید در دیتابیس
+    # دریافت موجودی جدید برای گزارش
+    user_data = await db.user(user_id)
+    current_balance = user_data.get('wallet_balance', 0)
+
+    # 2. ثبت سرویس در دیتابیس (بدون تغییر)
     if not is_renewal:
         service_uuid = service_data.get('uuid') or username
         await db.add_uuid(user_id=user_id, uuid_str=service_uuid, name=username)
@@ -484,19 +497,17 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
                         u.expire_date = datetime.now() + timedelta(days=plan['days'])
                         await session.commit()
 
-    # 3. ارسال پیام موفقیت به کاربر
+    # 3. ارسال پیام موفقیت به کاربر (با استفاده از متد جدید در UserFormatter)
     lang = await db.get_user_language(user_id)
     markup = await user_menu.post_charge_menu(lang)
     
-    success_text = (
-        f"✅ <b>خرید با موفقیت انجام شد!</b>\n"
-        f"➖➖➖➖➖➖➖\n"
-        f"📦 پلن خریداری شده: {plan['name']}\n"
-        f"💾 حجم: {int(plan['volume_gb'])} گیگ\n"
-        f"⏳ مدت: {plan['days']} روز\n"
-        f"👤 سرویس: <code>{username}</code>\n"
-        f"➖➖➖➖➖➖➖\n"
-        f"از خرید شما متشکریم 🌹"
+    # ✅ استفاده از متد جدید purchase_receipt
+    success_text = user_formatter.purchase_receipt(
+        plan_name=plan['name'],
+        limit_gb=int(plan['volume_gb']),
+        days=plan['days'],
+        service_name=username,
+        server_name=panel_name
     )
     
     if msg_id:
@@ -504,28 +515,30 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
     else:
         await bot.send_message(user_id, success_text, reply_markup=markup, parse_mode='HTML')
 
-    # 4. 📢 ارسال گزارش به سوپرگروه (با خواندن تنظیمات از دیتابیس)
+    # 4. 📢 ارسال گزارش به سوپرگروه (با استفاده از متد جدید در AdminFormatter)
     try:
-        # ✅ خواندن تنظیمات از دیتابیس
         main_group_id = await db.get_config('main_group_id')
         shop_topic_id = await db.get_config('topic_id_shop')
         
-        # فقط اگر آیدی گروه ست شده بود ارسال کن
         if main_group_id and int(main_group_id) != 0:
             user_info = await bot.get_chat(user_id)
-            u_link = f"<a href='tg://user?id={user_id}'>{user_info.first_name}</a>"
             
-            log_text = (
-                f"🛒 <b>گزارش خرید جدید</b>\n"
-                f"👤 کاربر: {u_link} (`{user_id}`)\n"
-                f"🏷 نوع: #{'تمدید' if is_renewal else 'خرید_جدید'}\n"
-                f"📦 پلن: {plan['name']} ({int(plan['volume_gb'])}GB / {plan['days']} روز)\n"
-                f"💰 مبلغ: {int(plan['price']):,} تومان\n"
-                f"🔑 سرویس: `{username}`\n"
-                f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            # ✅ استفاده از متد جدید purchase_report
+            log_text = AdminFormatter.purchase_report(
+                user_name=user_info.first_name,
+                user_id=user_id,
+                service_name=username,
+                type_text="#تمدید" if is_renewal else "#خرید_جدید",
+                plan_name=plan['name'],
+                limit_gb=int(plan['volume_gb']),
+                days=plan['days'],
+                price=int(plan['price']),
+                uuid_str=service_data.get('uuid', username),
+                date_str=datetime.now().strftime('%Y-%m-%d %H:%M'),
+                wallet_balance=current_balance,  # مقدار جدید
+                server_name=panel_name           # مقدار جدید
             )
             
-            # تعیین تاپیک (اگر 0 بود یعنی تاپیک ندارد و None می‌فرستیم)
             target_thread = int(shop_topic_id) if shop_topic_id and int(shop_topic_id) != 0 else None
             
             await bot.send_message(
