@@ -42,10 +42,10 @@ class AdminSystemMenu(BaseMenu):
         return kb
 
     async def group_actions_menu(self) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=1)
+        kb = self.create_markup(row_width=2)
         kb.add(
-            self.btn("⚙️ دستور گروهی (بر اساس پلن)", "admin:group_action_select_plan"),
-            self.btn("🔥 دستور گروهی (پیشرفته)", "admin:adv_ga_select_filter")
+            self.btn("🔥 پیشرفته", "admin:adv_ga_select_filter"),
+            self.btn("⚙️ بر اساس پلن", "admin:group_action_select_plan")
         )
         kb.add(self.btn("🔙 بازگشت", "admin:panel"))
         return kb

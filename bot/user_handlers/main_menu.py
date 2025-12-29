@@ -13,7 +13,7 @@ from sqlalchemy import select
 from bot.bot_instance import bot
 from bot.database import db
 from bot.db.base import UserUUID
-from bot.keyboards import user as user_menu
+from bot.keyboards.user import user_keyboard as user_menu
 from bot.utils.network import _safe_edit
 from bot.utils.parsers import _UUID_RE
 from bot.utils.formatters import escape_markdown

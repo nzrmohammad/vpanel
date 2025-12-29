@@ -1,7 +1,7 @@
 # bot/user_handlers/account.py
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user as user_menu
+from bot.keyboards.user import user_keyboard as user_menu
 from bot.formatters import user_formatter
 from bot.database import db
 from bot import combined_handler

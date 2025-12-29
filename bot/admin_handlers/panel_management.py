@@ -45,7 +45,7 @@ async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
     
     prompt = (
         f"⚙️ *{escape_markdown('مدیریت پنل‌ها')}*\n\n"
-        f"{escape_markdown('در این بخش می‌توانید سرورهای Hiddify، Marzban و Remnawave متصل به ربات را مدیریت کنید.')}"
+        f"{escape_markdown('در این بخش می‌توانید سرورهای Hiddify، Marzban،Remnawave و Remnawave متصل به ربات را مدیریت کنید.')}"
     )
     
     markup = await admin_menu.panel_list_menu(panels)
@@ -74,7 +74,8 @@ async def handle_start_add_panel(call: types.CallbackQuery, params: list):
     kb.add(
         types.InlineKeyboardButton("Hiddify", callback_data="admin:panel_set_type:hiddify"),
         types.InlineKeyboardButton("Marzban", callback_data="admin:panel_set_type:marzban"),
-        types.InlineKeyboardButton("Remnawave", callback_data="admin:panel_set_type:remnawave")
+        types.InlineKeyboardButton("Remnawave", callback_data="admin:panel_set_type:remnawave"),
+        types.InlineKeyboardButton("Pasarguard", callback_data="admin:panel_set_type:pasarguard")
     )
     kb.row(types.InlineKeyboardButton("🔙 لغو", callback_data="admin:panel_manage"))
     

@@ -14,11 +14,11 @@ class AdminUsersMenu(BaseMenu):
         categories = await db.get_server_categories()
         cat_map = {c['code']: c['emoji'] for c in categories}
         
-        kb.add(self.btn("➕ افزودن کاربر جدید (سراسری)", "admin:add_user:all"))
-
         if not panels:
             kb.add(self.btn("⚠️ هیچ پنلی یافت نشد (افزودن پنل)", "admin:panel_add_start"))
         else:
+            kb.add(self.btn("➕ افزودن کاربر جدید (سراسری)", "admin:add_user:all"))
+
             buttons = []
             for p in panels:
                 flag = cat_map.get(p.get('category'), "")

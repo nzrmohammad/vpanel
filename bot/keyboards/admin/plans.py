@@ -15,7 +15,6 @@ class AdminPlansMenu(BaseMenu):
             cat_buttons.append(self.btn(btn_text, f"admin:plan_show_category:{cat['code']}"))
         
         if cat_buttons: kb.add(*cat_buttons)
-        kb.add(types.InlineKeyboardButton("🏪 مدیریت فروشگاه امتیاز", callback_data="admin:shop:main"))
         kb.add(self.btn("🔙 بازگشت به پنل", "admin:panel"))
         return kb
 
