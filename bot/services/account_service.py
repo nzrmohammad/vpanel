@@ -124,6 +124,23 @@ class AccountService:
             "sub_link": sub_link,
             "sub_b64": sub_link_b64
         }
+    
+    async def add_service(self, user_id: int, uuid_str: str):
+        """
+        افزودن دستی یک سرویس (UUID) به لیست کاربر.
+        """
+        # نام پیش‌فرض برای سرویس ایمپورت شده
+        # (اطلاعات واقعی بعد از اولین آپدیت کش، جایگزین می‌شود)
+        default_name = f"Added-{uuid_str[:5]}"
+        
+        # اضافه کردن به دیتابیس
+        # اگر تکراری باشد، دیتابیس معمولاً ارور می‌دهد که در هندلر مدیریت می‌شود
+        await db.add_uuid(user_id, uuid_str, default_name)
+        
+        # درخواست آپدیت کش برای دریافت اطلاعات واقعی (حجم و تاریخ) از پنل
+        asyncio.create_task(cache_manager.fetch_and_update_cache())
+        
+        return True
 
     async def rename_service(self, uuid_str: str, new_name: str, user_id: int):
         """

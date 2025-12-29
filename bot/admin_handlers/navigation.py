@@ -3,7 +3,7 @@
 from telebot import types
 from bot.bot_instance import bot
 from bot.utils import _safe_edit
-from bot.keyboards import admin as admin_menu
+from bot.keyboards import admin_menu
 from bot.admin_handlers import reporting
 from bot.database import db
 
@@ -15,7 +15,6 @@ async def handle_show_panel(call, params):
 
 async def handle_management_menu(call, params):
     """نمایش منوی مدیریت کاربران"""
-    # ✅ دریافت پنل‌ها برای پاس دادن به تابع ساخت کیبورد
     panels = await db.get_active_panels()
     
     await _safe_edit(
