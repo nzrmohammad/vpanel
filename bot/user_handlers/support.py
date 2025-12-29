@@ -6,7 +6,7 @@ from telebot import types
 
 from bot.bot_instance import bot
 from bot.database import db
-from bot.keyboards import user as user_menu
+from bot.keyboards.user import user_keyboard as user_menu
 from bot.utils.network import _safe_edit
 from bot.utils.formatters import escape_markdown
 from bot.language import get_string
