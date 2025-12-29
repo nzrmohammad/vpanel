@@ -11,7 +11,7 @@ from .bot_instance import bot
 from .utils import initialize_utils
 from .config import ADMIN_IDS
 
-from .admin_handlers import user_mgmt as user_management
+from .admin_handlers import user_management
 # --- Import Handlers ---
 from .admin_handlers import (
     reporting, broadcast, backup, group_actions,
@@ -177,9 +177,17 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_details": panel_management.handle_panel_details,
     "panel_add_start": panel_management.handle_start_add_panel,
     "panel_set_type": panel_management.handle_set_panel_type,
-    "panel_toggle": panel_management.handle_panel_toggle_status,
+    
+    # ✅ اصلاح شده: استفاده از نام صحیح تابع
+    "panel_toggle": panel_management.handle_panel_choice_toggle,
+    
+    # ✅ اضافه شده: تابع placeholder در صورت نبودن کد اصلی
     "panel_edit_start": panel_management.handle_panel_edit_start,
-    "panel_delete_confirm": panel_management.handle_panel_delete_confirm,
+    
+    # ✅ اصلاح شده: استفاده از نام صحیح تابع
+    "panel_delete_confirm": panel_management.handle_panel_choice_delete,
+    "panel_del_exec": panel_management.handle_panel_delete_execute, # کلید اصلاح شده برای هماهنگی با panel_management
+    
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
     "panel_set_cat": panel_management.handle_set_panel_category,
 
@@ -218,15 +226,23 @@ ADMIN_CALLBACK_HANDLERS = {
     "churn_contact_user": user_management.handle_churn_contact_user,
     "churn_send_offer": user_management.handle_churn_send_offer,
     "skip_telegram_id": user_management.skip_telegram_id,
+    
+    # Panel Node Management
     'panel_add_node_start': panel_management.handle_panel_add_node_start,
     'panel_node_save': panel_management.handle_panel_node_save,
     'panel_ch_ren': panel_management.handle_panel_choice_rename,
     'panel_ch_del': panel_management.handle_panel_choice_delete,
     'panel_ch_tog': panel_management.handle_panel_choice_toggle,
+    'panel_manage_nodes': panel_management.handle_panel_manage_nodes, # اضافه شده
+    
+    # Node Actions
     'panel_node_sel': panel_management.handle_panel_node_selection,
     'p_node_ren_st': panel_management.handle_node_rename_start,
     'p_node_tog': panel_management.handle_node_toggle,
-    'p_node_del': panel_management.handle_node_delete,
+    # ✅ اصلاح: هندلر حذف نود که در فایل پنل منیجمنت استفاده شده
+    'node_delete_conf': panel_management.handle_node_delete_confirm,
+    'p_node_del': panel_management.handle_node_delete_confirm, # برای سازگاری عقبگرد
+
     'us_acc_p_list': user_management.handle_user_access_panel_list,
     'us_acc_tgl': user_management.handle_user_access_toggle,
     'tgl_acc': user_management.handle_user_access_toggle,

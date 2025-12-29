@@ -254,11 +254,13 @@ async def handle_panel_details(call: types.CallbackQuery, params: list):
         f"📂 *کشور:* `{escape_markdown(panel.get('category') or 'general')}`"
     ]
 
+    # استفاده از رشته خام (rf) برای جلوگیری از خطای Escape Sequence
     if nodes:
-        details.append(f"\n🌱 *نودها \({len(nodes)}\):*")
+        details.append(rf"\n🌱 *نودها \({len(nodes)}\):*")
         for n in nodes:
             n_status = "✅" if n.get('is_active', True) else "❌"
-            details.append(f"{n['flag']} {escape_markdown(n['name'])} `\({n['code']}\)` {n_status}")
+            # استفاده از رشته خام (rf)
+            details.append(rf"{n['flag']} {escape_markdown(n['name'])} `\({n['code']}\)` {n_status}")
     else:
         details.append(f"\n🌱 *نودها:* هیچ نودی تعریف نشده است")
 
@@ -300,7 +302,8 @@ async def handle_panel_add_node_start(call: types.CallbackQuery, params: list):
         'timestamp': time.time()
     }
     
-    prompt = "1️⃣ لطفاً *نام این نود* را وارد کنید:\n\(مثال: سرور دانلود، نود شماره 2\)"
+    # استفاده از رشته خام (rf)
+    prompt = r"1️⃣ لطفاً *نام این نود* را وارد کنید:\n\(مثال: سرور دانلود، نود شماره 2\)"
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{panel_id}"))
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
@@ -371,7 +374,7 @@ async def handle_panel_manage_nodes(call: types.CallbackQuery, params: list):
     for n in nodes:
         status_icon = "🟢" if n['is_active'] else "🔴"
         btn_text = f"{status_icon} {n['flag']} {n['name']} (حذف 🗑)"
-        # با کلیک روی نود، حذف می‌شود (می‌توان منوی پیچیده‌تری هم گذاشت)
+        # کال‌بک: admin:node_delete_conf:NODE_ID
         kb.add(types.InlineKeyboardButton(btn_text, callback_data=f"admin:node_delete_conf:{n['id']}"))
         
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:panel_details:{panel_id}"))
@@ -457,3 +460,27 @@ async def handle_panel_delete_execute(call: types.CallbackQuery, params: list):
     await panel_service.delete_panel(panel_id)
     await bot.answer_callback_query(call.id, "✅ پنل حذف شد.")
     await handle_panel_management_menu(call, [])
+
+# ==============================================================================
+# 7. Placeholder Handlers (برای جلوگیری از خطای AttributeError در Router)
+# ==============================================================================
+
+@admin_only
+async def handle_panel_edit_start(call: types.CallbackQuery, params: list):
+    """Placeholder for panel_edit_start"""
+    await bot.answer_callback_query(call.id, "🚧 در حال توسعه...", show_alert=True)
+
+@admin_only
+async def handle_panel_node_selection(call: types.CallbackQuery, params: list):
+    """Placeholder for panel_node_sel"""
+    await bot.answer_callback_query(call.id, "🚧 در حال توسعه...", show_alert=True)
+
+@admin_only
+async def handle_node_rename_start(call: types.CallbackQuery, params: list):
+    """Placeholder for p_node_ren_st"""
+    await bot.answer_callback_query(call.id, "🚧 در حال توسعه...", show_alert=True)
+
+@admin_only
+async def handle_node_toggle(call: types.CallbackQuery, params: list):
+    """Placeholder for p_node_tog"""
+    await bot.answer_callback_query(call.id, "🚧 در حال توسعه...", show_alert=True)

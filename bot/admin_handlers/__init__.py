@@ -1,5 +1,5 @@
 from .panel_management import *
-from .user_mgmt import *
+from .user_management import *
 from .reporting import *
 from .plan_management import *
 from .backup import *

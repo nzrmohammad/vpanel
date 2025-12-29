@@ -18,6 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_UUID = os.getenv("ADMIN_UUID")
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS")) or {265455450}
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY")
+BOT_DOMAIN = os.getenv("BOT_DOMAIN")
 
 TELEGRAM_FILE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024
 API_TIMEOUT = 45
