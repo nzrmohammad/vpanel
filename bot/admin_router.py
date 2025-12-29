@@ -11,9 +11,10 @@ from .bot_instance import bot
 from .utils import initialize_utils
 from .config import ADMIN_IDS
 
+from .admin_handlers import user_mgmt as user_management
 # --- Import Handlers ---
 from .admin_handlers import (
-    user_management, reporting, broadcast, backup, group_actions,
+    reporting, broadcast, backup, group_actions,
     plan_management, panel_management, support, wallet as wallet_admin,
     navigation, debug, settings, shop_management
 )

@@ -3,35 +3,45 @@
 import logging
 import time
 from telebot import types
-from bot.database import db
+
+# --- Imports ---
 from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
+from bot.utils.decorators import admin_only
+from bot.services.admin.panel_service import panel_service 
+from bot.database import db
 
 logger = logging.getLogger(__name__)
+
+# متغیرهای سراسری برای نگهداری وضعیت ربات و مکالمات
 bot = None
 admin_conversations = {}
 
 def initialize_panel_management_handlers(b, conv_dict):
-    """مقادیر bot و admin_conversations را از فایل اصلی دریافت می‌کند."""
+    """
+    مقادیر bot و admin_conversations را از فایل اصلی (admin_router) دریافت می‌کند.
+    """
     global bot, admin_conversations
     bot = b
-    # استفاده از دیکشنری مشترک برای مدیریت استیت‌ها در روتر
     admin_conversations = conv_dict
 
 async def _delete_user_message(msg: types.Message):
-    """پیام کاربر را برای تمیز ماندن چت حذف می‌کند."""
-    try:
-        await bot.delete_message(msg.chat.id, msg.message_id)
-    except Exception:
-        pass
+    """تابع کمکی برای حذف پیام کاربر"""
+    try: await bot.delete_message(msg.chat.id, msg.message_id)
+    except: pass
 
+# ==============================================================================
+# 1. منوی لیست پنل‌ها (Main List)
+# ==============================================================================
+
+@admin_only
 async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
-    """منوی اصلی مدیریت پنل‌ها را نمایش می‌دهد."""
+    """نمایش لیست تمام پنل‌های متصل"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # دریافت تمام پنل‌ها
-    panels = await db.get_all_panels()
+    # دریافت لیست پنل‌ها از سرویس
+    panels = await panel_service.get_all_panels()
     
     prompt = (
         f"⚙️ *{escape_markdown('مدیریت پنل‌ها')}*\n\n"
@@ -39,27 +49,27 @@ async def handle_panel_management_menu(call: types.CallbackQuery, params: list):
     )
     
     markup = await admin_menu.panel_list_menu(panels)
-    
     await _safe_edit(uid, msg_id, prompt, reply_markup=markup, parse_mode="MarkdownV2")
 
 # ==============================================================================
-# افزودن پنل جدید (Add Panel Flow)
+# 2. پروسه افزودن پنل جدید (Add Panel Wizard)
 # ==============================================================================
 
+@admin_only
 async def handle_start_add_panel(call: types.CallbackQuery, params: list):
-    """مرحله اول: شروع مکالمه و پرسیدن نوع پنل."""
+    """شروع پروسه افزودن پنل: انتخاب نوع پنل"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
+    # شروع استیت مکالمه
     admin_conversations[uid] = {
-        'action': 'add_panel',
+        'action': 'add_panel', 
         'step': 'type', 
         'msg_id': msg_id, 
-        'data': {},
+        'data': {}, 
         'timestamp': time.time()
     }
     
     prompt = escape_markdown("1️⃣ لطفاً نوع پنلی که می‌خواهید اضافه کنید را انتخاب کنید:")
-    
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("Hiddify", callback_data="admin:panel_set_type:hiddify"),
@@ -70,24 +80,27 @@ async def handle_start_add_panel(call: types.CallbackQuery, params: list):
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
 
+@admin_only
 async def handle_set_panel_type(call: types.CallbackQuery, params: list):
-    """مرحله دوم: ذخیره نوع پنل و پرسیدن نام."""
+    """مرحله ۲: دریافت نام پنل"""
     uid, msg_id = call.from_user.id, call.message.message_id
     panel_type = params[0]
     
     if uid not in admin_conversations: return
+    
     admin_conversations[uid]['data']['panel_type'] = panel_type
     admin_conversations[uid]['step'] = 'name'
-    admin_conversations[uid]['timestamp'] = time.time()
     admin_conversations[uid]['next_handler'] = get_panel_name
     
     prompt = escape_markdown("2️⃣ یک نام منحصر به فرد برای این پنل انتخاب کنید (مثال: سرور آلمان):")
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
+@admin_only
 async def get_panel_name(message: types.Message):
-    """مرحله سوم: دریافت نام و پرسیدن آدرس URL."""
+    """مرحله ۳: دریافت آدرس URL"""
     uid, name = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
+    
     if uid not in admin_conversations: return
 
     admin_conversations[uid]['data']['name'] = name
@@ -95,17 +108,15 @@ async def get_panel_name(message: types.Message):
     msg_id = admin_conversations[uid]['msg_id']
     admin_conversations[uid]['next_handler'] = get_panel_url
     
-    prompt = (
-        f"3️⃣ {escape_markdown('لطفاً آدرس کامل پنل را وارد کنید:')}\n\n"
-        f"*{escape_markdown('مثال:')}*\n"
-        f"`https://mypanel.domain.com`"
-    )
+    prompt = f"3️⃣ {escape_markdown('آدرس کامل پنل (با http/https):')}\n`https://mypanel.domain.com`"
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
+@admin_only
 async def get_panel_url(message: types.Message):
-    """مرحله چهارم: دریافت URL و پرسیدن توکن اول."""
+    """مرحله ۴: دریافت توکن اول"""
     uid, url = message.from_user.id, message.text.strip().rstrip('/')
     await _delete_user_message(message)
+    
     if uid not in admin_conversations: return
 
     admin_conversations[uid]['data']['api_url'] = url
@@ -114,20 +125,23 @@ async def get_panel_url(message: types.Message):
     panel_type = admin_conversations[uid]['data']['panel_type']
     admin_conversations[uid]['next_handler'] = get_panel_token1
 
-    prefix = "4️⃣ "
-    if panel_type == 'hiddify':
-        msg = f"{prefix}{escape_markdown('لطفاً')} `API Key` {escape_markdown('(توکن ادمین) هیدیفای را وارد کنید:')}"
-    elif panel_type == 'remnawave':
-        msg = f"{prefix}{escape_markdown('لطفاً')} `API Token` {escape_markdown('ادمین رمناویو را وارد کنید:')}"
-    else: # Marzban
-        msg = f"{prefix}{escape_markdown('لطفاً')} `Username` {escape_markdown('(نام کاربری) ادمین مرزبان را وارد کنید:')}"
+    # تعیین متن راهنما بر اساس نوع پنل
+    if panel_type == 'hiddify': 
+        msg = "API Key (Admin Token) را از مسیر تنظیمات ادمین > ادمین‌ها کپی کنید:"
+    elif panel_type == 'remnawave': 
+        msg = "API Token را وارد کنید:"
+    else: 
+        msg = "نام کاربری ادمین (Admin Username) را وارد کنید:"
         
-    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+    prompt = f"4️⃣ {escape_markdown(msg)}"
+    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
+@admin_only
 async def get_panel_token1(message: types.Message):
-    """مرحله پنجم: دریافت توکن اول و تصمیم‌گیری برای مرحله بعد."""
+    """مرحله ۵: دریافت توکن دوم (در صورت نیاز)"""
     uid, token1 = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
+    
     if uid not in admin_conversations: return
 
     admin_conversations[uid]['data']['api_token1'] = token1
@@ -135,51 +149,50 @@ async def get_panel_token1(message: types.Message):
     panel_type = admin_conversations[uid]['data']['panel_type']
 
     if panel_type == 'remnawave':
+        # رمناویو توکن دوم ندارد
         admin_conversations[uid]['data']['api_token2'] = None
-        admin_conversations[uid]['step'] = 'select_category'
-        admin_conversations[uid]['next_handler'] = None
-        
-        categories = await db.get_server_categories()
-        prompt = f"6️⃣ {escape_markdown('لطفاً')} *{escape_markdown('موقعیت (کشور)')}* {escape_markdown('این سرور را انتخاب کنید:')}"
-        markup = await admin_menu.panel_category_selection_menu(categories)
-        await _safe_edit(uid, msg_id, prompt, reply_markup=markup)
+        await _ask_category(uid, msg_id)
         return
 
     admin_conversations[uid]['step'] = 'token2'
     admin_conversations[uid]['next_handler'] = get_panel_token2
 
-    if panel_type == 'hiddify':
-        prompt = f"5️⃣ {escape_markdown('لطفاً')} `Proxy Path` {escape_markdown('را وارد کنید. اگر ندارید، کلمه')} `ندارم` {escape_markdown('را ارسال کنید:')}"
-    else: # Marzban
-        prompt = f"5️⃣ {escape_markdown('لطفاً')} `Password` {escape_markdown('(رمز عبور) ادمین مرزبان را وارد کنید:')}"
-        
-    await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+    if panel_type == 'hiddify': 
+        prompt = "Proxy Path (اگر ندارید 'ندارم' بنویسید):"
+    else: 
+        prompt = "رمز عبور ادمین (Admin Password):"
+    
+    await _safe_edit(uid, msg_id, escape_markdown(f"5️⃣ {prompt}"), reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
+@admin_only
 async def get_panel_token2(message: types.Message):
-    """مرحله ششم: دریافت توکن دوم و نمایش منوی انتخاب کشور."""
+    """مرحله ۶: انتخاب دسته‌بندی کشور"""
     uid, token2 = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
     if uid not in admin_conversations: return
 
-    if admin_conversations[uid]['data']['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', 'no', '-', '.']:
+    if admin_conversations[uid]['data']['panel_type'] == 'hiddify' and token2.lower() in ['ندارم', 'none', '-', '.']:
         admin_conversations[uid]['data']['api_token2'] = None
     else:
         admin_conversations[uid]['data']['api_token2'] = token2
 
-    admin_conversations[uid]['step'] = 'select_category'
-    msg_id = admin_conversations[uid]['msg_id']
-    admin_conversations[uid]['next_handler'] = None
+    await _ask_category(uid, admin_conversations[uid]['msg_id'])
 
+async def _ask_category(uid, msg_id):
+    """نمایش کیبورد انتخاب کشور"""
+    admin_conversations[uid]['step'] = 'select_category'
+    admin_conversations[uid]['next_handler'] = None
+    
     categories = await db.get_server_categories()
     
-    prompt = f"6️⃣ {escape_markdown('لطفاً')} *{escape_markdown('موقعیت (کشور)')}* {escape_markdown('این سرور را انتخاب کنید:')}"
+    prompt = f"6️⃣ {escape_markdown('لطفاً کشور این سرور را انتخاب کنید:')}"
     markup = await admin_menu.panel_category_selection_menu(categories)
-    
     await _safe_edit(uid, msg_id, prompt, reply_markup=markup)
 
+@admin_only
 async def handle_set_panel_category(call: types.CallbackQuery, params: list):
-    """مرحله هفتم (نهایی): ذخیره پنل در دیتابیس."""
+    """ذخیره نهایی پنل در دیتابیس"""
     uid = call.from_user.id
     category_code = params[0]
     
@@ -188,184 +201,112 @@ async def handle_set_panel_category(call: types.CallbackQuery, params: list):
         return
 
     convo_data = admin_conversations.pop(uid)
-    panel_data = convo_data['data']
+    d = convo_data['data']
     msg_id = convo_data['msg_id']
 
-    success = await db.add_panel(
-        name=panel_data['name'],
-        panel_type=panel_data['panel_type'],
-        api_url=panel_data['api_url'],
-        token1=panel_data['api_token1'],
-        token2=panel_data['api_token2'],
-        category=category_code
+    # فراخوانی سرویس برای افزودن
+    res = await panel_service.add_new_panel(
+        d['name'], d['panel_type'], d['api_url'], d['api_token1'], d['api_token2'], category_code
     )
 
-    if success:
-        success_message = escape_markdown(f"✅ پنل «{panel_data['name']}» با موفقیت ثبت شد.")
-        all_panels = await db.get_all_panels()
-        await _safe_edit(uid, msg_id, success_message, reply_markup=await admin_menu.panel_list_menu(all_panels))
+    if res['success']:
+        msg = escape_markdown(f"✅ پنل «{d['name']}» با موفقیت ثبت شد.")
+        # بازگشت به لیست اصلی
+        panels = await panel_service.get_all_panels()
+        await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.panel_list_menu(panels))
     else:
-        error_message = escape_markdown("❌ خطا: نام پنل تکراری است.")
-        await _safe_edit(uid, msg_id, error_message, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
+        err_msg = res.get('error')
+        if err_msg == 'duplicate_name':
+            err_text = "نام انتخاب شده تکراری است."
+        else:
+            err_text = f"خطا: {err_msg}"
+            
+        err = escape_markdown(f"❌ {err_text}")
+        await _safe_edit(uid, msg_id, err, reply_markup=await admin_menu.cancel_action("admin:panel_manage"))
 
 # ==============================================================================
-# مدیریت تکی پنل (نمایش جزئیات + نودها + منوهای هوشمند)
+# 3. نمایش جزئیات و مدیریت پنل (Panel Details)
 # ==============================================================================
 
+@admin_only
 async def handle_panel_details(call: types.CallbackQuery, params: list):
-    """نمایش جزئیات پنل + لیست نودها + دکمه‌های دو ستونه."""
+    """نمایش اطلاعات کامل یک پنل + لیست نودها"""
     uid, msg_id = call.from_user.id, call.message.message_id
     panel_id = int(params[0])
     
-    panel = await db.get_panel_by_id(panel_id)
-    if not panel:
+    # دریافت اطلاعات کامل (پنل + نودها) از سرویس
+    data = await panel_service.get_panel_details_full(panel_id)
+    if not data:
         await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.")
         return
 
-    nodes = await db.get_panel_nodes(panel_id)
-    display_url = panel['api_url']
+    panel = data['panel']
+    nodes = data['nodes']
+    
     status = "فعال ✅" if panel['is_active'] else "غیرفعال ❌"
     
-    # ساخت متن پیام با رعایت اسکیپ برای جلوگیری از Bad Request
     details = [
         f"⚙️ *جزئیات پنل: {escape_markdown(panel['name'])}*",
         f"`──────────────────`",
         f"🔸 *نوع:* {escape_markdown(panel['panel_type'])}",
-        f"🔹 *وضعیت پنل:* {status}",
-        f"🔗 *آدرس:* `{escape_markdown(display_url)}`",
-        f"📂 *دسته‌بندی اصلی:* `{escape_markdown(panel.get('category') or 'general')}`"
+        f"🔹 *وضعیت:* {status}",
+        f"🔗 *آدرس:* `{escape_markdown(panel['api_url'])}`",
+        f"📂 *کشور:* `{escape_markdown(panel.get('category') or 'general')}`"
     ]
 
     if nodes:
-        # پرانتزها اسکیپ شدند: \( \)
-        details.append(f"\n🌱 *نودهای متصل \({len(nodes)}\):*")
+        details.append(f"\n🌱 *نودها \({len(nodes)}\):*")
         for n in nodes:
             n_status = "✅" if n.get('is_active', True) else "❌"
-            # نمایش: 🇩🇪 نام (کد) [وضعیت]
             details.append(f"{n['flag']} {escape_markdown(n['name'])} `\({n['code']}\)` {n_status}")
     else:
         details.append(f"\n🌱 *نودها:* هیچ نودی تعریف نشده است")
 
-    # --- چیدمان دکمه‌ها ---
+    # ساخت دکمه‌ها (مدیریت، افزودن نود، حذف و...)
     kb = types.InlineKeyboardMarkup(row_width=2)
-    
-    # ردیف ۱: افزودن نود | تغییر نام
     kb.add(
         types.InlineKeyboardButton("✏️ تغییر نام", callback_data=f"admin:panel_ch_ren:{panel_id}"),
         types.InlineKeyboardButton("➕ افزودن نود", callback_data=f"admin:panel_add_node_start:{panel_id}")
     )
-    
-    # ردیف ۲: تغییر وضعیت | حذف
     kb.add(
         types.InlineKeyboardButton("🗑 حذف", callback_data=f"admin:panel_ch_del:{panel_id}"),
         types.InlineKeyboardButton("🔄 تغییر وضعیت", callback_data=f"admin:panel_ch_tog:{panel_id}"),
-        
     )
     
+    # اگر نود دارد، دکمه‌های مدیریت نودها را نمایش بده
+    if nodes:
+        kb.add(types.InlineKeyboardButton("⚙️ مدیریت نودها (حذف/تغییر)", callback_data=f"admin:panel_manage_nodes:{panel_id}"))
+
     kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:panel_manage"))
     
     await _safe_edit(uid, msg_id, "\n".join(details), reply_markup=kb, parse_mode="MarkdownV2")
 
 # ==============================================================================
-# منوهای واسط (انتخاب بین پنل و نود)
+# 4. افزودن نود جدید (Add Node Flow)
 # ==============================================================================
 
-async def handle_choice_menu(call: types.CallbackQuery, params: list, action_type: str):
-    """تابع عمومی برای نمایش منوی انتخاب (پنل یا نود)."""
-    uid, msg_id = call.from_user.id, call.message.message_id
-    panel_id = int(params[0])
-    
-    panel = await db.get_panel_by_id(panel_id)
-    if not panel: return
-
-    action_texts = {
-        "rename": "تغییر نام",
-        "delete": "حذف",
-        "toggle": "تغییر وضعیت"
-    }
-    act_name = action_texts.get(action_type, action_type)
-    
-    prompt = f"❓ *{act_name}* روی کدام مورد انجام شود؟"
-    
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    
-    # دکمه عملیات روی خود پنل
-    if action_type == "rename":
-        kb.add(types.InlineKeyboardButton(f"سرور اصلی ({panel['name']})", callback_data=f"admin:panel_edit_start:{panel_id}"))
-    elif action_type == "delete":
-        kb.add(types.InlineKeyboardButton(f"سرور اصلی ({panel['name']})", callback_data=f"admin:panel_delete_confirm:{panel_id}"))
-    elif action_type == "toggle":
-        kb.add(types.InlineKeyboardButton(f"سرور اصلی ({panel['name']})", callback_data=f"admin:panel_toggle:{panel_id}"))
-
-    # دکمه عملیات روی نودها (لیست نودها را باز میکند)
-    kb.add(types.InlineKeyboardButton("🌱 یکی از نودها", callback_data=f"admin:panel_node_sel:{panel_id}:{action_type}"))
-    
-    kb.add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{panel_id}"))
-    
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
-
-async def handle_panel_choice_rename(call, params): await handle_choice_menu(call, params, "rename")
-async def handle_panel_choice_delete(call, params): await handle_choice_menu(call, params, "delete")
-async def handle_panel_choice_toggle(call, params): await handle_choice_menu(call, params, "toggle")
-
-async def handle_panel_node_selection(call: types.CallbackQuery, params: list):
-    """لیست نودها را برای انتخاب نشان می‌دهد."""
-    uid, msg_id = call.from_user.id, call.message.message_id
-    panel_id = int(params[0])
-    action_type = params[1] # rename, delete, toggle
-    
-    nodes = await db.get_panel_nodes(panel_id)
-    if not nodes:
-        await bot.answer_callback_query(call.id, "❌ هیچ نودی وجود ندارد.", show_alert=True)
-        return
-
-    prompt = "👇 لطفاً نود مورد نظر را انتخاب کنید:"
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    
-    for n in nodes:
-        # تعیین کال‌بک نهایی بر اساس نوع عملیات
-        if action_type == "rename":
-            cb = f"admin:p_node_ren_st:{n['id']}"
-        elif action_type == "delete":
-            cb = f"admin:p_node_del:{n['id']}"
-        else: # toggle
-            cb = f"admin:p_node_tog:{n['id']}"
-            
-        kb.add(types.InlineKeyboardButton(f"{n['flag']} {n['name']}", callback_data=cb))
-        
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:panel_details:{panel_id}"))
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
-
-# ==============================================================================
-# عملیات‌های مربوط به نود (Add, Rename, Toggle, Delete)
-# ==============================================================================
-
-# --- افزودن نود ---
+@admin_only
 async def handle_panel_add_node_start(call: types.CallbackQuery, params: list):
-    """مرحله ۱: شروع افزودن نود."""
+    """شروع افزودن نود: دریافت نام"""
     uid, msg_id = call.from_user.id, call.message.message_id
     panel_id = int(params[0])
     
     admin_conversations[uid] = {
-        'action': 'add_node',
-        'step': 'name',
-        'panel_id': panel_id,
-        'msg_id': msg_id,
-        'next_handler': get_node_name,
+        'action': 'add_node', 
+        'step': 'name', 
+        'panel_id': panel_id, 
+        'msg_id': msg_id, 
+        'next_handler': get_node_name, 
         'timestamp': time.time()
     }
     
-    # اسکیپ کردن پرانتزها برای جلوگیری از ارور
-    prompt = (
-        "1️⃣ لطفاً *نام این نود* را وارد کنید:\n"
-        "\(مثال: سرور دانلود، نود شماره 2\)"
-    )
+    prompt = "1️⃣ لطفاً *نام این نود* را وارد کنید:\n\(مثال: سرور دانلود، نود شماره 2\)"
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{panel_id}"))
-    
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
+@admin_only
 async def get_node_name(message: types.Message):
-    """مرحله ۲: دریافت نام نود و نمایش پرچم‌ها."""
+    """انتخاب کشور/پرچم برای نود"""
     uid, name = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
@@ -373,173 +314,146 @@ async def get_node_name(message: types.Message):
     
     admin_conversations[uid]['node_name'] = name
     admin_conversations[uid]['step'] = 'flag'
-    panel_id = admin_conversations[uid]['panel_id']
-    msg_id = admin_conversations[uid]['msg_id']
     admin_conversations[uid]['next_handler'] = None
     
     categories = await db.get_server_categories()
     
-    prompt = (
-        f"2️⃣ نام نود: {escape_markdown(name)}\n"
-        f"حالا **کشور/پرچم** این نود را انتخاب کنید:"
-    )
+    prompt = f"2️⃣ نام نود: {escape_markdown(name)}\nحالا **کشور/پرچم** این نود را انتخاب کنید:"
     
-    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb = types.InlineKeyboardMarkup(row_width=3)
     buttons = []
-    for cat in categories:
-        btn_text = f"{cat['emoji']} {cat['name']}"
-        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:panel_node_save:{cat['code']}"))
+    for c in categories:
+        buttons.append(types.InlineKeyboardButton(f"{c['emoji']} {c['name']}", callback_data=f"admin:panel_node_save:{c['code']}"))
+    
     kb.add(*buttons)
-    kb.row(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{panel_id}"))
+    kb.row(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{admin_conversations[uid]['panel_id']}"))
 
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
+    await _safe_edit(uid, admin_conversations[uid]['msg_id'], prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
+@admin_only
 async def handle_panel_node_save(call: types.CallbackQuery, params: list):
-    """مرحله ۳: ذخیره نود در دیتابیس."""
+    """ذخیره نهایی نود"""
     uid = call.from_user.id
     country_code = params[0]
     
     if uid not in admin_conversations: return
-    
     data = admin_conversations.pop(uid)
-    panel_id = data['panel_id']
-    name = data['node_name']
     
     categories = await db.get_server_categories()
-    flag = "🏳️"
-    for c in categories:
-        if c['code'] == country_code:
-            flag = c['emoji']
-            break
+    # پیدا کردن اموجی پرچم
+    flag = next((c['emoji'] for c in categories if c['code'] == country_code), "🏳️")
             
-    await db.add_panel_node(panel_id, name, country_code, flag)
-    await bot.answer_callback_query(call.id, "✅ نود با موفقیت اضافه شد.")
-    await handle_panel_details(call, [panel_id])
-
-# --- تغییر نام نود ---
-async def handle_node_rename_start(call: types.CallbackQuery, params: list):
-    uid, msg_id = call.from_user.id, call.message.message_id
-    node_id = int(params[0])
+    # ذخیره با استفاده از سرویس
+    await panel_service.add_node(data['panel_id'], data['node_name'], country_code, flag)
     
-    node = await db.get_panel_node_by_id(node_id)
-    if not node: return
+    await bot.answer_callback_query(call.id, "✅ نود با موفقیت اضافه شد.")
+    # بازگشت به جزئیات پنل
+    await handle_panel_details(call, [data['panel_id']])
+
+# ==============================================================================
+# 5. مدیریت نودهای موجود (حذف / تغییر وضعیت)
+# ==============================================================================
+
+@admin_only
+async def handle_panel_manage_nodes(call: types.CallbackQuery, params: list):
+    """نمایش لیست نودها برای انتخاب عملیات"""
+    uid, msg_id = call.from_user.id, call.message.message_id
+    panel_id = int(params[0])
+    
+    data = await panel_service.get_panel_details_full(panel_id)
+    if not data or not data['nodes']:
+        await bot.answer_callback_query(call.id, "❌ نودی برای مدیریت وجود ندارد.")
+        return
+        
+    nodes = data['nodes']
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    
+    for n in nodes:
+        status_icon = "🟢" if n['is_active'] else "🔴"
+        btn_text = f"{status_icon} {n['flag']} {n['name']} (حذف 🗑)"
+        # با کلیک روی نود، حذف می‌شود (می‌توان منوی پیچیده‌تری هم گذاشت)
+        kb.add(types.InlineKeyboardButton(btn_text, callback_data=f"admin:node_delete_conf:{n['id']}"))
+        
+    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:panel_details:{panel_id}"))
+    
+    prompt = escape_markdown("برای **حذف** نود، روی آن کلیک کنید:")
+    await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
+
+@admin_only
+async def handle_node_delete_confirm(call: types.CallbackQuery, params: list):
+    node_id = int(params[0])
+    # مستقیم حذف می‌کنیم (یا می‌توان تاییدیه گرفت)
+    node = await panel_service.get_node(node_id)
+    if node:
+        await panel_service.delete_node(node_id)
+        await bot.answer_callback_query(call.id, "🗑 نود حذف شد.")
+        # بازگشت به لیست نودها
+        await handle_panel_manage_nodes(call, [node['panel_id']])
+
+# ==============================================================================
+# 6. عملیات‌های مدیریتی پنل (Rename, Delete, Toggle)
+# ==============================================================================
+
+# --- تغییر نام پنل ---
+@admin_only
+async def handle_panel_choice_rename(call: types.CallbackQuery, params: list):
+    uid, msg_id = call.from_user.id, call.message.message_id
+    panel_id = int(params[0])
     
     admin_conversations[uid] = {
-        'action': 'edit_node_name',
-        'node_id': node_id,
-        'panel_id': node['panel_id'],
+        'action': 'rename_panel',
+        'panel_id': panel_id,
         'msg_id': msg_id,
-        'next_handler': get_new_node_name,
+        'next_handler': do_rename_panel,
         'timestamp': time.time()
     }
     
-    prompt = f"نام فعلی نود: {escape_markdown(node['name'])}\nلطفاً نام جدید را وارد کنید:"
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{node['panel_id']}"))
+    prompt = escape_markdown("✏️ لطفاً نام جدید پنل را وارد کنید:")
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 انصراف", callback_data=f"admin:panel_details:{panel_id}"))
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
 
-async def get_new_node_name(message: types.Message):
+@admin_only
+async def do_rename_panel(message: types.Message):
     uid, new_name = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
+    
     if uid not in admin_conversations: return
-    
     data = admin_conversations.pop(uid)
-    if await db.update_panel_node_name(data['node_id'], new_name):
-        await bot.send_message(message.chat.id, "✅ نام نود تغییر کرد.")
     
-    # بازگشت به منوی پنل (با ساخت یک کال‌بک ساختگی برای استفاده مجدد از تابع)
-    fake_call = types.CallbackQuery(id='0', from_user=message.from_user, data='fake', message=message)
+    await panel_service.update_panel_name(data['panel_id'], new_name)
+    
+    # ساختن یک کال‌بک مصنوعی برای بازگشت به صفحه پنل
+    fake_call = types.CallbackQuery(id='0', from_user=message.from_user, data=f"admin:panel_details:{data['panel_id']}", message=message)
     fake_call.message.message_id = data['msg_id']
+    
+    await bot.send_message(message.chat.id, "✅ نام پنل تغییر کرد.", disable_notification=True)
     await handle_panel_details(fake_call, [data['panel_id']])
 
-# --- تغییر وضعیت و حذف نود ---
-async def handle_node_toggle(call: types.CallbackQuery, params: list):
-    node_id = int(params[0])
-    node = await db.get_panel_node_by_id(node_id)
-    if node and await db.toggle_panel_node_status(node_id):
-        await bot.answer_callback_query(call.id, "✅ وضعیت نود تغییر کرد.")
-        await handle_panel_details(call, [node['panel_id']])
-
-async def handle_node_delete(call: types.CallbackQuery, params: list):
-    node_id = int(params[0])
-    node = await db.get_panel_node_by_id(node_id)
-    if node:
-        await db.delete_panel_node(node_id)
-        await bot.answer_callback_query(call.id, "🗑 نود حذف شد.")
-        await handle_panel_details(call, [node['panel_id']])
-
-# ==============================================================================
-# عملیات‌های مربوط به پنل اصلی (تغییر نام، وضعیت، حذف)
-# ==============================================================================
-
-async def handle_panel_toggle_status(call: types.CallbackQuery, params: list):
-    """تغییر وضعیت فعال/غیرفعال پنل."""
+# --- تغییر وضعیت پنل (Toggle) ---
+@admin_only
+async def handle_panel_choice_toggle(call: types.CallbackQuery, params: list):
     panel_id = int(params[0])
-    if await db.toggle_panel_status(panel_id):
-        await bot.answer_callback_query(call.id, "✅ وضعیت پنل تغییر کرد.")
-        await handle_panel_details(call, params)
-    else:
-        await bot.answer_callback_query(call.id, "❌ خطا در تغییر وضعیت.", show_alert=True)
+    await panel_service.toggle_panel_status(panel_id)
+    await bot.answer_callback_query(call.id, "✅ وضعیت پنل تغییر کرد.")
+    await handle_panel_details(call, [panel_id])
 
-async def handle_panel_delete_confirm(call: types.CallbackQuery, params: list):
-    """نمایش پیام تایید برای حذف پنل."""
+# --- حذف پنل ---
+@admin_only
+async def handle_panel_choice_delete(call: types.CallbackQuery, params: list):
+    """درخواست تایید حذف"""
     panel_id = int(params[0])
-    prompt = "⚠️ *آیا از حذف این پنل اطمینان دارید؟*\nاین کار باعث حذف دسترسی ربات به سرور می‌شود \(کاربران در سرور باقی می‌مانند\)\."
-    
+    prompt = "⚠️ *آیا از حذف کامل این پنل و نودهای آن اطمینان دارید؟*"
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("❌ بله، حذف کن", callback_data=f"admin:panel_delete_execute:{panel_id}"),
+        types.InlineKeyboardButton("❌ بله، حذف کن", callback_data=f"admin:panel_del_exec:{panel_id}"),
         types.InlineKeyboardButton("✅ انصراف", callback_data=f"admin:panel_details:{panel_id}")
     )
     await _safe_edit(call.from_user.id, call.message.message_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")
 
+@admin_only
 async def handle_panel_delete_execute(call: types.CallbackQuery, params: list):
-    """حذف نهایی پنل."""
+    """اجرای حذف"""
     panel_id = int(params[0])
-    if await db.delete_panel(panel_id):
-        await bot.answer_callback_query(call.id, "✅ پنل با موفقیت حذف شد.")
-        await handle_panel_management_menu(call, [])
-    else:
-        await bot.answer_callback_query(call.id, "❌ خطا در حذف پنل.", show_alert=True)
-
-async def handle_panel_edit_start(call: types.CallbackQuery, params: list):
-    """مرحله اول ویرایش نام پنل."""
-    uid, msg_id = call.from_user.id, call.message.message_id
-    panel_id = int(params[0])
-    
-    panel = await db.get_panel_by_id(panel_id)
-    if not panel:
-        await bot.answer_callback_query(call.id, "❌ پنل یافت نشد.")
-        return
-
-    admin_conversations[uid] = {
-        'action': 'edit_panel_name',
-        'msg_id': msg_id, 
-        'panel_id': panel_id,
-        'next_handler': get_new_panel_name,
-        'timestamp': time.time()
-    }
-    
-    prompt = f"نام فعلی: {escape_markdown(panel['name'])}\nلطفاً نام جدید را وارد کنید:"
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:panel_details:{panel_id}"))
-    
-    await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
-
-async def get_new_panel_name(message: types.Message):
-    """مرحله دوم ویرایش نام پنل."""
-    uid, new_name = message.from_user.id, message.text.strip()
-    await _delete_user_message(message)
-    
-    if uid not in admin_conversations: return
-    convo = admin_conversations.pop(uid)
-    panel_id = convo['panel_id']
-    msg_id = convo['msg_id']
-
-    if await db.update_panel_name(panel_id, new_name):
-        success_msg = escape_markdown(f"✅ نام پنل به «{new_name}» تغییر کرد.")
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت به جزئیات", callback_data=f"admin:panel_details:{panel_id}"))
-        await _safe_edit(uid, msg_id, success_msg, reply_markup=kb)
-    else:
-        error_msg = escape_markdown("❌ خطا: نام تکراری یا نامعتبر.")
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔄 تلاش مجدد", callback_data=f"admin:panel_edit_start:{panel_id}"))
-        await _safe_edit(uid, msg_id, error_msg, reply_markup=kb)
+    await panel_service.delete_panel(panel_id)
+    await bot.answer_callback_query(call.id, "✅ پنل حذف شد.")
+    await handle_panel_management_menu(call, [])
