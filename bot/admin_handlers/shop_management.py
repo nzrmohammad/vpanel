@@ -2,7 +2,7 @@ import logging
 import time
 from telebot import types
 from bot.database import db
-from bot.keyboards import admin as admin_kb
+from bot.keyboards.admin import admin_keyboard as admin_kb
 from bot.utils.network import _safe_edit
 
 logger = logging.getLogger(__name__)

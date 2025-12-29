@@ -2,7 +2,7 @@
 
 from telebot import types
 from typing import List, Dict, Any, Optional
-from .base import BaseMenu, CATEGORY_META
+from .base import BaseMenu
 from ..language import get_string
 from bot.database import db
 from bot.formatters import user_formatter

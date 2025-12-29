@@ -11,7 +11,7 @@ from telebot import types
 from sqlalchemy import select, func, and_, or_, desc
 
 from bot.bot_instance import bot
-from bot.keyboards import admin as admin_menu
+from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.database import db
 from bot.db.base import User, UserUUID, WalletTransaction, ScheduledMessage, Panel, UsageSnapshot, Plan
 from bot.db import queries

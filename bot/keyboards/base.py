@@ -3,19 +3,6 @@ from telebot import types
 from ..language import get_string
 from ..config import EMOJIS, PAGE_SIZE
 
-# ✅ اضافه کردن این دیکشنری برای رفع ارور
-CATEGORY_META = {
-    'de': {'emoji': '🇩🇪', 'name': 'Germany'},
-    'fr': {'emoji': '🇫🇷', 'name': 'France'},
-    'tr': {'emoji': '🇹🇷', 'name': 'Turkey'},
-    'us': {'emoji': '🇺🇸', 'name': 'USA'},
-    'ro': {'emoji': '🇷🇴', 'name': 'Romania'},
-    'fi': {'emoji': '🇫🇮', 'name': 'Finland'},
-    'ir': {'emoji': '🇮🇷', 'name': 'Iran'},
-    'supp': {'emoji': '🆘', 'name': 'Support'},
-    'combined': {'emoji': '🚀', 'name': 'Combined'}
-}
-
 class BaseMenu:
     """کلاس والد برای متدهای مشترک ساخت کیبورد"""
 

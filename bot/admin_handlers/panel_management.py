@@ -4,7 +4,7 @@ import logging
 import time
 from telebot import types
 from bot.database import db
-from bot.keyboards import admin as admin_menu
+from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
 
