@@ -2,7 +2,7 @@
 
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user as user_menu
+from bot.keyboards import user_menu
 from bot.database import db
 from bot.utils.date_helpers import to_shamsi
 from bot.utils.formatters import escape_markdown

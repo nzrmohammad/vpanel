@@ -8,7 +8,7 @@ from telebot import types
 from sqlalchemy import select
 
 from bot.bot_instance import bot
-from bot.keyboards import user as user_menu
+from bot.keyboards import user_menu
 from bot.formatters import user_formatter
 from bot.database import db
 from bot.db.base import UserUUID, Panel

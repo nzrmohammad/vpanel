@@ -1,7 +1,7 @@
 # bot/user_handlers/settings.py
 from telebot import types
 from bot.bot_instance import bot
-from bot.keyboards import user as user_menu
+from bot.keyboards import user_menu
 from bot.database import db
 from bot.language import get_string
 
