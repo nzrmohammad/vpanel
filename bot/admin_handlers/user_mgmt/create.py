@@ -15,6 +15,12 @@ def init(b, conv_dict):
     bot = b
     admin_conversations = conv_dict
 
+# ✅ اضافه شد برای جلوگیری از ارور
+@admin_only
+async def handle_squad_callback(call, params):
+    """هندلر انتخاب اسکواد (برای سازگاری با روتر قدیمی)"""
+    await bot.answer_callback_query(call.id, "⚠️ این قابلیت در نسخه جدید موقتاً غیرفعال است.")
+
 @admin_only
 async def handle_add_user_select_panel(call: types.CallbackQuery):
     uid, msg_id = call.from_user.id, call.message.message_id

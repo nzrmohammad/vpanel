@@ -1,10 +1,10 @@
 # bot/keyboards/__init__.py
-from .user import UserMenu
-from .admin import AdminMenu
+from .user import user_keyboard
+from .admin import admin_keyboard
 
 # ایجاد نمونه‌های کلاس‌ها برای استفاده در پروژه
-user = UserMenu()
-admin = AdminMenu()
+UserMenu = user_keyboard
+AdminMenu = admin_keyboard
 
 # برای سازگاری با ایمپورت‌های احتمالی دیگر
 user_menu = user
