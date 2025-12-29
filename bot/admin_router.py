@@ -11,10 +11,9 @@ from .bot_instance import bot
 from .utils import initialize_utils
 from .config import ADMIN_IDS
 
-from .admin_handlers import user_management
 # --- Import Handlers ---
 from .admin_handlers import (
-    reporting, broadcast, backup, group_actions,
+    user_management, reporting, broadcast, backup, group_actions,
     plan_management, panel_management, support, wallet as wallet_admin,
     navigation, debug, settings, shop_management
 )
@@ -81,16 +80,33 @@ def register_admin_handlers(bot_instance, scheduler_instance):
     
     # Pass bot.context_state as the shared dictionary
     for module in modules_to_init:
-        init_func_name = f"initialize_{module.__name__.split('.')[-1]}_handlers"
-        if hasattr(module, init_func_name):
-            getattr(module, init_func_name)(bot_instance, bot.context_state)
+        try:
+            # ساخت نام تابع initialize بر اساس نام ماژول
+            # مثلا برای panel_management دنبال initialize_panel_management_handlers می‌گردد
+            module_name = module.__name__.split('.')[-1]
+            init_func_name = f"initialize_{module_name}_handlers"
+            
+            if hasattr(module, init_func_name):
+                func = getattr(module, init_func_name)
+                if callable(func):
+                    func(bot_instance, bot.context_state)
+                else:
+                    logger.error(f"❌ Error: {init_func_name} in {module_name} is NOT a function (it's a {type(func)}).")
+        except Exception as e:
+            logger.error(f"❌ Failed to init module {module}: {e}")
 
-    wallet_admin.admin_conversations.update(bot.context_state)
+    # Wallet init
+    if hasattr(wallet_admin, 'admin_conversations') and isinstance(wallet_admin.admin_conversations, dict):
+        wallet_admin.admin_conversations.update(bot.context_state)
 
+    # Group actions init
     if hasattr(group_actions, 'initialize_group_actions_handlers'):
-        group_actions.initialize_group_actions_handlers(bot_instance, bot.context_state)
+        if callable(group_actions.initialize_group_actions_handlers):
+            group_actions.initialize_group_actions_handlers(bot_instance, bot.context_state)
 
-    debug.register_debug_handlers(bot_instance, scheduler_instance)
+    # Debug init
+    if hasattr(debug, 'register_debug_handlers') and callable(debug.register_debug_handlers):
+        debug.register_debug_handlers(bot_instance, scheduler_instance)
 
 # ===================================================================
 # 3. Route Helpers & Logic
@@ -99,15 +115,21 @@ def register_admin_handlers(bot_instance, scheduler_instance):
 @safe_handler
 async def route_add_user(call: types.CallbackQuery, params: list):
     """Router for adding a user"""
-    if hasattr(user_management, 'handle_add_user_start'):
-        await user_management.handle_add_user_start(call, params)
+    # بررسی اینکه آیا تابع در فایل user_management/creation.py ایمپورت و اکسپوز شده است یا خیر
+    # با توجه به فایل‌هایی که فرستادید، تابع handle_start_add_user در creation.py است.
+    # اگر پکیج user_management آن را اکسپوز نکرده باشد، باید دستی هندل شود.
+    
+    # تلاش برای یافتن تابع با نام‌های مختلف احتمالی
+    handler = getattr(user_management, 'handle_add_user_start', None) or \
+              getattr(user_management, 'handle_start_add_user', None)
+              
+    if handler and callable(handler):
+        await handler(call, params)
     else:
         await bot.answer_callback_query(call.id, "⚠️ User management module not updated.", show_alert=True)
 
 @safe_handler
 async def route_system_config(call: types.CallbackQuery, params: list):
-    """مسیریاب تنظیمات یکپارچه سیستم"""
-    # params structure: ['list', 'channels'] or ['edit', 'support_username']
     if not params: return
     action = params[0]
     
@@ -115,6 +137,7 @@ async def route_system_config(call: types.CallbackQuery, params: list):
         await settings.list_config_category(call, params[1:])
     elif action == 'edit':
         await settings.edit_config_start(call, params[1:])
+
 # ===================================================================
 # 4. Dispatcher Dictionary
 # ===================================================================
@@ -131,11 +154,12 @@ ADMIN_CALLBACK_HANDLERS = {
 
     # Actions
     "add_user": route_add_user,
-    "add_user_select_panel": getattr(user_management, 'handle_add_user_select_panel_callback', None),
-    "sel_squad": user_management.handle_squad_callback,
-    "sel_ext_squad": user_management.handle_external_squad_callback,
-    "skip_squad": user_management.handle_squad_callback,
-    "cancel": user_management.handle_cancel_process,
+    # در فایل creation.py نام تابع handle_add_user_select_panel است
+    "add_user_select_panel": getattr(user_management, 'handle_add_user_select_panel', getattr(user_management, 'handle_add_user_select_panel_callback', None)),
+    "sel_squad": getattr(user_management, 'handle_squad_callback', None),
+    "sel_ext_squad": getattr(user_management, 'handle_external_squad_callback', None),
+    "skip_squad": getattr(user_management, 'handle_squad_callback', None),
+    "cancel": getattr(user_management, 'handle_cancel_process', None),
 
     # Reports
     "quick_dashboard": reporting.handle_quick_dashboard,
@@ -152,9 +176,9 @@ ADMIN_CALLBACK_HANDLERS = {
     "list_by_plan": reporting.handle_list_users_by_plan,
     "list_no_plan": reporting.handle_list_users_no_plan,
     "panel_report_detail": reporting.handle_panel_specific_reports_menu,
-    "manage_single_panel": user_management.handle_manage_single_panel_menu,
-    "add_user_to_panel": user_management.handle_add_user_to_panel_start,
-    "p_users": user_management.handle_panel_users_list,
+    "manage_single_panel": getattr(user_management, 'handle_manage_single_panel_menu', None),
+    "add_user_to_panel": getattr(user_management, 'handle_add_user_to_panel_start', None),
+    "p_users": getattr(user_management, 'handle_panel_users_list', None),
 
     # Plans & Panels
     "plan_manage": plan_management.handle_plan_management_menu,
@@ -178,54 +202,48 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_add_start": panel_management.handle_start_add_panel,
     "panel_set_type": panel_management.handle_set_panel_type,
     
-    # ✅ اصلاح شده: استفاده از نام صحیح تابع
     "panel_toggle": panel_management.handle_panel_choice_toggle,
-    
-    # ✅ اضافه شده: تابع placeholder در صورت نبودن کد اصلی
     "panel_edit_start": panel_management.handle_panel_edit_start,
-    
-    # ✅ اصلاح شده: استفاده از نام صحیح تابع
     "panel_delete_confirm": panel_management.handle_panel_choice_delete,
-    "panel_del_exec": panel_management.handle_panel_delete_execute, # کلید اصلاح شده برای هماهنگی با panel_management
-    
+    "panel_del_exec": panel_management.handle_panel_delete_execute,
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
     "panel_set_cat": panel_management.handle_set_panel_category,
 
     "shop": shop_management.handle_shop_callbacks,
 
     # User Management Actions
-    "sg": user_management.handle_global_search_convo,
-    "search_by_tid": user_management.handle_search_by_telegram_id_convo,
-    "purge_user": user_management.handle_purge_user_convo,
-    "us": user_management.handle_show_user_summary,
-    "us_edt": user_management.handle_edit_user_menu,
-    "ep": user_management.handle_select_panel_for_edit,
-    "ae": user_management.handle_ask_edit_value,
-    "us_tgl": user_management.handle_toggle_status,
-    "tglA": user_management.handle_toggle_status_action,
-    "us_lpay": user_management.handle_log_payment,
-    "us_phist": user_management.handle_payment_history,
-    "reset_phist": user_management.handle_reset_payment_history_confirm,
-    "do_reset_phist": user_management.handle_reset_payment_history_action,
-    "us_reset_menu": user_management.handle_user_reset_menu,
-    "us_rb": user_management.handle_reset_birthday,
-    "us_rusg": user_management.handle_reset_usage_menu,
-    "rsa": user_management.handle_reset_usage_action,
-    "us_rtr": user_management.handle_reset_transfer_cooldown,
-    "us_warn_menu": user_management.handle_user_warning_menu,
-    "us_spn": user_management.handle_send_payment_reminder,
-    "us_sdw": user_management.handle_send_disconnection_warning,
-    "us_delc": user_management.handle_delete_user_confirm,
-    "del_a": user_management.handle_delete_user_action,
-    "us_ddev": user_management.handle_delete_devices_confirm,
-    "del_devs_exec": user_management.handle_delete_devices_action,
-    "us_note": user_management.handle_ask_for_note,
-    "renew_sub_menu": user_management.handle_renew_subscription_menu,
-    "renew_select_plan": user_management.handle_renew_select_plan_menu,
-    "renew_apply_plan": user_management.handle_renew_apply_plan,
-    "churn_contact_user": user_management.handle_churn_contact_user,
-    "churn_send_offer": user_management.handle_churn_send_offer,
-    "skip_telegram_id": user_management.skip_telegram_id,
+    "sg": getattr(user_management, 'handle_global_search_convo', None),
+    "search_by_tid": getattr(user_management, 'handle_search_by_telegram_id_convo', None),
+    "purge_user": getattr(user_management, 'handle_purge_user_convo', None),
+    "us": getattr(user_management, 'handle_show_user_summary', None),
+    "us_edt": getattr(user_management, 'handle_edit_user_menu', None),
+    "ep": getattr(user_management, 'handle_select_panel_for_edit', None),
+    "ae": getattr(user_management, 'handle_ask_edit_value', None),
+    "us_tgl": getattr(user_management, 'handle_toggle_status', None),
+    "tglA": getattr(user_management, 'handle_toggle_status_action', None),
+    "us_lpay": getattr(user_management, 'handle_log_payment', None),
+    "us_phist": getattr(user_management, 'handle_payment_history', None),
+    "reset_phist": getattr(user_management, 'handle_reset_payment_history_confirm', None),
+    "do_reset_phist": getattr(user_management, 'handle_reset_payment_history_action', None),
+    "us_reset_menu": getattr(user_management, 'handle_user_reset_menu', None),
+    "us_rb": getattr(user_management, 'handle_reset_birthday', None),
+    "us_rusg": getattr(user_management, 'handle_reset_usage_menu', None),
+    "rsa": getattr(user_management, 'handle_reset_usage_action', None),
+    "us_rtr": getattr(user_management, 'handle_reset_transfer_cooldown', None),
+    "us_warn_menu": getattr(user_management, 'handle_user_warning_menu', None),
+    "us_spn": getattr(user_management, 'handle_send_payment_reminder', None),
+    "us_sdw": getattr(user_management, 'handle_send_disconnection_warning', None),
+    "us_delc": getattr(user_management, 'handle_delete_user_confirm', None),
+    "del_a": getattr(user_management, 'handle_delete_user_action', None),
+    "us_ddev": getattr(user_management, 'handle_delete_devices_confirm', None),
+    "del_devs_exec": getattr(user_management, 'handle_delete_devices_action', None),
+    "us_note": getattr(user_management, 'handle_ask_for_note', None),
+    "renew_sub_menu": getattr(user_management, 'handle_renew_subscription_menu', None),
+    "renew_select_plan": getattr(user_management, 'handle_renew_select_plan_menu', None),
+    "renew_apply_plan": getattr(user_management, 'handle_renew_apply_plan', None),
+    "churn_contact_user": getattr(user_management, 'handle_churn_contact_user', None),
+    "churn_send_offer": getattr(user_management, 'handle_churn_send_offer', None),
+    "skip_telegram_id": getattr(user_management, 'skip_telegram_id', None),
     
     # Panel Node Management
     'panel_add_node_start': panel_management.handle_panel_add_node_start,
@@ -233,37 +251,32 @@ ADMIN_CALLBACK_HANDLERS = {
     'panel_ch_ren': panel_management.handle_panel_choice_rename,
     'panel_ch_del': panel_management.handle_panel_choice_delete,
     'panel_ch_tog': panel_management.handle_panel_choice_toggle,
-    'panel_manage_nodes': panel_management.handle_panel_manage_nodes, # اضافه شده
+    'panel_manage_nodes': panel_management.handle_panel_manage_nodes,
     
     # Node Actions
     'panel_node_sel': panel_management.handle_panel_node_selection,
     'p_node_ren_st': panel_management.handle_node_rename_start,
     'p_node_tog': panel_management.handle_node_toggle,
-    # ✅ اصلاح: هندلر حذف نود که در فایل پنل منیجمنت استفاده شده
     'node_delete_conf': panel_management.handle_node_delete_confirm,
-    'p_node_del': panel_management.handle_node_delete_confirm, # برای سازگاری عقبگرد
+    'p_node_del': panel_management.handle_node_delete_confirm,
 
-    'us_acc_p_list': user_management.handle_user_access_panel_list,
-    'us_acc_tgl': user_management.handle_user_access_toggle,
-    'tgl_acc': user_management.handle_user_access_toggle,
-    'ptgl': user_management.handle_user_access_toggle,
-    'node_manage': user_management.handle_user_access_panel_list,
-    'node_tgl': user_management.handle_user_access_toggle,
+    'us_acc_p_list': getattr(user_management, 'handle_user_access_panel_list', None),
+    'us_acc_tgl': getattr(user_management, 'handle_user_access_toggle', None),
+    'tgl_acc': getattr(user_management, 'handle_user_access_toggle', None),
+    'ptgl': getattr(user_management, 'handle_user_access_toggle', None),
+    'node_manage': getattr(user_management, 'handle_user_access_panel_list', None),
+    'node_tgl': getattr(user_management, 'handle_user_access_toggle', None),
     
-    # اصلاح نام تابع تغییر وضعیت نود
     'tgl_n_acc': getattr(user_management, 'handle_user_access_toggle', None),
-    
-    # تابع تغییر وضعیت کل پنل (فعلاً غیرفعال یا با هندلر نود جایگزین شده)
     'tgl_p_acc': getattr(user_management, 'handle_user_access_toggle', None),
 
     # Marzban Mapping
-    "mapping_menu": user_management.handle_mapping_menu,
-    "mapping_list": user_management.handle_mapping_list,
-    "add_mapping": user_management.handle_add_mapping_start,
+    "mapping_menu": getattr(user_management, 'handle_mapping_menu', None),
+    "mapping_list": getattr(user_management, 'handle_mapping_list', None),
+    "add_mapping": getattr(user_management, 'handle_add_mapping_start', None),
     
-    # حذف
-    "del_map_conf": user_management.handle_delete_mapping_confirm,
-    "del_map_exec": user_management.handle_delete_mapping_execute,
+    "del_map_conf": getattr(user_management, 'handle_delete_mapping_confirm', None),
+    "del_map_exec": getattr(user_management, 'handle_delete_mapping_execute', None),
 
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,
@@ -276,8 +289,8 @@ ADMIN_CALLBACK_HANDLERS = {
     "manual_withdraw_exec": wallet_admin.handle_manual_withdraw_execution,
     "manual_withdraw_cancel": wallet_admin.handle_manual_withdraw_cancel,
     "charge_req": wallet_admin.handle_charge_request_callback,
-    "reset_all_balances_confirm": user_management.handle_reset_all_balances_confirm,
-    "reset_all_balances_exec": user_management.handle_reset_all_balances_execute,
+    "reset_all_balances_confirm": getattr(user_management, 'handle_reset_all_balances_confirm', None),
+    "reset_all_balances_exec": getattr(user_management, 'handle_reset_all_balances_execute', None),
 
     # Groups & Badges
     "group_action_select_plan": group_actions.handle_select_plan_for_action,
@@ -286,18 +299,18 @@ ADMIN_CALLBACK_HANDLERS = {
     "adv_ga_select_filter": group_actions.handle_select_advanced_filter,
     "adv_ga_select_action": group_actions.handle_select_action_for_filter,
     "ga_confirm": group_actions.ga_execute,
-    "awd_b_menu": user_management.handle_award_badge_menu,
-    "awd_b": user_management.handle_award_badge,
+    "awd_b_menu": getattr(user_management, 'handle_award_badge_menu', None),
+    "awd_b": getattr(user_management, 'handle_award_badge', None),
 
     # Tools
-    "system_tools_menu": user_management.handle_system_tools_menu,
-    "reset_all_daily_usage_confirm": user_management.handle_reset_all_daily_usage_confirm,
-    "reset_all_daily_usage_exec": user_management.handle_reset_all_daily_usage_action,
-    "force_snapshot": user_management.handle_force_snapshot,
-    "reset_all_points_confirm": user_management.handle_reset_all_points_confirm,
-    "reset_all_points_exec": user_management.handle_reset_all_points_execute,
-    "delete_all_devices_confirm": user_management.handle_delete_all_devices_confirm,
-    "delete_all_devices_exec": user_management.handle_delete_all_devices_execute,
+    "system_tools_menu": getattr(user_management, 'handle_system_tools_menu', None),
+    "reset_all_daily_usage_confirm": getattr(user_management, 'handle_reset_all_daily_usage_confirm', None),
+    "reset_all_daily_usage_exec": getattr(user_management, 'handle_reset_all_daily_usage_action', None),
+    "force_snapshot": getattr(user_management, 'handle_force_snapshot', None),
+    "reset_all_points_confirm": getattr(user_management, 'handle_reset_all_points_confirm', None),
+    "reset_all_points_exec": getattr(user_management, 'handle_reset_all_points_execute', None),
+    "delete_all_devices_confirm": getattr(user_management, 'handle_delete_all_devices_confirm', None),
+    "delete_all_devices_exec": getattr(user_management, 'handle_delete_all_devices_execute', None),
     "broadcast": broadcast.start_broadcast_flow,
     "broadcast_target": broadcast.ask_for_broadcast_message,
     "broadcast_confirm": broadcast.broadcast_confirm,
@@ -354,7 +367,11 @@ async def global_step_handler(message: types.Message):
         
         next_func = step_data.get('next_handler')
         if next_func:
-            await next_func(message)
+            if callable(next_func):
+                await next_func(message)
+            else:
+                logger.error(f"❌ Error: next_handler for user {uid} is NOT callable: {next_func}")
+                await bot.reply_to(message, "❌ Internal error: Step handler is missing or invalid.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin:"), is_admin=True)
 @safe_handler
@@ -375,16 +392,14 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
         await bot.answer_callback_query(call.id)
         return
     
-    # Special handling for single_panel navigation if no specific handler
-    if action == "manage_single_panel":
-        # This callback needs to redirect to the specific menu
-        # Format: manage_single_panel:ID:Type
-        pass 
-
     handler = ADMIN_CALLBACK_HANDLERS.get(action)
     
     if handler:
-        await handler(call, params)
+        if callable(handler):
+            await handler(call, params)
+        else:
+            logger.error(f"❌ Handler for action '{action}' is NOT callable (it's a {type(handler)}). Check ADMIN_CALLBACK_HANDLERS.")
+            await bot.answer_callback_query(call.id, f"❌ Error: Handler for {action} is invalid.", show_alert=True)
     else:
         logger.warning(f"Handler not found for: {action}")
         await bot.answer_callback_query(call.id, "❌ Command not found.", show_alert=True)
