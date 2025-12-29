@@ -3,6 +3,8 @@ from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.utils.network import _safe_edit
 from bot.utils.decorators import admin_only
 from bot.services.admin.user_service import admin_user_service
+from bot import combined_handler 
+from bot.database import db
 
 bot = None
 admin_conversations = {}
@@ -61,3 +63,24 @@ async def handle_user_reset_menu(call, params):
     )
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     await _safe_edit(call.from_user.id, call.message.message_id, "♻️ عملیات ویژه:", reply_markup=kb)
+
+# ✅ این تابع اضافه شد (برای رفع ارور ImportError)
+@admin_only
+async def handle_reset_usage_action(call, params):
+    target_id = int(params[0])
+    uuids = await db.uuids(target_id)
+    if uuids:
+        await bot.answer_callback_query(call.id, "⏳ در حال ریست مصرف...")
+        try:
+            # استفاده از هندلر ترکیبی برای ریست (چون در سرویس هنوز متد اختصاصی نداشتیم)
+            await combined_handler.reset_user_usage(str(uuids[0]['uuid']))
+            await bot.answer_callback_query(call.id, "✅ مصرف ریست شد.")
+        except:
+            await bot.answer_callback_query(call.id, "❌ خطا در عملیات.")
+    else:
+        await bot.answer_callback_query(call.id, "❌ کاربر یافت نشد.")
+
+# ✅ این تابع هم اضافه شد (برای تکمیل لیست ایمپورت‌ها)
+@admin_only
+async def handle_delete_devices_action(call, params):
+    await bot.answer_callback_query(call.id, "⚠️ این قابلیت هنوز پیاده‌سازی نشده است.")
