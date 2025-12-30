@@ -391,14 +391,20 @@ async def reset_start_flow(call: types.CallbackQuery):
 # 6. هندلر ورود با کانفیگ (UUID Login)
 # =============================================================================
 
+# =============================================================================
+# 6. هندلر ورود با کانفیگ (UUID Login)
+# =============================================================================
+
 @bot.message_handler(func=lambda m: (
-    # پرانتز اصلی برای گروه کردن شرط‌های کاربری (مهم)
+    # 🔴 پرانتز شروع گروه شرط‌های کاربری (بسیار مهم)
     (
         (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
         or 
         (m.text and _UUID_RE.match(m.text.strip()))
     )
-    # و حالا شرط ادمین نبودن روی کل گروه بالا اعمال می‌شود
+    # 🔴 پرانتز پایان گروه شرط‌های کاربری
+    
+    # حالا شرط ادمین نبودن روی کل گروه بالا اعمال می‌شود
     and not (hasattr(bot, 'context_state') and m.from_user.id in bot.context_state)
 ))
 async def handle_uuid_login(message: types.Message):
@@ -406,6 +412,7 @@ async def handle_uuid_login(message: types.Message):
     مدیریت ورودی کانفیگ/UUID.
     """
     user_id = message.from_user.id
+    # بقیه کد بدون تغییر...
     input_text = message.text.strip() if message.text else ""
     lang = await db.get_user_language(user_id)
     
@@ -452,9 +459,7 @@ async def handle_uuid_login(message: types.Message):
     try:
         uuid_str = input_text
         
-        # ---------------------------------------------------------------------
-        # ✅ [بخش جدید] بررسی تکراری بودن UUID قبل از استعلام از پنل
-        # ---------------------------------------------------------------------
+        # بررسی تکراری بودن UUID قبل از استعلام از پنل
         async with db.get_session() as session:
              stmt = select(UserUUID).where(UserUUID.uuid == uuid_str)
              res = await session.execute(stmt)
@@ -463,26 +468,18 @@ async def handle_uuid_login(message: types.Message):
              if existing_uuid_obj:
                  # اگر صاحب اکانت شخص دیگری است
                  if existing_uuid_obj.user_id != user_id:
-                     # حذف پیام "در حال بررسی"
                      try: await bot.delete_message(message.chat.id, target_msg_id)
                      except: pass
-                     
-                     # شروع پروسه اشتراک‌گذاری (کدش در sharing.py است)
                      await handle_uuid_conflict(message, uuid_str)
-                     
-                     # پاک کردن استیت
                      if is_in_add_flow and hasattr(bot, 'user_states'):
                         del bot.user_states[user_id]
                      return
                  else:
-                     # اگر صاحب اکانت خود کاربر است، ادامه میدیم تا ارور استاندارد "تکراری" پایین رو بگیره
                      pass
-        # ---------------------------------------------------------------------
 
         info = await combined_handler.get_combined_user_info(uuid_str)
         
         if info:
-            # یافت شد -> ثبت در دیتابیس
             name = info.get('name') or message.from_user.first_name or "My Config"
             result = await db.add_uuid(user_id, uuid_str, name)
             
@@ -492,12 +489,10 @@ async def handle_uuid_login(message: types.Message):
                 if is_in_add_flow and hasattr(bot, 'user_states'):
                     del bot.user_states[user_id]
 
-                # دریافت لیست اکانت‌ها و نمایش
                 accounts = await db.uuids(user_id)
                 if accounts:
                     for acc in accounts:
                         try:
-                            # آپدیت کش و اطلاعات
                             u_str = str(acc['uuid'])
                             cached_info = await combined_handler.get_combined_user_info(u_str)
                             
@@ -539,7 +534,6 @@ async def handle_uuid_login(message: types.Message):
                 )
                     
             elif result == "db_err_uuid_already_active_self":
-                # اکانت تکراری برای خود کاربر
                 err_txt = get_string(result, lang)
                 markup = types.InlineKeyboardMarkup()
                 markup.add(user_menu.back_btn("manage", lang))
