@@ -20,57 +20,62 @@ admin_conversations = {}
 
 BOT_CONFIGS = {
     # --- 📢 کانال‌ها و تاپیک‌های مدیریتی ---
-    'main_group_id': {
+    'topic_id_proof': 
+    {
+        'category': 'channels', 'title': '🧾 رسید', 'type': 'int',
+        'desc': 'آیدی تاپیک برای ارسال رسیدها', 'def': '0'
+    },
+    'main_group_id': 
+    {
         'category': 'channels', 'title': '🏢 سوپرگروه', 'type': 'int',
         'desc': 'آیدی عددی سوپرگروهی که تاپیک‌ها در آن قرار دارند', 'def': '0'
     },
-    'topic_id_support': {
-        'category': 'channels', 'title': '🆘 تاپیک پشتیبانی', 'type': 'int',
-        'desc': 'آیدی تاپیک برای ارسال تیکت‌ها', 'def': '0'
-    },
-    'topic_id_log': {
-        'category': 'channels', 'title': '📝 تاپیک گزارشات (Log)', 'type': 'int',
+    'topic_id_log': 
+    {
+        'category': 'channels', 'title': '📝 گزارشات', 'type': 'int',
         'desc': 'آیدی تاپیک برای لاگ‌های سیستم', 'def': '0'
     },
-    'topic_id_shop': {
-        'category': 'channels', 
-        'title': '🛒 خریدها', 
-        'type': 'int',
-        'desc': 'آیدی تاپیک برای ارسال گزارش خرید و تمدید', 
-        'def': '0'
+    'topic_id_shop': 
+    {
+        'category': 'channels', 'title': '🛒 خریدها', 'type': 'int',
+        'desc': 'آیدی تاپیک برای ارسال گزارش خرید و تمدید', 'def': '0'
     },
-    'topic_id_proof': {
-        'category': 'channels', 'title': '🧾 تاپیک رسیدها', 'type': 'int',
-        'desc': 'آیدی تاپیک برای ارسال رسیدهای واریزی', 'def': '0'
+    'ticket_auto_delete_time': 
+    {
+        'category': 'channels','title': '⏳ حذف خودکار', 'type': 'int',
+        'desc': 'مدت زمان مکث قبل از حذف پیام', 'def': '30'
     },
-    'ticket_auto_delete_time': {
-        'category': 'channels',
-        'title': '⏳ حذف خودکار تیکت', 
-        'type': 'int',
-        'desc': 'مدت زمان مکث قبل از حذف پیام تیکت پاسخ داده شده', 
-        'def': '30'
+    'topic_id_support': 
+    {
+        'category': 'channels', 'title': '🙋‍♂️ پشتیبانی', 'type': 'int',
+        'desc': 'آیدی تاپیک برای ارسال تیکت‌ها', 'def': '0'
     },
 
     # --- 👥 سیستم رفرال (دعوت دوستان) ---
-    'enable_referral_system': {
+    'enable_referral_system': 
+    {
         'category': 'referral', 'title': '👥 سیستم رفرال', 'type': 'bool',
         'desc': 'فعال یا غیرفعال کردن سیستم دعوت دوستان', 'def': 'True'
     },
-    'referral_reward_gb': {
+    'referral_reward_gb': 
+    {
         'category': 'referral', 'title': '🎁 حجم هدیه رفرال (GB)', 'type': 'int',
         'desc': 'حجم هدیه برای هر معرفی موفق', 'def': '5'
     },
-    'referral_reward_days': {
+    'referral_reward_days': 
+    {
         'category': 'referral', 'title': '⏳ روز هدیه رفرال', 'type': 'int',
         'desc': 'تعداد روز هدیه برای هر معرفی موفق', 'def': '3'
     },
 
     # --- 🎁 هدیه، قرعه‌کشی و تشویقی ---
-    'birthday_gift_gb': {
+    'birthday_gift_gb': 
+    {
         'category': 'gift', 'title': '🎂 حجم هدیه تولد (GB)', 'type': 'int',
         'desc': 'مقدار حجم هدیه تولد', 'def': '10'
     },
-    'birthday_gift_days': {
+    'birthday_gift_days': 
+    {
         'category': 'gift', 'title': '⏳ اعتبار هدیه تولد', 'type': 'int',
         'desc': 'اعتبار هدیه تولد (روز)', 'def': '10'
     },
@@ -82,27 +87,33 @@ BOT_CONFIGS = {
     },
 
     # --- ⚙️ تنظیمات سیستمی و زمان‌بندی ---
-    'daily_report_time': {
+    'daily_report_time': 
+    {
         'category': 'system', 'title': '⏰ زمان گزارش روزانه', 'type': 'str',
         'desc': 'فرمت HH:MM (مثلاً 23:57)', 'def': '23:57'
     },
-    'cleanup_time': {
+    'cleanup_time': 
+    {
         'category': 'system', 'title': '🧹 زمان پاکسازی', 'type': 'str',
         'desc': 'فرمت HH:MM (مثلاً 00:01)', 'def': '00:01'
     },
-    'random_servers_count': {
+    'random_servers_count': 
+    {
         'category': 'system', 'title': '🎲 تعداد سرور رندوم', 'type': 'int',
         'desc': 'تعداد سرورهای پیشنهادی به کاربر', 'def': '10'
     },
-    'warning_days_before_expiry': {
+    'warning_days_before_expiry': 
+    {
         'category': 'system', 'title': '📅 هشدار انقضا (روز)', 'type': 'int',
         'desc': 'چند روز قبل انقضا هشدار دهیم؟', 'def': '3'
     },
-    'welcome_message_delay_hours': {
+    'welcome_message_delay_hours': 
+    {
         'category': 'system', 'title': '⏳ تاخیر خوش‌آمد', 'type': 'int',
         'desc': 'تاخیر پیام خوش‌آمد (ساعت)', 'def': '24'
     },
-    'online_report_update_hours': {
+    'online_report_update_hours': 
+    {
         'category': 'system', 'title': '🔄 آپدیت آنلاین', 'type': 'int',
         'desc': 'بازه آپدیت گزارش آنلاین (ساعت)', 'def': '1'
     }
@@ -142,8 +153,9 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
     
     # ردیف 1
     markup.add(
-        types.InlineKeyboardButton("📢 کانال‌ها", callback_data="admin:sys_conf:list:channels"),
-        types.InlineKeyboardButton("⚙️ زمان‌بندی", callback_data="admin:sys_conf:list:system")
+        types.InlineKeyboardButton("⚙️ زمان‌بندی", callback_data="admin:sys_conf:list:system"),
+        types.InlineKeyboardButton("📢 کانال‌ها", callback_data="admin:sys_conf:list:channels")
+        
     )
     # ردیف 2
     markup.add(
@@ -152,8 +164,8 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
     )
     # ردیف 3
     markup.add(
-        types.InlineKeyboardButton("🎁 جوایز", callback_data="admin:sys_conf:list:gift"),
-        types.InlineKeyboardButton("⚠️ هشدارها", callback_data="admin:sys_conf:list:warning")
+        types.InlineKeyboardButton("⚠️ هشدارها", callback_data="admin:sys_conf:list:warning"),
+        types.InlineKeyboardButton("🎁 جوایز", callback_data="admin:sys_conf:list:gift")
     )
 
     markup.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
@@ -175,11 +187,8 @@ async def list_config_category(call: types.CallbackQuery, params: list):
     category = params[0]
     user_id = call.from_user.id
     
-    # 1. تغییر row_width از 1 به 2
     markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    sorted_keys = sorted([k for k, v in BOT_CONFIGS.items() if v.get('category') == category])
-    
+    sorted_keys = [k for k, v in BOT_CONFIGS.items() if v.get('category') == category]
     buttons = [] # 2. ایجاد لیست برای جمع‌آوری دکمه‌ها
     
     for key in sorted_keys:
@@ -188,10 +197,8 @@ async def list_config_category(call: types.CallbackQuery, params: list):
         
         btn_text = ""
         
-        # --- نمایش وضعیت بولین ---
         if info['type'] == 'bool':
             status = "✅" if str(val).lower() == 'true' else "❌"
-            # کوتاه کردن متن برای جا شدن در دو ستون
             btn_text = f"{status} {info['title']}"
         
         elif key == 'main_group_id' and val and str(val) != '0':
@@ -208,10 +215,8 @@ async def list_config_category(call: types.CallbackQuery, params: list):
             if len(val_str) > 10: val_str = val_str[:7] + "..."
             btn_text = f"{info['title']}: {val_str}"
             
-        # 3. دکمه را به لیست اضافه کنید (نه مستقیم به مارک‌آپ)
         buttons.append(types.InlineKeyboardButton(btn_text, callback_data=f"admin:sys_conf:edit:{key}"))
         
-    # 4. افزودن تمام دکمه‌ها به صورت یکجا (تا خاصیت row_width اعمال شود)
     if buttons:
         markup.add(*buttons)
         
@@ -238,7 +243,6 @@ async def edit_config_start(call: types.CallbackQuery, params: list):
     info = BOT_CONFIGS[key]
     user_id = call.from_user.id
     
-    # تغییر مقدار Boolean به صورت دکمه‌ای (بدون نیاز به تایپ)
     if info['type'] == 'bool':
         current = await db.get_config(key, info['def'])
         new_val = "False" if str(current).lower() == 'true' else "True"

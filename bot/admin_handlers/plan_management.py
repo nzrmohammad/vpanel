@@ -72,15 +72,13 @@ async def handle_show_plans_by_category(call, params):
     prompt = f"📂 *پلن‌های کشور {cat_emoji} {escape_markdown(cat_name)}*"
     kb = types.InlineKeyboardMarkup(row_width=2)
     
-    # [تغییر ۱] حذف ایموجی 🔸 از نام دکمه‌ها
-    # قبلا: f"🔸 {p.name}"
     plan_buttons = [types.InlineKeyboardButton(f"{p.name}", callback_data=f"admin:plan_details:{p.id}") for p in filtered_plans]
     if plan_buttons:
         kb.add(*plan_buttons)
             
     kb.row(
+        types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage"),
         types.InlineKeyboardButton(f"➕ افزودن پلن", callback_data=f"admin:plan_add_start:{target_code}"),
-        types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")
     )
     
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb, parse_mode="MarkdownV2")

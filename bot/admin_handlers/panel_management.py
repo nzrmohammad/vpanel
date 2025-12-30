@@ -128,10 +128,9 @@ async def get_panel_url(message: types.Message):
 
     # تعیین متن راهنما بر اساس نوع پنل
     if panel_type == 'hiddify': 
-        # [MODIFIED] شروع با کلمه فارسی برای راست‌چین شدن متن
         msg = "لطفاً API Key (Admin Token) را از مسیر تنظیمات ادمین > ادمین‌ها کپی کنید:"
     elif panel_type == 'remnawave': 
-        msg = "API Token را وارد کنید:"
+        msg = "لطفاً API Token را وارد کنید:"
     else: 
         msg = "نام کاربری ادمین (Admin Username) را وارد کنید:"
         
