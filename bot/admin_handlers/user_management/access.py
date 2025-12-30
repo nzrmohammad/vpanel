@@ -69,26 +69,30 @@ async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     }
     
     prompt = f"1️⃣ {escape_markdown('لطفاً UUID کاربر (شناسه هیدیفای) را ارسال کنید:')}"
+    
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_uuid_step(message: types.Message):
-    """مرحله دوم: دریافت UUID"""
+    """مرحله دوم: دریافت UUID (بدون بررسی تکراری بودن)"""
     uid, text = message.from_user.id, message.text.strip()
-    await _delete_user_message(message)
+    await _delete_user_message(message) # حذف پیام کاربر جهت تمیزی چت
     
     if uid not in admin_conversations: return
     
+    # فقط بررسی طول متن (برای جلوگیری از ورودی‌های خیلی پرت)
     if len(text) < 20: 
         msg_id = admin_conversations[uid]['msg_id']
         error_msg = escape_markdown("❌ فرمت UUID صحیح نیست. مجدد ارسال کنید:")
         await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
         return
 
+    # ذخیره UUID و رفتن مستقیم به مرحله بعد (بدون چک کردن دیتابیس)
     admin_conversations[uid]['uuid'] = text
     admin_conversations[uid]['next_handler'] = get_mapping_username_step
     msg_id = admin_conversations[uid]['msg_id']
     
     prompt = f"2️⃣ {escape_markdown('حالا نام کاربری (Username) متناظر در مرزبان را ارسال کنید:')}"
+    
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_username_step(message: types.Message):
@@ -97,19 +101,28 @@ async def get_mapping_username_step(message: types.Message):
     await _delete_user_message(message)
     
     if uid not in admin_conversations: return
+    
     data = admin_conversations.pop(uid)
     uuid_str = data['uuid']
+    username = text
     msg_id = data['msg_id']
     
-    if await db.add_marzban_mapping(uuid_str, text):
-        success_msg = f"✅ {escape_markdown('اتصال با موفقیت ایجاد شد.')}\n\nUUID: `{escape_markdown(uuid_str)}`\nMarzban: `{escape_markdown(text)}`"
+    success = await db.add_marzban_mapping(uuid_str, username)
+    
+    if success:
+        success_msg = f"✅ {escape_markdown('اتصال با موفقیت ایجاد شد.')}\n\nUUID: `{escape_markdown(uuid_str)}`\nMarzban: `{escape_markdown(username)}`"
+        
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="admin:mapping_list:0"))
+        
         await _safe_edit(uid, msg_id, success_msg, reply_markup=kb, parse_mode="MarkdownV2")
+        
     else:
         error_msg = escape_markdown("خطا: این اتصال ممکن است تکراری باشد یا UUID نامعتبر است.")
+        
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:mapping_menu"))
+        
         await _safe_edit(uid, msg_id, f"❌ {error_msg}", reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_delete_mapping_confirm(call: types.CallbackQuery, params: list):

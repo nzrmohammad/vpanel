@@ -392,8 +392,14 @@ async def reset_start_flow(call: types.CallbackQuery):
 # =============================================================================
 
 @bot.message_handler(func=lambda m: (
-    (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
-    or _UUID_RE.match(m.text or "")
+    # پرانتز اصلی برای گروه کردن شرط‌های کاربری (مهم)
+    (
+        (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
+        or 
+        (m.text and _UUID_RE.match(m.text.strip()))
+    )
+    # و حالا شرط ادمین نبودن روی کل گروه بالا اعمال می‌شود
+    and not (hasattr(bot, 'context_state') and m.from_user.id in bot.context_state)
 ))
 async def handle_uuid_login(message: types.Message):
     """
