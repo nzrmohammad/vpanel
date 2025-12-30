@@ -11,7 +11,8 @@ from bot.utils.network import _safe_edit
 from bot import combined_handler
 
 # ایمپورت‌های ماژولار
-from bot.admin_handlers.user_management.state import bot, admin_conversations
+from bot.bot_instance import bot  # ایمپورت بات اصلی
+from bot.admin_handlers.user_management import state  # ایمپورت ماژول state
 from bot.admin_handlers.user_management.helpers import _delete_user_message
 
 # ==============================================================================
@@ -61,7 +62,7 @@ async def handle_ask_edit_value(call, params):
     
     action_name = "حجم (GB)" if "gb" in action else "زمان (روز)"
     
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'edit_value', 
         'msg_id': msg_id, 
         'action': action, 
@@ -79,9 +80,9 @@ async def process_edit_value(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
-    if uid not in admin_conversations: return
+    if uid not in state.admin_conversations: return
     
-    data = admin_conversations.pop(uid)
+    data = state.admin_conversations.pop(uid)
     msg_id, target_id = data['msg_id'], data['target_id']
     action, panel_target = data['action'], data['scope']
     

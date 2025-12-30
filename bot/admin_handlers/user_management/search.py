@@ -5,7 +5,8 @@ from telebot import types
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 
-from bot.admin_handlers.user_management.state import bot, admin_conversations
+from bot.bot_instance import bot  # ایمپورت بات اصلی
+from bot.admin_handlers.user_management import state  # ایمپورت ماژول state
 from bot.admin_handlers.user_management.helpers import _delete_user_message
 from bot.admin_handlers.user_management.profile import show_user_summary
 
@@ -41,7 +42,7 @@ async def handle_search_menu(call: types.CallbackQuery, params: list):
 async def handle_global_search_convo(call, params):
     """شروع جستجوی کاربر با نام، یوزرنیم یا UUID"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'global_search', 
         'msg_id': msg_id,
         'timestamp': time.time(),
@@ -54,7 +55,7 @@ async def handle_global_search_convo(call, params):
 async def handle_search_by_telegram_id_convo(call, params):
     """شروع جستجو با آیدی عددی تلگرام"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'tid_search', 
         'msg_id': msg_id,
         'timestamp': time.time(),
@@ -70,8 +71,8 @@ async def process_search_input(message: types.Message):
     uid, query = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
-    if uid not in admin_conversations: return
-    data = admin_conversations.pop(uid)
+    if uid not in state.admin_conversations: return
+    data = state.admin_conversations.pop(uid)
     msg_id = data['msg_id']
     step = data['step']
     
@@ -125,7 +126,7 @@ async def process_search_input(message: types.Message):
 async def handle_purge_user_convo(call, params):
     """شروع پروسه حذف کامل (Purge) با آیدی"""
     uid, msg_id = call.from_user.id, call.message.message_id
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'purge_user', 
         'msg_id': msg_id,
         'timestamp': time.time(),
@@ -137,8 +138,8 @@ async def handle_purge_user_convo(call, params):
 async def process_purge_user(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
-    if uid not in admin_conversations: return
-    msg_id = admin_conversations.pop(uid)['msg_id']
+    if uid not in state.admin_conversations: return
+    msg_id = state.admin_conversations.pop(uid)['msg_id']
     
     if not text.isdigit():
         await _safe_edit(uid, msg_id, "❌ آیدی نامعتبر.", reply_markup=await admin_menu.search_menu())

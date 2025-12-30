@@ -13,7 +13,8 @@ from bot import combined_handler
 from bot.services.panels import PanelFactory
 
 # ایمپورت‌های ماژولار
-from bot.admin_handlers.user_management.state import bot
+from bot.bot_instance import bot  # ایمپورت بات اصلی
+from bot.admin_handlers.user_management import state  # ایمپورت ماژول state
 
 logger = logging.getLogger(__name__)
 

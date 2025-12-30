@@ -14,7 +14,8 @@ from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.services.panels import PanelFactory
 
 # ایمپورت‌های ماژولار
-from bot.admin_handlers.user_management.state import bot, admin_conversations
+from bot.bot_instance import bot
+from bot.admin_handlers.user_management import state
 from bot.admin_handlers.user_management.helpers import _delete_user_message
 
 # ==============================================================================
@@ -61,7 +62,7 @@ async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     """شروع پروسه افزودن مپ جدید"""
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'get_map_uuid',
         'msg_id': msg_id,
         'timestamp': time.time(), 
@@ -77,19 +78,19 @@ async def get_mapping_uuid_step(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message) # حذف پیام کاربر جهت تمیزی چت
     
-    if uid not in admin_conversations: return
+    if uid not in state.admin_conversations: return
     
     # فقط بررسی طول متن (برای جلوگیری از ورودی‌های خیلی پرت)
     if len(text) < 20: 
-        msg_id = admin_conversations[uid]['msg_id']
+        msg_id = state.admin_conversations[uid]['msg_id']
         error_msg = escape_markdown("❌ فرمت UUID صحیح نیست. مجدد ارسال کنید:")
         await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
         return
 
     # ذخیره UUID و رفتن مستقیم به مرحله بعد (بدون چک کردن دیتابیس)
-    admin_conversations[uid]['uuid'] = text
-    admin_conversations[uid]['next_handler'] = get_mapping_username_step
-    msg_id = admin_conversations[uid]['msg_id']
+    state.admin_conversations[uid]['uuid'] = text
+    state.admin_conversations[uid]['next_handler'] = get_mapping_username_step
+    msg_id = state.admin_conversations[uid]['msg_id']
     
     prompt = f"2️⃣ {escape_markdown('حالا نام کاربری (Username) متناظر در مرزبان را ارسال کنید:')}"
     
@@ -100,9 +101,9 @@ async def get_mapping_username_step(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
-    if uid not in admin_conversations: return
+    if uid not in state.admin_conversations: return
     
-    data = admin_conversations.pop(uid)
+    data = state.admin_conversations.pop(uid)
     uuid_str = data['uuid']
     username = text
     msg_id = data['msg_id']
@@ -253,7 +254,7 @@ async def handle_add_user_to_panel_start(call: types.CallbackQuery, params: list
     # ایمپورت داخلی برای جلوگیری از چرخه
     from bot.admin_handlers.user_management.creation import get_new_user_name
 
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'action': 'add_user',
         'step': 'get_name',
         'data': {'panel_name': panel['name']}, 

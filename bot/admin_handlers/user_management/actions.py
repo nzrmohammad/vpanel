@@ -12,7 +12,8 @@ from bot import combined_handler
 from bot.services.panels import PanelFactory
 
 # ایمپورت‌های ماژولار
-from bot.admin_handlers.user_management.state import bot, admin_conversations
+from bot.bot_instance import bot  # ایمپورت بات اصلی
+from bot.admin_handlers.user_management import state  # ایمپورت ماژول state
 from bot.admin_handlers.user_management.helpers import _delete_user_message
 from bot.admin_handlers.user_management.profile import show_user_summary
 
@@ -126,7 +127,7 @@ async def handle_ask_for_note(call, params):
     context_code = params[1] if len(params) > 1 else None
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'save_note', 
         'msg_id': msg_id, 
         'target_id': int(target_id),
@@ -144,8 +145,8 @@ async def process_save_note(message: types.Message):
     uid, text = message.from_user.id, message.text.strip()
     await _delete_user_message(message)
     
-    if uid not in admin_conversations: return
-    data = admin_conversations.pop(uid)
+    if uid not in state.admin_conversations: return
+    data = state.admin_conversations.pop(uid)
     target_id = data['target_id']
     msg_id = data['msg_id']
     context_code = data.get('context')
@@ -269,7 +270,7 @@ async def handle_churn_contact_user(call, params):
     target_id = params[0]
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    admin_conversations[uid] = {
+    state.admin_conversations[uid] = {
         'step': 'send_msg_to_user',
         'target_id': int(target_id),
         'msg_id': msg_id,
@@ -283,8 +284,8 @@ async def process_send_msg_to_user(message: types.Message):
     uid, text = message.from_user.id, message.text
     await _delete_user_message(message)
     
-    if uid not in admin_conversations: return
-    data = admin_conversations.pop(uid)
+    if uid not in state.admin_conversations: return
+    data = state.admin_conversations.pop(uid)
     target_id = data['target_id']
     msg_id = data['msg_id']
     

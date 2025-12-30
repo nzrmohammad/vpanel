@@ -391,21 +391,16 @@ async def reset_start_flow(call: types.CallbackQuery):
 # 6. هندلر ورود با کانفیگ (UUID Login)
 # =============================================================================
 
-# =============================================================================
-# 6. هندلر ورود با کانفیگ (UUID Login)
-# =============================================================================
-
 @bot.message_handler(func=lambda m: (
-    # 🔴 پرانتز شروع گروه شرط‌های کاربری (بسیار مهم)
     (
         (hasattr(bot, 'user_states') and m.from_user.id in bot.user_states and bot.user_states[m.from_user.id].get('step') == 'waiting_for_uuid') 
         or 
         (m.text and _UUID_RE.match(m.text.strip()))
     )
-    # 🔴 پرانتز پایان گروه شرط‌های کاربری
-    
-    # حالا شرط ادمین نبودن روی کل گروه بالا اعمال می‌شود
-    and not (hasattr(bot, 'context_state') and m.from_user.id in bot.context_state)
+    and not (
+        (hasattr(bot, 'context_state') and m.from_user.id in bot.context_state) or
+        (hasattr(bot, 'admin_conversations') and m.from_user.id in bot.admin_conversations)
+    )
 ))
 async def handle_uuid_login(message: types.Message):
     """
