@@ -271,6 +271,7 @@ ADMIN_CALLBACK_HANDLERS = {
     # Marzban Mapping
     "mapping_menu": getattr(user_management, 'handle_mapping_menu', None),
     "mapping_list": getattr(user_management, 'handle_mapping_list', None),
+    "map_detail": getattr(user_management, 'handle_mapping_detail', None),
     "add_mapping": getattr(user_management, 'handle_add_mapping_start', None),
     
     "del_map_conf": getattr(user_management, 'handle_delete_mapping_confirm', None),

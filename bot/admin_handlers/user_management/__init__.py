@@ -39,6 +39,7 @@ from .finance import (
 from .mapping import (
     handle_mapping_menu,
     handle_mapping_list,
+    handle_mapping_detail,
     handle_add_mapping_start,
     handle_delete_mapping_confirm,
     handle_delete_mapping_execute,
