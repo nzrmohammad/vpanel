@@ -3,7 +3,7 @@
 from telebot import types
 from sqlalchemy import select
 
-from bot.admin_handlers.user_management.state import bot
+from bot.bot_instance import bot
 from bot.database import db
 from bot.db.base import User
 from bot.utils.formatters import escape_markdown

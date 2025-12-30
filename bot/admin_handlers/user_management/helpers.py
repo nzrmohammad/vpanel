@@ -2,7 +2,7 @@
 
 import asyncio
 from telebot import types
-from bot.admin_handlers.user_management.state import bot
+from bot.bot_instance import bot
 
 async def _delete_user_message(msg: types.Message):
     """حذف پیام کاربر جهت تمیز نگه داشتن چت"""

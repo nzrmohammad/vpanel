@@ -10,7 +10,7 @@ from bot.utils.date_helpers import to_shamsi
 from bot.keyboards.admin import admin_keyboard as admin_menu
 
 # ایمپورت‌های ماژولار
-from bot.admin_handlers.user_management.state import bot
+from bot.bot_instance import bot
 from bot.admin_handlers.user_management.profile import show_user_summary
 
 logger = logging.getLogger(__name__)

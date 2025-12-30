@@ -6,7 +6,7 @@ from bot.utils.network import _safe_edit
 from bot.keyboards.admin import admin_keyboard as admin_menu
 
 # ایمپورت ماژولار
-from bot.admin_handlers.user_management.state import bot
+from bot.bot_instance import bot
 
 async def handle_system_tools_menu(call, params):
     """منوی ابزارهای سیستم (اگر نیاز باشد)"""
