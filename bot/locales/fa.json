@@ -284,7 +284,7 @@
   "btn_confirm_replace": "✅ بله، جایگزین کن",
   "btn_cancel_replace": "❌ خیر، لغو کن",
   "marzban_mapping_success": "✅ اتصال با موفقیت برقرار شد\nUUID: `{uuid}`\nMarzban: `{username}`",
-  "marzban_mapping_cancelled": "❌ عملیات لغو شد."
+  "marzban_mapping_cancelled": "❌ عملیات لغو شد"
 
 
 }

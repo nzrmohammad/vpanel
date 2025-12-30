@@ -157,8 +157,8 @@ async def get_mapping_username(message: types.Message):
         
         kb = types.InlineKeyboardMarkup()
         kb.add(
-            types.InlineKeyboardButton(t("btn_confirm_replace"), callback_data="admin:confirm_map_replace:yes"),
-            types.InlineKeyboardButton(t("btn_cancel_replace"), callback_data="admin:confirm_map_replace:no")
+            types.InlineKeyboardButton(t("btn_cancel_replace"), callback_data="admin:confirm_map_replace:no"),
+            types.InlineKeyboardButton(t("btn_confirm_replace"), callback_data="admin:confirm_map_replace:yes")
         )
         await _safe_edit(uid, msg_id, full_msg, reply_markup=kb, parse_mode="Markdown")
         return
