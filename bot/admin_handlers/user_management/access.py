@@ -74,20 +74,20 @@ async def handle_add_mapping_start(call: types.CallbackQuery, params: list):
     await _safe_edit(uid, msg_id, prompt, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
 
 async def get_mapping_uuid_step(message: types.Message):
-    """مرحله دوم: دریافت UUID (بدون بررسی تکراری بودن)"""
+    """مرحله دوم: دریافت UUID"""
     uid, text = message.from_user.id, message.text.strip()
-    await _delete_user_message(message) # حذف پیام کاربر جهت تمیزی چت
+    await _delete_user_message(message) # حذف پیام کاربر
     
     if uid not in state.admin_conversations: return
     
-    # فقط بررسی طول متن (برای جلوگیری از ورودی‌های خیلی پرت)
+    state.admin_conversations[uid]['timestamp'] = time.time()
+    
     if len(text) < 20: 
         msg_id = state.admin_conversations[uid]['msg_id']
         error_msg = escape_markdown("❌ فرمت UUID صحیح نیست. مجدد ارسال کنید:")
         await _safe_edit(uid, msg_id, error_msg, reply_markup=await admin_menu.cancel_action("admin:mapping_menu"))
         return
 
-    # ذخیره UUID و رفتن مستقیم به مرحله بعد (بدون چک کردن دیتابیس)
     state.admin_conversations[uid]['uuid'] = text
     state.admin_conversations[uid]['next_handler'] = get_mapping_username_step
     msg_id = state.admin_conversations[uid]['msg_id']
