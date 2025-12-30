@@ -276,6 +276,14 @@ class PanelDB:
             except ValueError:
                 return False
 
+    async def get_uuid_by_marzban_username(self, marzban_username: str) -> Optional[str]:
+        """بررسی می‌کند که آیا این نام کاربری مرزبان قبلاً ثبت شده است یا خیر"""
+        async with self.get_session() as session:
+            stmt = select(MarzbanMapping).where(MarzbanMapping.marzban_username == marzban_username)
+            result = await session.execute(stmt)
+            mapping = result.scalar_one_or_none()
+            return str(mapping.hiddify_uuid) if mapping else None
+
     # --- توابع مربوط به قالب‌های کانفیگ ---
 
     async def add_batch_templates(self, templates: list[str]) -> int:

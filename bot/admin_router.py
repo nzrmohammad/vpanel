@@ -275,6 +275,7 @@ ADMIN_CALLBACK_HANDLERS = {
     
     "del_map_conf": getattr(user_management, 'handle_delete_mapping_confirm', None),
     "del_map_exec": getattr(user_management, 'handle_delete_mapping_execute', None),
+    "confirm_map_replace": getattr(user_management, 'handle_confirm_map_replace', None),
 
     # Wallet
     "confirm_delete_trans": reporting.handle_confirm_delete_transaction,

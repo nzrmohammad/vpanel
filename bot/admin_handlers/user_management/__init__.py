@@ -20,7 +20,6 @@ from .creation import (
     get_new_user_days, get_new_user_telegram_id, skip_telegram_id,
     handle_squad_callback, handle_external_squad_callback,
     handle_cancel_process
-    # تابع handle_add_user_to_panel_start از اینجا حذف شد و به access رفت
 )
 
 from .editing import (
@@ -37,6 +36,15 @@ from .finance import (
     handle_reset_payment_history_confirm, handle_reset_payment_history_action
 )
 
+from .mapping import (
+    handle_mapping_menu,
+    handle_mapping_list,
+    handle_add_mapping_start,
+    handle_delete_mapping_confirm,
+    handle_delete_mapping_execute,
+    handle_confirm_map_replace
+)
+
 from .actions import (
     handle_user_reset_menu, handle_reset_usage_menu, handle_reset_usage_action,
     handle_reset_birthday, handle_reset_transfer_cooldown,
@@ -51,11 +59,9 @@ from .actions import (
 )
 
 from .access import (
-    handle_mapping_menu, handle_mapping_list, handle_add_mapping_start,
-    handle_delete_mapping_confirm, handle_delete_mapping_execute,
     handle_manage_single_panel_menu, handle_panel_users_list,
     handle_user_access_panel_list, handle_user_access_toggle,
-    handle_add_user_to_panel_start # ✅ اینجا اضافه شد
+    handle_add_user_to_panel_start
 )
 
 from .system import (
