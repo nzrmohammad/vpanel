@@ -1,3 +1,5 @@
+# bot/admin_handlers/plan_management.py
+
 import logging
 import time
 from telebot import types
@@ -70,7 +72,9 @@ async def handle_show_plans_by_category(call, params):
     prompt = f"📂 *پلن‌های کشور {cat_emoji} {escape_markdown(cat_name)}*"
     kb = types.InlineKeyboardMarkup(row_width=2)
     
-    plan_buttons = [types.InlineKeyboardButton(f"🔸 {p.name}", callback_data=f"admin:plan_details:{p.id}") for p in filtered_plans]
+    # [تغییر ۱] حذف ایموجی 🔸 از نام دکمه‌ها
+    # قبلا: f"🔸 {p.name}"
+    plan_buttons = [types.InlineKeyboardButton(f"{p.name}", callback_data=f"admin:plan_details:{p.id}") for p in filtered_plans]
     if plan_buttons:
         kb.add(*plan_buttons)
             
@@ -97,12 +101,13 @@ async def handle_plan_details_menu(call, params):
     is_combined = len(cats) > 1 or not cats
     plan_type_str = "ترکیبی 🚀" if is_combined else f"اختصاصی ({cats[0] if cats else '?'})"
     
+    # [تغییر] تبدیل قیمت به int برای حذف .0 اضافه
     details = [
         f"🔸 *نام:* {escape_markdown(plan.name)}",
         f"🔹 *نوع:* {escape_markdown(plan_type_str)}",
         f"📦 *حجم:* `{plan.volume_gb}` گیگابایت",
         f"📅 *مدت:* `{plan.days}` روز",
-        f"💰 *قیمت:* `{plan.price:,}` تومان"
+        f"💰 *قیمت:* `{int(plan.price):,}` تومان"
     ]
     
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -174,7 +179,6 @@ async def handle_plan_add_start(call, params):
         # اگر کشوری انتخاب نشده، کیبورد انتخاب نوع پلن را نمایش بده
         categories = await db.get_server_categories()
         
-        # --- شروع تغییر: افزودن علامت هشدار به لیست انتخاب پلن ---
         try:
             active_codes = await db.get_active_location_codes()
             for cat in categories:
@@ -182,7 +186,6 @@ async def handle_plan_add_start(call, params):
                     cat['name'] = f"{cat['name']} (⚠️)"
         except:
             pass
-        # --- پایان تغییر ---
 
         admin_conversations[uid]['step'] = 'plan_add_type'
         
@@ -240,7 +243,8 @@ async def get_plan_add_volume(message: types.Message):
         
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], r"4️⃣ *مدت زمان \(روز\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
     except ValueError:
-        await bot.send_message(uid, "❌ لطفاً عدد معتبر وارد کنید.")
+        # [تغییر ۲] ویرایش پیام خطا به جای ارسال پیام جدید
+        await _safe_edit(uid, admin_conversations[uid]['msg_id'], "❌ لطفاً عدد معتبر برای حجم وارد کنید\.", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_add_days(message: types.Message):
     uid = message.from_user.id
@@ -255,7 +259,8 @@ async def get_plan_add_days(message: types.Message):
         
         await _safe_edit(uid, admin_conversations[uid]['msg_id'], r"5️⃣ *قیمت \(تومان\)* را وارد کنید:", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
     except ValueError:
-        await bot.send_message(uid, "❌ عدد صحیح وارد کنید.")
+        # [تغییر ۳] ویرایش پیام خطا به جای ارسال پیام جدید
+        await _safe_edit(uid, admin_conversations[uid]['msg_id'], "❌ لطفاً عدد صحیح برای روز وارد کنید\.", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_save(message: types.Message):
     uid = message.from_user.id
@@ -267,7 +272,10 @@ async def get_plan_save(message: types.Message):
     msg_id = data['msg_id']
     
     try:
-        price = float(message.text.strip())
+        # حذف کاما و هندل کردن خطا
+        txt = message.text.strip().replace(',', '')
+        price = float(txt)
+        
         async with db.get_session() as session:
             new_plan = Plan(
                 name=plan_data['name'],
@@ -281,9 +289,13 @@ async def get_plan_save(message: types.Message):
             await session.commit()
             
         await _safe_edit(uid, msg_id, "✅ پلن جدید ساخته شد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:plan_manage")))
+    
+    except ValueError:
+        await _safe_edit(uid, msg_id, "❌ فرمت قیمت نامعتبر است (لطفاً عدد وارد کنید).", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+        
     except Exception as e:
         logger.error(f"Error saving plan: {e}")
-        await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره\.", reply_markup=admin_menu.admin_cancel_action("admin:plan_manage"))
+        await _safe_edit(uid, msg_id, "❌ خطای سیستمی در ذخیره\.", reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 # ============================================================================
 # 3. پروسه ویرایش پلن (Edit Plan Flow)
@@ -332,18 +344,22 @@ async def get_plan_edit_volume(message: types.Message):
     await _delete_user_message(message)
     
     txt = message.text.strip()
+    msg_id = admin_conversations[uid]['msg_id']
+
     if txt != '.':
         try:
             admin_conversations[uid]['edit_data']['volume_gb'] = float(txt)
         except:
-            await bot.send_message(uid, "❌ عدد نامعتبر.")
+            # [تغییر] اسکیپ کردن پرانتزها و نقطه برای جلوگیری از خطای MarkdownV2
+            msg = r"❌ حجم نامعتبر \(لطفاً فقط عدد وارد کنید\)\." + "\n" + r"👇 *حجم جدید \(GB\)* \(یا \. برای عدم تغییر\):"
+            await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
             return
 
     admin_conversations[uid]['step'] = 'edit_days'
     admin_conversations[uid]['next_handler'] = get_plan_edit_days
     
     msg_text = r"👇 *مدت زمان جدید \(روز\)* \(یا \. برای عدم تغییر\):"
-    await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+    await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_edit_days(message: types.Message):
     uid = message.from_user.id
@@ -351,18 +367,22 @@ async def get_plan_edit_days(message: types.Message):
     await _delete_user_message(message)
     
     txt = message.text.strip()
+    msg_id = admin_conversations[uid]['msg_id']
+
     if txt != '.':
         try:
             admin_conversations[uid]['edit_data']['days'] = int(txt)
         except:
-            await bot.send_message(uid, "❌ عدد صحیح وارد کنید.")
+            # [تغییر] اسکیپ کردن پرانتزها و نقطه
+            msg = r"❌ تعداد روز نامعتبر \(لطفاً عدد صحیح وارد کنید\)\." + "\n" + r"👇 *مدت زمان جدید \(روز\)* \(یا \. برای عدم تغییر\):"
+            await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
             return
 
     admin_conversations[uid]['step'] = 'edit_price'
     admin_conversations[uid]['next_handler'] = get_plan_edit_finish
     
     msg_text = r"👇 *قیمت جدید \(تومان\)* \(یا \. برای عدم تغییر\):"
-    await _safe_edit(uid, admin_conversations[uid]['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
+    await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
 
 async def get_plan_edit_finish(message: types.Message):
     uid = message.from_user.id
@@ -374,12 +394,16 @@ async def get_plan_edit_finish(message: types.Message):
     plan_id = data['plan_id']
     msg_id = data['msg_id']
     
-    txt = message.text.strip()
+    txt = message.text.strip().replace(',', '')
+    
     if txt != '.':
         try:
             changes['price'] = float(txt)
         except:
-            await bot.send_message(uid, "❌ قیمت نامعتبر.")
+            admin_conversations[uid] = data
+            # [تغییر] اسکیپ کردن پرانتزها و نقطه
+            msg = r"❌ قیمت نامعتبر \(لطفاً فقط عدد انگلیسی وارد کنید\)\." + "\n" + r"👇 *قیمت جدید \(تومان\)* \(یا \. برای عدم تغییر\):"
+            await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.cancel_action("admin:plan_manage"))
             return
 
     if not changes:
@@ -392,7 +416,7 @@ async def get_plan_edit_finish(message: types.Message):
         await session.commit()
     
     await _safe_edit(uid, msg_id, "✅ پلن با موفقیت ویرایش شد\.", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:plan_details:{plan_id}")))
-# ============================================================================
+    
 # 4. مدیریت دسته‌بندی‌ها (کشورها)
 # ============================================================================
 

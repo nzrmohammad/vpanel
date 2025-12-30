@@ -128,7 +128,8 @@ async def get_panel_url(message: types.Message):
 
     # تعیین متن راهنما بر اساس نوع پنل
     if panel_type == 'hiddify': 
-        msg = "API Key (Admin Token) را از مسیر تنظیمات ادمین > ادمین‌ها کپی کنید:"
+        # [MODIFIED] شروع با کلمه فارسی برای راست‌چین شدن متن
+        msg = "لطفاً API Key (Admin Token) را از مسیر تنظیمات ادمین > ادمین‌ها کپی کنید:"
     elif panel_type == 'remnawave': 
         msg = "API Token را وارد کنید:"
     else: 
@@ -159,7 +160,8 @@ async def get_panel_token1(message: types.Message):
     admin_conversations[uid]['next_handler'] = get_panel_token2
 
     if panel_type == 'hiddify': 
-        prompt = "Proxy Path (اگر ندارید 'ندارم' بنویسید):"
+        # [MODIFIED] حذف قسمت اختیاری بودن (ندارم)
+        prompt = "لطفاً Proxy Path را وارد کنید:"
     else: 
         prompt = "رمز عبور ادمین (Admin Password):"
     

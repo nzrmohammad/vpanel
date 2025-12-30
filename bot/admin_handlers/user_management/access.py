@@ -53,7 +53,6 @@ async def handle_mapping_list(call: types.CallbackQuery, params: list):
     markup = await admin_menu.mapping_list_menu(current_mappings, page, total_count, PAGE_SIZE)
     
     text = f"📋 *{escape_markdown('لیست اتصال‌های موجود')}*\n\n"
-    if not current_mappings: text += escape_markdown("⚠️ هیچ اتصالی یافت نشد.")
     if total_pages > 1: text += f"\n📄 *{escape_markdown(f'صفحه {page + 1} از {total_pages}')}*"
         
     await _safe_edit(uid, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")

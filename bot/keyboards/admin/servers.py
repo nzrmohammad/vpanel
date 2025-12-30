@@ -52,7 +52,7 @@ class AdminServersMenu(BaseMenu):
     async def mapping_list_menu(self, mappings: list, page: int, total_count: int, page_size: int) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)  
         if not mappings:
-            kb.add(self.btn("➕ ایجاد اتصال جدید", "admin:add_mapping"))
+            kb.add(self.btn("⚠️ هیچ اتصالی یافت نشد", "noop"))
         
         map_buttons = []
         for m in mappings:

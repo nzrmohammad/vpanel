@@ -209,8 +209,6 @@ ADMIN_CALLBACK_HANDLERS = {
     "panel_delete_execute": panel_management.handle_panel_delete_execute,
     "panel_set_cat": panel_management.handle_set_panel_category,
 
-    "shop": shop_management.handle_shop_callbacks,
-
     # User Management Actions
     "sg": getattr(user_management, 'handle_global_search_convo', None),
     "search_by_tid": getattr(user_management, 'handle_search_by_telegram_id_convo', None),
