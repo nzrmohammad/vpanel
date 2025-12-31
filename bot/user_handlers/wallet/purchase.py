@@ -20,12 +20,39 @@ from bot import combined_handler
 
 logger = logging.getLogger(__name__)
 
+# در فایل bot/user_handlers/wallet/purchase.py
+
 @bot.callback_query_handler(func=lambda call: call.data == "view_plans")
 async def view_plans_categories(call: types.CallbackQuery):
     user_id = call.from_user.id
     lang = await db.get_user_language(user_id)
-    markup = await user_menu.plan_categories_menu(lang)
-    await bot.edit_message_text(get_string('prompt_select_plan_category', lang), user_id, call.message.message_id, reply_markup=markup)
+    
+    # 1. دریافت تمام پلن‌های فعال
+    active_plans = await db.get_all_plans(active_only=True)
+    
+    # 2. پیدا کردن کدهای کشورهایی که در این پلن‌ها استفاده شده‌اند
+    valid_cat_codes = set()
+    for plan in active_plans:
+        # اگر پلن مختص کشور خاصی است (allowed_categories دارد)
+        if plan.get('allowed_categories'):
+            for code in plan['allowed_categories']:
+                valid_cat_codes.add(code)
+        else:
+            # اگر پلنی allowed_categories نداشت یعنی عمومی است و همه جا نمایش داده شود؟
+            # یا می‌توانید نادیده بگیرید. فرض بر این است که پلن‌ها دسته‌بندی دارند.
+            pass
+
+    # 3. دریافت اطلاعات کامل دسته‌بندی‌ها (نام، ایموجی و...)
+    all_categories = await db.get_server_categories()
+    
+    # 4. فیلتر کردن نهایی: فقط دسته‌بندی‌هایی که کدشان در پلن‌ها بود
+    final_categories = [c for c in all_categories if c['code'] in valid_cat_codes]
+    
+    # ارسال لیست فیلتر شده به کیبورد
+    markup = await user_menu.plan_categories_menu(lang, categories=final_categories)
+    
+    msg_text = get_string('prompt_select_plan_category', lang)
+    await bot.edit_message_text(msg_text, user_id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("show_plans:"))
 async def show_plans_list(call: types.CallbackQuery):

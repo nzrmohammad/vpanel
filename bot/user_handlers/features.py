@@ -3,13 +3,9 @@
 import logging
 import jdatetime
 from telebot import types
-
 from bot.bot_instance import bot
 from bot.database import db
-
-# ✅ تغییر مهم: ایمپورت کردن user_menu که در فایل بالا تعریف کردیم
 from bot.keyboards import user_menu 
-
 from bot.utils.network import _safe_edit
 from bot.utils.formatters import escape_markdown
 from bot.language import get_string

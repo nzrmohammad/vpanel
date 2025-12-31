@@ -22,16 +22,18 @@ class UserWalletMenu(BaseMenu):
         kb.add(self.back_btn("back", lang_code))
         return kb
 
-    async def plan_categories_menu(self, lang_code: str) -> types.InlineKeyboardMarkup:
+    async def plan_categories_menu(self, lang_code: str, categories: list = None) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
-        all_categories = await db.get_server_categories()
-        active_codes = await db.get_active_location_codes()
         
+        if categories is None:
+            all_categories = await db.get_server_categories()
+            active_codes = await db.get_active_location_codes()
+            categories = [c for c in all_categories if c['code'] in active_codes]
+
         cat_buttons = []
-        for cat in all_categories:
-            if cat['code'] in active_codes:
-                text = f"{cat['emoji']} {cat['name']}"
-                cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
+        for cat in categories:
+            text = f"{cat['emoji']} {cat['name']}"
+            cat_buttons.append(self.btn(text, f"show_plans:{cat['code']}"))
 
         if not cat_buttons:
              kb.add(self.btn("⚠️ در حال حاضر سروری موجود نیست", "noop"))
