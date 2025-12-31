@@ -150,12 +150,13 @@ class UserDB:
     # --- سایر متدهای کاربر ---
 
     async def update_user_birthday(self, user_id: int, birthday_date: date):
-        """تاریخ تولد کاربر را به‌روزرسانی می‌کند."""
+        """تاریخ تولد کاربر را در دیتابیس و کش به‌روزرسانی می‌کند."""
         async with self.get_session() as session:
             await session.execute(update(User).where(User.user_id == user_id).values(birthday=birthday_date))
             await session.commit()
-        if hasattr(self, 'clear_user_cache'):
-            self.clear_user_cache(user_id)
+        
+        if user_id in self._user_cache:
+            self._user_cache[user_id]['birthday'] = birthday_date
 
     async def get_users_with_birthdays(self):
         """تمام کاربرانی که تاریخ تولد ثبت کرده‌اند را برمی‌گرداند."""

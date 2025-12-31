@@ -73,10 +73,6 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
                     safe_note = escape_markdown(user.admin_note)
                     admin_lines.append(f"📝 یادداشت: {safe_note}")
                 
-                admin_lines.append(f"🆔 آیدی عددی: `{target_user_id}`")
-                wallet_balance = int(user.wallet_balance or 0)
-                admin_lines.append(f"💰 کیف پول: `{wallet_balance:,}` تومان")
-                
                 text = "\n".join(lines) + "\n" + "\n".join(admin_lines)
             else:
                 text = escape_markdown("❌ خطا در دریافت اطلاعات از سرور.")
@@ -91,8 +87,6 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")
-
-# --- این بخش را به انتهای فایل profile.py اضافه کنید ---
 
 async def handle_user_interactive_menu(call: types.CallbackQuery, params: list):
     """

@@ -91,35 +91,56 @@ async def handle_user_warning_menu(call, params):
     
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("🔔 یادآوری پرداخت", callback_data=f"admin:us_spn:{target_id}"),
-        types.InlineKeyboardButton("🚨 هشدار قطع سرویس", callback_data=f"admin:us_sdw:{target_id}")
+        types.InlineKeyboardButton("🚨 هشدار نهایی", callback_data=f"admin:us_sdw:{target_id}"),
+        types.InlineKeyboardButton("🔔 هشدار اولیه", callback_data=f"admin:us_spn:{target_id}")
     )
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=f"admin:us:{target_id}"))
     await _safe_edit(uid, msg_id, "⚠️ ارسال هشدار:", reply_markup=kb)
 
-async def handle_send_payment_reminder(call, params):
-    target_id = int(params[0])
+# --- تابع مشترک برای ارسال هشدار (جلوگیری از تکرار کد) ---
+async def _send_warning_generic(call, target_id, message_key, success_message):
+    """این تابع کار اصلی ارسال پیام و مدیریت خطا را انجام می‌دهد"""
     from bot.language import get_string
+    
     user = await db.user(target_id)
     lang = user.get('lang_code', 'fa')
-    msg = get_string('payment_reminder_message', lang)
+    msg_text = get_string(message_key, lang)
+    
     try:
-        await bot.send_message(target_id, msg)
-        await bot.answer_callback_query(call.id, "✅ ارسال شد.", show_alert=True)
-    except:
-        await bot.answer_callback_query(call.id, "❌ خطا (شاید بلاک).", show_alert=True)
+        # 1. ارسال پیام به کاربر
+        await bot.send_message(target_id, msg_text)
+        # 2. بستن لودینگ دکمه شیشه‌ای
+        await bot.answer_callback_query(call.id)
+        
+        await show_user_summary(
+            call.from_user.id, 
+            call.message.message_id, 
+            target_id, 
+            extra_message=success_message
+        )
+    except Exception as e:
+        logger.error(f"Failed to send warning ({message_key}): {e}")
+        await bot.answer_callback_query(call.id, "❌ خطا در ارسال (شاید کاربر ربات را بلاک کرده است).", show_alert=True)
+
+# --- هندلرها (فقط تابع مشترک را صدا می‌زنند) ---
+
+async def handle_send_payment_reminder(call, params):
+    """دکمه هشدار اولیه"""
+    await _send_warning_generic(
+        call, 
+        int(params[0]), 
+        'payment_reminder_message', 
+        r"✅ هشدار اولیه یادآوری عدم پرداخت با موفقیت ارسال شد\." 
+    )
 
 async def handle_send_disconnection_warning(call, params):
-    target_id = int(params[0])
-    from bot.language import get_string
-    user = await db.user(target_id)
-    lang = user.get('lang_code', 'fa')
-    msg = get_string('disconnection_warning_message', lang)
-    try:
-        await bot.send_message(target_id, msg)
-        await bot.answer_callback_query(call.id, "✅ ارسال شد.", show_alert=True)
-    except:
-        await bot.answer_callback_query(call.id, "❌ خطا.", show_alert=True)
+    """دکمه هشدار نهایی"""
+    await _send_warning_generic(
+        call, 
+        int(params[0]), 
+        'disconnection_warning_message', 
+        r"✅ هشدار نهایی یادآوری عدم پرداخت با موفقیت ارسال شد\." 
+    )
 
 # --- Notes ---
 async def handle_ask_for_note(call, params):

@@ -76,11 +76,11 @@ class AdminUsersMenu(BaseMenu):
             self.btn("♻️ تنظیمات ریست", f"admin:us_reset_menu:{base}:x"),
             self.btn("⚠️ ارسال هشدار", f"admin:us_warn_menu:{base}:x")
         )
-        kb.add(self.btn("🌍 مدیریت دسترسی نودها", f"admin:us_acc_p_list:{identifier}"))
         kb.add(
             self.btn("🔄 تمدید اشتراک", f"admin:renew_sub_menu:{base}"),
             self.btn("🗑 حذف کامل", f"admin:us_delc:{base}")
         )
+        kb.add(self.btn("🌍 مدیریت دسترسی نودها", f"admin:us_acc_p_list:{identifier}"))
         
         final_back = back_callback or "admin:management_menu"
         kb.add(self.btn("🔙 بازگشت", final_back))
