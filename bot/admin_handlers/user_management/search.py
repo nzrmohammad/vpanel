@@ -2,7 +2,7 @@
 
 import time
 from telebot import types
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, cast, String  # ✅ اضافه شدن cast و String
 from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot  # ایمپورت بات اصلی
@@ -85,12 +85,13 @@ async def process_search_input(message: types.Message):
                 return
             stmt = stmt.where(User.user_id == int(query))
         else:
+            # ✅ اصلاح شده: تبدیل UUID به String برای قابلیت جستجو با ILIKE
             stmt = stmt.outerjoin(UserUUID).where(
                 or_(
                     User.username.ilike(f"%{query}%"),
                     User.first_name.ilike(f"%{query}%"),
                     User.last_name.ilike(f"%{query}%"),
-                    UserUUID.uuid.ilike(f"%{query}%"),
+                    cast(UserUUID.uuid, String).ilike(f"%{query}%"), # تبدیل به متن
                     UserUUID.name.ilike(f"%{query}%")
                 )
             )
