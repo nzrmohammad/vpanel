@@ -342,7 +342,7 @@ async def handle_test_name_input(message: types.Message):
         panel_inst = await PanelFactory.get_panel(target_panel_data['name'])
         
         # مشخصات سرویس تست
-        TEST_GIGS = 0.2  # 200 مگابایت
+        TEST_GIGS = 0.5  # 500 مگابایت
         TEST_DAYS = 1    # 1 روز
         new_uuid = str(uuid.uuid4())
         

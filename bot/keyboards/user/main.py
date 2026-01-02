@@ -102,7 +102,7 @@ class UserMainMenu(BaseMenu):
         kb = self.create_markup(row_width=1)
         kb.add(
             self.btn(f"🔑 {get_string('login_with_uuid', lang_code)}", "auth:login"),
-            self.btn(f"🆕 {get_string('create_test_account', lang_code)}", "auth:new")
+            self.btn(f"🎁 {get_string('create_test_account', lang_code)}", "auth:new")
         )
         return kb
 
