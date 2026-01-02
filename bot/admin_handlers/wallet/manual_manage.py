@@ -1,6 +1,7 @@
 # bot/admin_handlers/wallet/manual_manage.py
 
 import logging
+import time
 from telebot import types
 from sqlalchemy import select
 
@@ -9,10 +10,11 @@ from bot.db.base import User, UserUUID
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
 
-# ✅ ایمپورت صحیح
 from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.bot_instance import bot
-from .states import admin_conversations
+
+# ایمپورت هندلر پروفایل برای بازگشت مستقیم
+from bot.admin_handlers.user_management.profile import handle_show_user_summary
 
 logger = logging.getLogger(__name__)
 
@@ -25,36 +27,37 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     uid, msg_id = call.from_user.id, call.message.message_id
     identifier = params[0]
     
-    # 1. پاکسازی اجباری وضعیت‌های قبلی
-    if uid in admin_conversations:
-        del admin_conversations[uid]
+    if not hasattr(bot, 'context_state'):
+        bot.context_state = {}
+
+    if uid in bot.context_state:
+        del bot.context_state[uid]
     
-    # 2. تنظیم وضعیت جدید
-    admin_conversations[uid] = {
+    # تنظیم وضعیت جدید
+    bot.context_state[uid] = {
         'action_type': 'manual_charge',
         'msg_id': msg_id,
         'identifier': identifier,
         'step': 'get_amount',
-        'next_handler': process_charge_amount_step
+        'next_handler': process_charge_amount_step,
+        'timestamp': time.time()
     }
-    
-    # تعیین دکمه بازگشت
-    back_cb = f"admin:wallet_menu:{identifier}"
     
     msg_text = escape_markdown("💰 لطفاً مبلغ شارژ دستی (تومان) را وارد کنید:")
     
-    await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.cancel_action(back_cb))
+    # دکمه انصراف
+    await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.cancel_action("admin:manual_charge_cancel"))
 
 
 async def process_charge_amount_step(message: types.Message):
-    """مرحله دریافت مبلغ و درخواست توضیحات"""
+    """مرحله دریافت مبلغ"""
     uid, text = message.from_user.id, message.text.strip()
     
     try: await bot.delete_message(uid, message.message_id)
     except: pass
 
-    if uid not in admin_conversations: return
-    convo = admin_conversations[uid]
+    if not hasattr(bot, 'context_state') or uid not in bot.context_state: return
+    convo = bot.context_state[uid]
     
     if convo.get('step') != 'get_amount':
         return
@@ -63,42 +66,39 @@ async def process_charge_amount_step(message: types.Message):
         amount = int(text)
         convo['amount'] = amount
         convo['step'] = 'get_reason'
-        convo['next_handler'] = process_charge_reason_step # ارجاع به مرحله بعد
+        convo['next_handler'] = process_charge_reason_step 
+        convo['timestamp'] = time.time()
         
-        admin_conversations[uid] = convo
+        bot.context_state[uid] = convo
 
         msg_text = escape_markdown("📝 توضیحات تراکنش را وارد کنید:\n(می‌توانید نقطه . بفرستید تا پیش‌فرض ثبت شود)")
         
-        await _safe_edit(uid, convo['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:cancel_wallet_action"))
+        await _safe_edit(uid, convo['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:manual_charge_cancel"))
 
     except ValueError:
         msg_error = escape_markdown("❌ لطفاً فقط عدد وارد کنید (تومان):")
-        back_cb = f"admin:wallet_menu:{convo.get('identifier')}"
-        await _safe_edit(uid, convo['msg_id'], msg_error, reply_markup=await admin_menu.cancel_action(back_cb))
+        await _safe_edit(uid, convo['msg_id'], msg_error, reply_markup=await admin_menu.cancel_action("admin:manual_charge_cancel"))
 
 
 async def process_charge_reason_step(message: types.Message):
-    """مرحله دریافت توضیحات و انجام تراکنش"""
+    """مرحله دریافت توضیحات و ثبت"""
     uid, text = message.from_user.id, message.text.strip()
     
     try: await bot.delete_message(uid, message.message_id)
     except: pass
 
-    if uid not in admin_conversations: return
-    convo = admin_conversations[uid]
+    if not hasattr(bot, 'context_state') or uid not in bot.context_state: return
+    convo = bot.context_state[uid]
 
     if convo.get('step') != 'get_reason':
         return
 
-    reason = text
-    if reason == '.':
-        reason = "شارژ دستی توسط مدیریت"
-
+    reason = text if text != '.' else "شارژ دستی توسط مدیریت"
     amount = convo['amount']
     identifier = convo['identifier']
     msg_id = convo['msg_id']
 
-    # پیدا کردن یوزر آیدی واقعی
+    # پیدا کردن یوزر
     target_user_id = None
     if str(identifier).isdigit():
         target_user_id = int(identifier)
@@ -110,18 +110,20 @@ async def process_charge_reason_step(message: types.Message):
 
     if not target_user_id:
         await _safe_edit(uid, msg_id, escape_markdown("❌ کاربر یافت نشد."), reply_markup=await admin_menu.main())
-        del admin_conversations[uid]
+        del bot.context_state[uid]
         return
 
     try:
+        # انجام تراکنش در دیتابیس
         success = await db.update_wallet_balance(
             user_id=target_user_id,
             amount=amount,
-            transaction_type='admin_deposit',
+            trans_type='admin_deposit',
             description=reason
         )
         
         if success:
+            # 1️⃣ ارسال پیام تایید به ادمین
             final_msg = (
                 f"✅ *کیف پول شارژ شد*\n\n"
                 f"👤 کاربر: `{target_user_id}`\n"
@@ -129,11 +131,30 @@ async def process_charge_reason_step(message: types.Message):
                 f"📝 بابت: {escape_markdown(reason)}"
             )
             
-            back_cb = f"admin:wallet_menu:{identifier}"
             kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("🔙 بازگشت به کیف پول", callback_data=back_cb))
-            
+            kb.add(types.InlineKeyboardButton("🔙 بازگشت به پروفایل", callback_data=f"admin:us:{target_user_id}"))
             await _safe_edit(uid, msg_id, final_msg, reply_markup=kb)
+
+            # 2️⃣ ارسال پیام اطلاع‌رسانی به کاربر (اصلاح شده)
+            try:
+                user_text = (
+                    f"🎉 *کیف پول شما شارژ شد*\n\n"
+                    f"💳 مبلغ شارژ: `{amount:,}` تومان\n"
+                    f"📝 بابت: {escape_markdown(reason)}\n\n"
+                    f"✅ هم‌اکنون می‌توانید سرویس مورد نظر خود را خریداری کنید."
+                )
+                
+                user_kb = types.InlineKeyboardMarkup(row_width=1)
+                
+                # ✅ اصلاح شد: استفاده از view_plans که در فایل اصلی کاربر تعریف شده است
+                user_kb.add(types.InlineKeyboardButton("🛒 خرید سرویس / اشتراک", callback_data="view_plans"))
+                # دکمه بازگشت به منوی اصلی (back) هم همیشه کار می‌کند
+                user_kb.add(types.InlineKeyboardButton("🏠 منوی اصلی", callback_data="back"))
+                
+                await bot.send_message(target_user_id, user_text, reply_markup=user_kb, parse_mode='Markdown')
+            except Exception as notify_e:
+                logger.error(f"Failed to notify user {target_user_id}: {notify_e}")
+
         else:
             await _safe_edit(uid, msg_id, escape_markdown("❌ خطا در ثبت تراکنش."), reply_markup=await admin_menu.main())
 
@@ -141,20 +162,21 @@ async def process_charge_reason_step(message: types.Message):
         logger.error(f"Charge Error: {e}")
         await _safe_edit(uid, msg_id, escape_markdown("❌ خطای سیستمی رخ داد."), reply_markup=await admin_menu.main())
     
-    if uid in admin_conversations:
-        del admin_conversations[uid]
+    # پاکسازی وضعیت ادمین
+    if uid in bot.context_state:
+        del bot.context_state[uid]
 
 
 # ==============================================================================
-# 💸 بخش دوم: برداشت/صفر کردن (Manual Withdraw)
+# 💸 بخش دوم: برداشت (Manual Withdraw)
 # ==============================================================================
 
 async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list):
     uid, msg_id = call.from_user.id, call.message.message_id
     identifier = params[0]
     
-    if uid in admin_conversations:
-        del admin_conversations[uid]
+    if not hasattr(bot, 'context_state'): bot.context_state = {}
+    if uid in bot.context_state: del bot.context_state[uid]
 
     try: user_id = int(identifier)
     except: return
@@ -165,14 +187,15 @@ async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list
         balance = user.wallet_balance or 0.0
 
     if balance <= 0:
-        await bot.answer_callback_query(call.id, "موجودی کاربر صفر یا منفی است.", show_alert=True)
+        await bot.answer_callback_query(call.id, "موجودی صفر/منفی است.", show_alert=True)
         return
 
-    admin_conversations[uid] = {
+    bot.context_state[uid] = {
         'action_type': 'manual_withdraw',
         'msg_id': msg_id,
         'target_user_id': user_id,
-        'current_balance': balance
+        'current_balance': balance,
+        'timestamp': time.time()
     }
     
     prompt = (f"موجودی فعلی کاربر *{escape_markdown(user.first_name or 'User')}* مبلغ *{balance:,.0f} تومان* است\\.\n\n"
@@ -181,17 +204,17 @@ async def handle_manual_withdraw_request(call: types.CallbackQuery, params: list
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("✅ بله، صفر کن", callback_data="admin:manual_withdraw_exec"),
-        types.InlineKeyboardButton("❌ خیر", callback_data="admin:cancel_wallet_action")
+        types.InlineKeyboardButton("❌ خیر", callback_data="admin:manual_withdraw_cancel")
     )
     await _safe_edit(uid, msg_id, prompt, reply_markup=kb)
 
 async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: list):
     uid = call.from_user.id
-    if uid not in admin_conversations: 
+    if not hasattr(bot, 'context_state') or uid not in bot.context_state: 
         await bot.answer_callback_query(call.id, "نشست منقضی شده است.")
         return
         
-    convo = admin_conversations.pop(uid, {})
+    convo = bot.context_state.pop(uid, {})
     amount = convo.get('current_balance', 0.0)
     target_user_id = convo.get('target_user_id')
     msg_id = convo.get('msg_id')
@@ -199,7 +222,7 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
     success = await db.update_wallet_balance(
         user_id=target_user_id, 
         amount=-amount,
-        transaction_type='admin_withdraw', 
+        trans_type='admin_withdraw', 
         description="صفر کردن توسط مدیریت"
     )
 
@@ -207,35 +230,33 @@ async def handle_manual_withdraw_execution(call: types.CallbackQuery, params: li
         kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👤 بازگشت", callback_data=f"admin:us:{target_user_id}"))
         msg = escape_markdown("✅ موجودی کاربر با موفقیت صفر شد.")
         await _safe_edit(uid, msg_id, msg, reply_markup=kb)
+        
+        try:
+             await bot.send_message(target_user_id, "ℹ️ موجودی کیف پول شما توسط مدیریت صفر شد.")
+        except: pass
     else:
         msg = escape_markdown("❌ خطا در دیتابیس.")
         await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.main())
 
 
 # ==============================================================================
-# ❌ دکمه لغو عملیات (مشترک)
+# ❌ دکمه لغو عملیات (بازگشت سریع)
 # ==============================================================================
 
 async def handle_wallet_cancel_action(call: types.CallbackQuery, params: list):
-    """پاکسازی کامل وضعیت هنگام زدن دکمه لغو"""
+    """پاکسازی وضعیت و بازگشت آنی به پروفایل کاربر"""
     uid = call.from_user.id
-    msg_id = call.message.message_id
     
-    if uid in admin_conversations:
-        del admin_conversations[uid]
+    target_id = None
+    if hasattr(bot, 'context_state') and uid in bot.context_state:
+        state = bot.context_state[uid]
+        target_id = state.get('identifier') or state.get('target_user_id')
+        del bot.context_state[uid]
     
-    msg = escape_markdown("❌ عملیات لغو شد.")
-    await _safe_edit(uid, msg_id, msg, reply_markup=await admin_menu.main())
+    await bot.answer_callback_query(call.id, "❌ عملیات لغو شد.", show_alert=False)
 
-# ==============================================================================
-# ⚠️ بخش سازگاری (Compatibility)
-# این بخش برای جلوگیری از ارور ImportError اضافه شده است
-# ==============================================================================
-
-async def handle_manual_charge_execution(call, params):
-    """(منسوخ شده) دیگر استفاده نمی‌شود ولی برای ایمپورت‌های قدیمی نگه داشته شده."""
-    pass
-
-# الیاس‌ها برای توابعی که نامشان عوض شده
-handle_manual_charge_cancel = handle_wallet_cancel_action
-handle_manual_withdraw_cancel = handle_wallet_cancel_action
+    if target_id:
+        await handle_show_user_summary(call, [str(target_id)])
+    else:
+        msg = escape_markdown("❌ عملیات لغو شد.")
+        await _safe_edit(uid, call.message.message_id, msg, reply_markup=await admin_menu.main())
