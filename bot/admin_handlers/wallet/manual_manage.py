@@ -9,11 +9,8 @@ from bot.database import db
 from bot.db.base import User, UserUUID
 from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
-
 from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.bot_instance import bot
-
-# ایمپورت هندلر پروفایل برای بازگشت مستقیم
 from bot.admin_handlers.user_management.profile import handle_show_user_summary
 
 logger = logging.getLogger(__name__)
@@ -33,7 +30,6 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     if uid in bot.context_state:
         del bot.context_state[uid]
     
-    # تنظیم وضعیت جدید
     bot.context_state[uid] = {
         'action_type': 'manual_charge',
         'msg_id': msg_id,
@@ -45,7 +41,6 @@ async def handle_manual_charge_request(call: types.CallbackQuery, params: list):
     
     msg_text = escape_markdown("💰 لطفاً مبلغ شارژ دستی (تومان) را وارد کنید:")
     
-    # دکمه انصراف
     await _safe_edit(uid, msg_id, msg_text, reply_markup=await admin_menu.cancel_action("admin:manual_charge_cancel"))
 
 
@@ -70,7 +65,6 @@ async def process_charge_amount_step(message: types.Message):
         convo['timestamp'] = time.time()
         
         bot.context_state[uid] = convo
-
         msg_text = escape_markdown("📝 توضیحات تراکنش را وارد کنید:\n(می‌توانید نقطه . بفرستید تا پیش‌فرض ثبت شود)")
         
         await _safe_edit(uid, convo['msg_id'], msg_text, reply_markup=await admin_menu.cancel_action("admin:manual_charge_cancel"))
@@ -98,7 +92,6 @@ async def process_charge_reason_step(message: types.Message):
     identifier = convo['identifier']
     msg_id = convo['msg_id']
 
-    # پیدا کردن یوزر
     target_user_id = None
     if str(identifier).isdigit():
         target_user_id = int(identifier)
@@ -114,7 +107,6 @@ async def process_charge_reason_step(message: types.Message):
         return
 
     try:
-        # انجام تراکنش در دیتابیس
         success = await db.update_wallet_balance(
             user_id=target_user_id,
             amount=amount,
@@ -123,7 +115,6 @@ async def process_charge_reason_step(message: types.Message):
         )
         
         if success:
-            # 1️⃣ ارسال پیام تایید به ادمین
             final_msg = (
                 f"✅ *کیف پول شارژ شد*\n\n"
                 f"👤 کاربر: `{target_user_id}`\n"
@@ -135,7 +126,6 @@ async def process_charge_reason_step(message: types.Message):
             kb.add(types.InlineKeyboardButton("🔙 بازگشت به پروفایل", callback_data=f"admin:us:{target_user_id}"))
             await _safe_edit(uid, msg_id, final_msg, reply_markup=kb)
 
-            # 2️⃣ ارسال پیام اطلاع‌رسانی به کاربر (اصلاح شده)
             try:
                 user_text = (
                     f"🎉 *کیف پول شما شارژ شد*\n\n"
@@ -146,9 +136,7 @@ async def process_charge_reason_step(message: types.Message):
                 
                 user_kb = types.InlineKeyboardMarkup(row_width=1)
                 
-                # ✅ اصلاح شد: استفاده از view_plans که در فایل اصلی کاربر تعریف شده است
-                user_kb.add(types.InlineKeyboardButton("🛒 خرید سرویس / اشتراک", callback_data="view_plans"))
-                # دکمه بازگشت به منوی اصلی (back) هم همیشه کار می‌کند
+                user_kb.add(types.InlineKeyboardButton("🛒 خرید سرویس", callback_data="view_plans"))
                 user_kb.add(types.InlineKeyboardButton("🏠 منوی اصلی", callback_data="back"))
                 
                 await bot.send_message(target_user_id, user_text, reply_markup=user_kb, parse_mode='Markdown')
