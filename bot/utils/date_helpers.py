@@ -7,21 +7,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 def to_shamsi(dt, include_time=False, month_only=False):
-    if not dt: return "نامشخص"
+    if not dt or dt == 0: return "نامشخص"
     try:
         gregorian_dt = None
-        if isinstance(dt, datetime): gregorian_dt = dt
-        elif isinstance(dt, date): gregorian_dt = datetime(dt.year, dt.month, dt.day)
+        
+        if isinstance(dt, (int, float)):
+            gregorian_dt = datetime.fromtimestamp(dt)
+        elif isinstance(dt, datetime): 
+            gregorian_dt = dt
+        elif isinstance(dt, date): 
+            gregorian_dt = datetime(dt.year, dt.month, dt.day)
         elif isinstance(dt, str):
             try: gregorian_dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
             except ValueError:
                 if '.' in dt: dt = dt.split('.')[0]
                 gregorian_dt = datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+        
         if not gregorian_dt: return "نامشخص"
+        
         if gregorian_dt.tzinfo is None: gregorian_dt = pytz.utc.localize(gregorian_dt)
         tehran_tz = pytz.timezone("Asia/Tehran")
         local_dt = gregorian_dt.astimezone(tehran_tz)
+        
         dt_shamsi = jdatetime.datetime.fromgregorian(datetime=local_dt)
+        
         if month_only: return f"{jdatetime.date.j_months_fa[dt_shamsi.month - 1]} {dt_shamsi.year}"
         if include_time: return dt_shamsi.strftime("%Y/%m/%d %H:%M:%S")
         return dt_shamsi.strftime("%Y/%m/%d")

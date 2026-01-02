@@ -202,10 +202,16 @@ class AdminUsersMenu(BaseMenu):
         return kb
 
     async def select_plan_for_renew_menu(self, identifier: str, context_suffix: str, plans: List[Dict[str, Any]]) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=1)
+        kb = self.create_markup(row_width=2)
+        
+        plan_buttons = []
         for plan in plans:
-            kb.add(self.btn(plan['name'], f"admin:renew_apply_plan:{plan['id']}:{identifier}{context_suffix}"))
-        kb.add(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
+            plan_buttons.append(self.btn(plan['name'], f"admin:renew_apply_plan:{plan['id']}:{identifier}{context_suffix}"))
+        
+        if plan_buttons:
+            kb.add(*plan_buttons)
+            
+        kb.row(self.btn("🔙 بازگشت", f"admin:us:{identifier}"))
         return kb
 
     async def reset_usage_selection_menu(self, identifier: str, base_callback: str) -> types.InlineKeyboardMarkup:

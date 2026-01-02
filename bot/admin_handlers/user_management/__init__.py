@@ -48,14 +48,13 @@ from .mapping import (
 
 from .actions import (
     handle_user_reset_menu, handle_reset_usage_menu, handle_reset_usage_action,
-    handle_reset_birthday, handle_reset_transfer_cooldown,
+    handle_reset_birthday,
     handle_user_warning_menu, handle_send_payment_reminder,
     handle_send_disconnection_warning, handle_ask_for_note, process_save_note,
     handle_delete_user_confirm, handle_delete_user_action,
     handle_delete_devices_confirm, handle_delete_devices_action,
     handle_renew_subscription_menu, handle_renew_select_plan_menu,
-    handle_renew_apply_plan, handle_award_badge_menu, handle_award_badge,
-    handle_achievement_request_callback, handle_churn_contact_user,
+    handle_renew_apply_plan, handle_churn_contact_user,
     handle_churn_send_offer
 )
 

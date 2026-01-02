@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List
 from bot.database import db
 from bot.services.panels.factory import PanelFactory
 from bot.utils.parsers import validate_uuid
@@ -22,10 +22,12 @@ async def modify_user_logic(
     set_gb: Optional[float] = None,
     set_days: Optional[int] = None,
     target_panel_type: Optional[str] = None,
-    target_panel_name: Optional[str] = None
+    target_panel_name: Optional[str] = None,
+    limit_categories: Optional[List[str]] = None  # ✅ آرگومان جدید برای محدودسازی
 ) -> bool:
     """
     اعمال تغییرات روی کاربران (هوشمند نسبت به مپینگ مرزبان)
+    با قابلیت فیلتر بر اساس دسته‌بندی (limit_categories)
     """
     logger.info(f"Modifier: Processing {identifier}")
 
@@ -44,11 +46,20 @@ async def modify_user_logic(
     async def modify_single(panel_config):
         ptype = panel_config['panel_type']
         pname = panel_config['name']
+        pcat = panel_config.get('category')  # دریافت دسته‌بندی پنل از کانفیگ
 
+        # --- فیلترهای استاندارد ---
         if target_panel_type and ptype != target_panel_type: return False
         if target_panel_name and pname != target_panel_name: return False
 
-        handler = await _get_handler(pname)
+        # --- 🔴 فیلتر جدید: بررسی دسته‌بندی مجاز ---
+        if limit_categories and len(limit_categories) > 0:
+            # اگر دسته‌بندی پنل (مثلاً 'fr') در لیست مجاز (مثلاً ['de']) نباشد، رد می‌شود
+            if pcat not in limit_categories:
+                return False
+
+        # دریافت هندلر پنل
+        handler = await PanelFactory.get_panel(pname)
         if not handler: return False
 
         success = False
@@ -67,12 +78,13 @@ async def modify_user_logic(
         
         return success
 
+    # اجرای همزمان روی همه پنل‌های تایید شده
     tasks = [modify_single(p) for p in all_panels]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     any_success = any(res is True for res in results)
 
-    # ریست کردن یادآوری تمدید
+    # ریست کردن یادآوری تمدید (فقط اگر موفق بود و تمدید زمانی داشتیم)
     if any_success and (add_days > 0 or set_days is not None) and uuid:
         uuid_id = await db.get_uuid_id_by_uuid(uuid)
         if uuid_id:

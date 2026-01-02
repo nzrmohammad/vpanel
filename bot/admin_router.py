@@ -387,6 +387,11 @@ async def handle_admin_callbacks(call: types.CallbackQuery):
     action = parts[1]
     params = parts[2:]
     
+    if action == "renew_exec":
+        from bot.admin_handlers.user_management import actions
+        await actions.handle_renew_confirm_exec(call, params)
+        return
+
     if action == "none":
         await bot.answer_callback_query(call.id)
         return
