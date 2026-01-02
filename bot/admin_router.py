@@ -219,7 +219,6 @@ ADMIN_CALLBACK_HANDLERS = {
     "ae": getattr(user_management, 'handle_ask_edit_value', None),
     "us_tgl": getattr(user_management, 'handle_toggle_status', None),
     "tglA": getattr(user_management, 'handle_toggle_status_action', None),
-    "us_lpay": getattr(user_management, 'handle_log_payment', None),
     "us_phist": getattr(user_management, 'handle_payment_history', None),
     "reset_phist": getattr(user_management, 'handle_reset_payment_history_confirm', None),
     "do_reset_phist": getattr(user_management, 'handle_reset_payment_history_action', None),

@@ -55,24 +55,6 @@ async def handle_payment_history(call, params):
     final_text = "\n".join(lines)
     await _safe_edit(uid, msg_id, final_text, reply_markup=kb, parse_mode="MarkdownV2")
 
-async def handle_log_payment(call, params):
-    """ثبت دستی پرداخت"""
-    target_id = int(params[0])
-    uuids = await db.uuids(target_id)
-    
-    if uuids:
-        await db.add_payment_record(uuids[0]['id'])
-        await bot.answer_callback_query(call.id, "✅ پرداخت ثبت شد.")
-        
-        try:
-            await bot.send_message(target_id, "✅ اشتراک شما توسط مدیریت تمدید شد.\nبا تشکر از پرداخت شما.")
-        except Exception as e:
-            logger.warning(f"Could not send msg to {target_id}: {e}")
-
-        await show_user_summary(call.from_user.id, call.message.message_id, target_id)
-    else:
-        await bot.answer_callback_query(call.id, "سرویسی وجود ندارد.", show_alert=True)
-
 async def handle_reset_payment_history_confirm(call, params):
     """تاییدیه حذف تاریخچه"""
     uuid_id, target_id = params[0], params[1]

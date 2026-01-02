@@ -48,7 +48,7 @@ async def start_command(message: types.Message):
     if len(args) > 1 and referral_status.lower() == 'true':
         await db.set_referrer(user_id, args[1])
 
-    # 3. پاک کردن استیت‌های قبلی (برای جلوگیری از باگ)
+    # 3. پاک کردن استیت‌های قبلی
     if not hasattr(bot, 'user_states'):
         bot.user_states = {}
     if user_id in bot.user_states:
@@ -60,10 +60,42 @@ async def start_command(message: types.Message):
         lang = await db.get_user_language(user_id)
         is_admin = user_id in ADMIN_IDS
         
-        text = get_string('main_menu_title', lang)
+        # --- بخش ساخت متن داینامیک (اصلاح شده) ---
+        
+        # 1. دریافت اطلاعات کیف پول
+        user_data = await db.user(user_id)
+        wallet_balance = user_data.get('wallet_balance', 0) if user_data else 0
+        
+        # 2. محاسبه تعداد کل تمدیدها
+        user_uuids = await db.uuids(user_id)
+        renewal_count = 0
+        if user_uuids:
+            for u in user_uuids:
+                history = await db.get_user_payment_history(u['id'])
+                if history:
+                    renewal_count += len(history)
+        
+        # 3. دریافت تنظیمات هدیه
+        gift_gb = await db.get_config('referral_reward_gb', '1')
+        gift_days = await db.get_config('referral_reward_days', '1')
+        
+        # 4. فرمت‌دهی متن و اسکیپ کردن برای جلوگیری از خطای Bad Request
+        raw_text = (
+            f"منوی اصلی\n"
+            f"──────────────────\n"
+            f"💳 موجودی شما : {int(wallet_balance):,} تومان\n"
+            f"💎 شما تاکنون {renewal_count} بار سرویس خود را تمدید کرده‌اید.\n"
+            f"──────────────────\n"
+            f"💡 نکته: با دعوت از دوستان ، هر دوی شما {gift_gb} گیگابایت حجم و {gift_days} روز اعتبار هدیه خواهید گرفت."
+        )
+        
+        # 👇 استفاده از escape_markdown برای حل مشکل نقطه و کاراکترهای خاص
+        text = escape_markdown(raw_text)
+        
         markup = await user_menu.main(is_admin, lang)
         
-        await bot.send_message(message.chat.id, text, reply_markup=markup)
+        # در send_message اگر parse_mode پیش‌فرض MarkdownV2 باشد، متن باید اسکیپ شده باشد
+        await bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='MarkdownV2')
         return
 
     raw_text = "👋 Welcome!\n 👋 خوش آمدید!\n\nplease select your language:\nلطفاً زبان خود را انتخاب کنید:"
@@ -555,13 +587,42 @@ async def handle_uuid_login(message: types.Message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "back")
 async def back_to_main_menu_handler(call: types.CallbackQuery):
-    """بازگشت به منوی اصلی"""
+    """بازگشت به منوی اصلی با متن داینامیک"""
     user_id = call.from_user.id
-    
     lang = await db.get_user_language(user_id)
     is_admin = user_id in ADMIN_IDS
     
-    text = get_string('main_menu_title', lang)
-    markup = await user_menu.main(is_admin, lang)
+    # --- بخش ساخت متن داینامیک ---
     
-    await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup)
+    # 1. دریافت اطلاعات کیف پول
+    user_data = await db.user(user_id)
+    wallet_balance = user_data.get('wallet_balance', 0) if user_data else 0
+    
+    # 2. محاسبه تعداد تمدیدها
+    user_uuids = await db.uuids(user_id)
+    renewal_count = 0
+    if user_uuids:
+        for u in user_uuids:
+            history = await db.get_user_payment_history(u['id'])
+            if history:
+                renewal_count += len(history)
+    
+    # 3. دریافت تنظیمات هدیه
+    gift_gb = await db.get_config('referral_reward_gb', '1')
+    gift_days = await db.get_config('referral_reward_days', '1')
+    
+    # 4. فرمت‌دهی متن و اسکیپ کردن
+    raw_text = (
+        f"منوی اصلی\n"
+        f"──────────────────\n"
+        f"💳 موجودی شما : {int(wallet_balance):,} تومان\n"
+        f"💎 شما تاکنون {renewal_count} بار سرویس خود را تمدید کرده‌اید.\n"
+        f"──────────────────\n"
+        f"💡 نکته: با دعوت از دوستان ، هر دوی شما {gift_gb} گیگابایت حجم و {gift_days} روز اعتبار هدیه خواهید گرفت."
+    )
+    
+    # 👇 حل مشکل ارور: کاراکترهای . و - و ... اسکیپ می‌شوند
+    text = escape_markdown(raw_text)
+    
+    markup = await user_menu.main(is_admin, lang)
+    await _safe_edit(user_id, call.message.message_id, text, reply_markup=markup, parse_mode='MarkdownV2')

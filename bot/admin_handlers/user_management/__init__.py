@@ -32,7 +32,7 @@ from .status import (
 )
 
 from .finance import (
-    handle_payment_history, handle_log_payment,
+    handle_payment_history,
     handle_reset_payment_history_confirm, handle_reset_payment_history_action
 )
 

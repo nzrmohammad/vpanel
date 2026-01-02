@@ -35,7 +35,7 @@ async def handle_show_user_summary(call: types.CallbackQuery, params: list):
 
 
 async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extra_message=None):
-    """تابع اصلی ساخت و نمایش پروفایل کاربر"""
+    """تابع اصلی ساخت و نمایش پروفایل کاربر (اصلاح شده با نمایش موجودی)"""
     async with db.get_session() as session:
         user = await session.get(User, target_user_id)
         if not user:
@@ -46,6 +46,11 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
         active_uuids = [u for u in uuids if u['is_active']]
         
         safe_name = escape_markdown(user.first_name or 'Unknown')
+        
+        # 👇 دریافت موجودی کیف پول و فرمت‌دهی
+        wallet_balance = getattr(user, 'wallet_balance', 0)
+        if wallet_balance is None: wallet_balance = 0
+        safe_balance = f"{int(wallet_balance):,}"
         
         if active_uuids:
             # دریافت اطلاعات ترکیبی از سرورها
@@ -64,7 +69,11 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
                 status_emoji = "✅" if is_active else "❌"
                 status_text = "فعال" if is_active else "غیرفعال"
                 
-                new_header = f"👤 نام : {safe_name} \({status_emoji} {status_text} \| {payment_count} پرداخت\)"
+                # 👇 هدر جدید شامل موجودی
+                new_header = (
+                    f"👤 نام : {safe_name} \({status_emoji} {status_text} \| {payment_count} پرداخت\)\n"
+                    f"💰 موجودی: {safe_balance} تومان"
+                )
                 lines[0] = f"*{new_header}*"
                 
                 admin_lines = ["──────────────────"]
@@ -77,13 +86,18 @@ async def show_user_summary(admin_id, msg_id, target_user_id, context=None, extr
             else:
                 text = escape_markdown("❌ خطا در دریافت اطلاعات از سرور.")
         else:
-            text = f"👤 کاربر: {safe_name}\n🔴 وضعیت: غیرفعال \(بدون سرویس فعال\)\n🆔 `{target_user_id}`"
+            # حالت کاربر بدون سرویس (نمایش موجودی در اینجا هم اضافه شد)
+            text = (
+                f"👤 کاربر: {safe_name}\n"
+                f"💰 موجودی: {safe_balance} تومان\n"
+                f"🔴 وضعیت: غیرفعال \(بدون سرویس فعال\)\n🆔 `{target_user_id}`"
+            )
 
     if extra_message:
         text += f"\n\n{extra_message}"
 
     back_cb = "admin:search_menu" if context == 's' else "admin:management_menu"
-    panel_type = 'hiddify' # پیش‌فرض، یا می‌توان داینامیک کرد
+    panel_type = 'hiddify'
     
     markup = await admin_menu.user_interactive_menu(str(user.user_id), bool(active_uuids), panel_type, back_callback=back_cb)
     await _safe_edit(admin_id, msg_id, text, reply_markup=markup, parse_mode="MarkdownV2")

@@ -230,21 +230,10 @@ async def handle_renew_select_plan_menu(call, params):
 # بخش تمدید اشتراک (Renew Subscription) - اصلاح شده
 # ==============================================================================
 
-async def handle_renew_subscription_menu(call, params):
-    target_id = params[0]
-    plans = await db.get_all_plans()
-    if not plans:
-        await bot.answer_callback_query(call.id, "هیچ پلنی تعریف نشده است.", show_alert=True)
-        return
-    markup = await admin_menu.select_plan_for_renew_menu(target_id, "", plans)
-    await _safe_edit(call.from_user.id, call.message.message_id, "🔄 پلن جدید را انتخاب کنید:", reply_markup=markup)
-
-async def handle_renew_select_plan_menu(call, params):
-    await handle_renew_subscription_menu(call, params)
-
 async def handle_renew_apply_plan(call, params):
     """
-    مرحله ۱: نمایش پیش‌نمایش دقیق با فیلتر پنل‌های هدف
+    مرحله ۱: نمایش پیش‌نمایش دقیق تمدید
+    (نسخه نهایی: محاسبه صحیح زمان از package_days و رفع باگ‌های قبلی)
     """
     plan_id, target_id = int(params[0]), int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
@@ -257,13 +246,15 @@ async def handle_renew_apply_plan(call, params):
     uuid_str = str(uuids[0]['uuid'])
     user_info = await combined_handler.get_combined_user_info(uuid_str)
     
-    # اگر اطلاعات کاربر یافت نشد (مشکل Aggregator)
+    # اگر اطلاعات کاربر دریافت نشد (با هندلینگ خطای MarkdownV2)
     if not user_info:
-        await _safe_edit(uid, msg_id, "❌ اطلاعات کاربر از پنل‌ها دریافت نشد (خطا در ارتباط یا یافت نشد).", 
-                         reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+        error_msg = r"❌ اطلاعات کاربر از پنل‌ها دریافت نشد\."
+        await _safe_edit(uid, msg_id, error_msg, 
+                         reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'),
+                         parse_mode='MarkdownV2')
         return
 
-    # استخراج پنل‌ها
+    # --- استخراج و فیلتر پنل‌ها ---
     all_active_panels = await db.get_active_panels()
     panel_cat_map = {p['name']: p.get('category') for p in all_active_panels}
     
@@ -286,7 +277,7 @@ async def handle_renew_apply_plan(call, params):
     str_all_panels = ", ".join(sorted_all) if sorted_all else "---"
     str_target_panels = ", ".join(sorted_target) if sorted_target else "❌ هیچکدام (هشدار)"
 
-    # محاسبات حجم
+    # --- محاسبات حجم فعلی ---
     old_gb = 0.0
     breakdown = user_info.get('breakdown', {})
     
@@ -299,40 +290,67 @@ async def handle_renew_apply_plan(call, params):
         old_gb = round(user_info.get('usage_limit_GB', 0), 2)
 
     old_gb = round(old_gb, 2)
-    expire_date_ts = user_info.get('expire', 0)
 
-    # محاسبه تغییرات
+    # --- محاسبات زمان (اصلاح شده) ---
+    import time
+    now_ts = int(time.time())
+    expire_timestamps = []
+    
+    if breakdown:
+        for p_name in sorted_target:
+            if p_name in breakdown:
+                p_data = breakdown[p_name].get('data', {})
+                
+                # 1. تلاش برای یافتن Timestamp مستقیم
+                ts = p_data.get('expire') or p_data.get('expiry_time') or p_data.get('expire_date')
+                found_ts = None
+
+                if ts:
+                    try:
+                        if float(ts) > 100000: found_ts = float(ts)
+                    except: pass
+
+                # 2. اگر پیدا نشد، محاسبه از روی package_days
+                if not found_ts:
+                    pkg_days = p_data.get('package_days')
+                    if pkg_days is not None:
+                        try:
+                            found_ts = now_ts + (float(pkg_days) * 86400)
+                        except: pass
+                
+                if found_ts:
+                    expire_timestamps.append(found_ts)
+    
+    if expire_timestamps:
+        expire_date_ts = min(expire_timestamps)
+    else:
+        expire_date_ts = user_info.get('expire', 0)
+
+    # محاسبه روزهای باقی‌مانده
+    remaining_days = 0
+    if expire_date_ts and expire_date_ts > 1600000000 and expire_date_ts > now_ts:
+        remaining_days = int((expire_date_ts - now_ts) / 86400)
+    
+    # --- محاسبات تغییرات ---
     add_gb = plan['volume_gb']
     count_targets = len(target_panels_names)
     added_total_gb = add_gb * count_targets if count_targets > 0 else add_gb
     new_gb_total = round(old_gb + added_total_gb, 2)
-
-    import time
-    now_ts = int(time.time())
-    
-    remaining_days = 0
-    if expire_date_ts and expire_date_ts > 1600000000 and expire_date_ts > now_ts:
-        remaining_days = int((expire_date_ts - now_ts) / 86400)
     
     add_days = plan['days']
     new_days = remaining_days + add_days
     price = plan['price']
 
-    # --- ایمن‌سازی متغیرها برای MarkdownV2 (رفع باگ نقطه و کاراکترهای خاص) ---
+    # --- فرمت‌دهی پیام ---
     safe_all_panels = escape_markdown(str_all_panels)
     safe_target_panels = escape_markdown(str_target_panels)
     safe_plan_name = escape_markdown(plan['name'])
-    
     safe_add_gb = escape_markdown(str(add_gb))
     safe_old_gb = escape_markdown(str(old_gb))
     safe_added_total_gb = escape_markdown(str(added_total_gb))
     safe_new_gb_total = escape_markdown(str(new_gb_total))
     safe_price = escape_markdown(f"{price:,.0f}")
     
-    safe_add_days = str(add_days)
-    safe_remaining_days = str(remaining_days)
-    safe_new_days = str(new_days)
-
     msg_final = (
         f"🔄 پیش‌نمایش تمدید سرویس\n"
         f"پنل‌های کاربر : {safe_all_panels}\n"
@@ -341,12 +359,12 @@ async def handle_renew_apply_plan(call, params):
         f"🏷 پلن انتخابی\n"
         f"{safe_plan_name}\n"
         f"📊 {safe_add_gb} GB\n"
-        f"⏳ {safe_add_days} Day\n"
+        f"⏳ {add_days} Day\n"
         f"➖➖➖➖➖➖➖➖\n"
         f"📦 تغییرات حجم \(پنل‌های هدف\)\n"
         f"{safe_old_gb}GB ➔ \+{safe_added_total_gb} GB ➔ {safe_new_gb_total} GB\n"
         f"⏳ تغییرات زمان\n"
-        f"{safe_remaining_days} ➔ \+{safe_add_days} ➔ {safe_new_days}\n"
+        f"{remaining_days} ➔ \+{add_days} ➔ {new_days}\n"
         f"➖➖➖➖➖\n"
         f"💰 مبلغ قابل پرداخت : {safe_price} تومان\n"
         f"❓ آیا عملیات تایید است؟"
@@ -361,6 +379,9 @@ async def handle_renew_apply_plan(call, params):
     await _safe_edit(uid, msg_id, msg_final, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_renew_confirm_exec(call, params):
+    """
+    مرحله ۲: اجرای تمدید و ارسال پیام به کاربر (شامل نام پلن و هزینه)
+    """
     plan_id, target_id = int(params[0]), int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -382,10 +403,13 @@ async def handle_renew_confirm_exec(call, params):
     if success:
         await db.add_payment_record(uuids[0]['id'])
         try:
+            price_str = f"{plan['price']:,}"
             user_msg = (
                 f"✅ کاربر گرامی، سرویس شما با موفقیت تمدید شد.\n\n"
+                f"🏷 نام پلن: {plan['name']}\n"
                 f"📦 حجم اضافه شده: {plan['volume_gb']} گیگابایت\n"
-                f"⏳ زمان اضافه شده: {plan['days']} روز\n\n"
+                f"⏳ زمان اضافه شده: {plan['days']} روز\n"
+                f"💰 هزینه: {price_str} تومان\n\n"
                 f"از همراهی شما سپاسگزاریم. 🌹"
             )
             await bot.send_message(target_id, user_msg)
@@ -398,7 +422,6 @@ async def handle_renew_confirm_exec(call, params):
         error_msg = escape_markdown("❌ خطا در انجام عملیات تمدید.")
         await _safe_edit(uid, msg_id, error_msg, 
                          reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
-
         
 # --- Churn / Contact ---
 async def handle_churn_contact_user(call, params):
