@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from bot.services.panels.factory import PanelFactory
@@ -181,12 +182,16 @@ async def fetch_all_users_from_panels() -> List[Dict[str, Any]]:
             # مدیریت انقضا (کمترین انقضای معتبر)
             new_expire = user.get('expire')
             
-            # --- اصلاحیه برای هیدیفای ---
             if new_expire is None:
-                new_expire = user.get('package_days')
-                if new_expire is None:
-                     new_expire = user.get('expiry_time')
-            # ---------------------------
+                # 1. تلاش برای خواندن expiry_time (استاندارد)
+                new_expire = user.get('expiry_time')
+                
+                # 2. اگر expiry_time نبود ولی package_days بود (حالت استفاده نشده در Hiddify)
+                # در این حالت روزها را به زمان حال اضافه می‌کنیم تا تاریخ تخمینی به دست آید
+                if not new_expire:
+                    days = user.get('package_days')
+                    if days and isinstance(days, (int, float)) and days < 100000:
+                        new_expire = time.time() + (days * 86400)
 
             if new_expire:
                 curr_expire = all_users_map[identifier]['expire']

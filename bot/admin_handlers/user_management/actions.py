@@ -225,9 +225,22 @@ async def handle_renew_subscription_menu(call, params):
 async def handle_renew_select_plan_menu(call, params):
     await handle_renew_subscription_menu(call, params)
 
-# در فایل bot/admin_handlers/user_management/actions.py
 
-# در فایل bot/admin_handlers/user_management/actions.py
+# ==============================================================================
+# بخش تمدید اشتراک (Renew Subscription) - اصلاح شده
+# ==============================================================================
+
+async def handle_renew_subscription_menu(call, params):
+    target_id = params[0]
+    plans = await db.get_all_plans()
+    if not plans:
+        await bot.answer_callback_query(call.id, "هیچ پلنی تعریف نشده است.", show_alert=True)
+        return
+    markup = await admin_menu.select_plan_for_renew_menu(target_id, "", plans)
+    await _safe_edit(call.from_user.id, call.message.message_id, "🔄 پلن جدید را انتخاب کنید:", reply_markup=markup)
+
+async def handle_renew_select_plan_menu(call, params):
+    await handle_renew_subscription_menu(call, params)
 
 async def handle_renew_apply_plan(call, params):
     """
@@ -236,7 +249,6 @@ async def handle_renew_apply_plan(call, params):
     plan_id, target_id = int(params[0]), int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
-    # 1. دریافت اطلاعات
     plan = await db.get_plan_by_id(plan_id)
     if not plan: return
     uuids = await db.uuids(target_id)
@@ -245,100 +257,110 @@ async def handle_renew_apply_plan(call, params):
     uuid_str = str(uuids[0]['uuid'])
     user_info = await combined_handler.get_combined_user_info(uuid_str)
     
-    # 2. استخراج پنل‌ها و دسته‌بندی‌ها
-    # ما نیاز داریم بدانیم کدام پنل چه دسته‌بندی‌ای دارد تا ببینیم پلن روی آن اعمال می‌شود یا نه
+    # اگر اطلاعات کاربر یافت نشد (مشکل Aggregator)
+    if not user_info:
+        await _safe_edit(uid, msg_id, "❌ اطلاعات کاربر از پنل‌ها دریافت نشد (خطا در ارتباط یا یافت نشد).", 
+                         reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+        return
+
+    # استخراج پنل‌ها
     all_active_panels = await db.get_active_panels()
-    # ساخت یک دیکشنری برای جستجوی سریع: {'PanelName': 'CategoryCode'}
     panel_cat_map = {p['name']: p.get('category') for p in all_active_panels}
     
-    user_panels_names = []   # همه پنل‌های کاربر
-    target_panels_names = [] # پنل‌هایی که این پلن روی آن‌ها اعمال می‌شود
+    user_panels_names = set()
+    target_panels_names = set()
     
-    raw_panels = user_info.get('panels', []) if user_info else []
-    
-    # دسته‌بندی‌های مجاز پلن (مثلاً ['de'])
+    raw_panels = user_info.get('panels', [])
     allowed_cats = plan.get('allowed_categories', [])
     
     for p in raw_panels:
-        # هندل کردن فرمت‌های مختلف پنل (دیکشنری یا استرینگ)
         p_name = p.get('name', 'Unknown') if isinstance(p, dict) else str(p)
-        user_panels_names.append(p_name)
-        
-        # بررسی اینکه آیا این پنل شامل تمدید می‌شود؟
+        user_panels_names.add(p_name)
         p_cat = panel_cat_map.get(p_name)
-        
-        # اگر پلن محدودیت ندارد (لیست خالی) یا دسته‌بندی پنل در لیست مجاز است
         if not allowed_cats or (p_cat in allowed_cats):
-            target_panels_names.append(p_name)
+            target_panels_names.add(p_name)
             
-    # ساخت رشته‌ها برای نمایش
-    str_all_panels = ", ".join(user_panels_names) if user_panels_names else "---"
-    str_target_panels = ", ".join(target_panels_names) if target_panels_names else "❌ هیچکدام (هشدار)"
+    sorted_all = sorted(list(user_panels_names))
+    sorted_target = sorted(list(target_panels_names))
 
-    # 3. محاسبات حجم و زمان
-    if user_info:
-        # حجم کل (مجموع تمام پنل‌ها)
-        old_gb = round(user_info.get('usage_limit_GB', 0), 2)
-        expire_date_ts = user_info.get('expire', 0)
+    str_all_panels = ", ".join(sorted_all) if sorted_all else "---"
+    str_target_panels = ", ".join(sorted_target) if sorted_target else "❌ هیچکدام (هشدار)"
+
+    # محاسبات حجم
+    old_gb = 0.0
+    breakdown = user_info.get('breakdown', {})
+    
+    if breakdown:
+        for p_name in sorted_target:
+            if p_name in breakdown:
+                panel_limit = breakdown[p_name].get('data', {}).get('usage_limit_GB', 0)
+                old_gb += panel_limit
     else:
-        old_limit_bytes = uuids[0].get('traffic_limit', 0) or 0
-        old_gb = round(old_limit_bytes / (1024**3), 2)
-        expire_date_ts = uuids[0].get('expire_date') or 0
+        old_gb = round(user_info.get('usage_limit_GB', 0), 2)
+
+    old_gb = round(old_gb, 2)
+    expire_date_ts = user_info.get('expire', 0)
 
     # محاسبه تغییرات
     add_gb = plan['volume_gb']
-    
-    # نکته: در لاجیک فعلی، حجم به هر پنل هدف اضافه می‌شود.
-    # اگر کاربر ۲ پنل هدف داشته باشد، عملاً ۲ * ۲۰ گیگ به "ظرفیت کل سیستم" اضافه می‌شود.
-    # اما برای گیج نشدن کاربر، همان حجم واحد پلن را نمایش می‌دهیم یا می‌توانیم ضرب کنیم.
-    # در اینجا برای سادگی همان حجم پلن نمایش داده می‌شود.
-    new_gb_total = round(old_gb + (add_gb * len(target_panels_names) if target_panels_names else add_gb), 2)
+    count_targets = len(target_panels_names)
+    added_total_gb = add_gb * count_targets if count_targets > 0 else add_gb
+    new_gb_total = round(old_gb + added_total_gb, 2)
 
     import time
     now_ts = int(time.time())
     
     remaining_days = 0
-    if expire_date_ts > now_ts:
+    if expire_date_ts and expire_date_ts > 1600000000 and expire_date_ts > now_ts:
         remaining_days = int((expire_date_ts - now_ts) / 86400)
     
     add_days = plan['days']
     new_days = remaining_days + add_days
     price = plan['price']
 
-    # 4. ساخت پیام نهایی
-    msg = (
+    # --- ایمن‌سازی متغیرها برای MarkdownV2 (رفع باگ نقطه و کاراکترهای خاص) ---
+    safe_all_panels = escape_markdown(str_all_panels)
+    safe_target_panels = escape_markdown(str_target_panels)
+    safe_plan_name = escape_markdown(plan['name'])
+    
+    safe_add_gb = escape_markdown(str(add_gb))
+    safe_old_gb = escape_markdown(str(old_gb))
+    safe_added_total_gb = escape_markdown(str(added_total_gb))
+    safe_new_gb_total = escape_markdown(str(new_gb_total))
+    safe_price = escape_markdown(f"{price:,.0f}")
+    
+    safe_add_days = str(add_days)
+    safe_remaining_days = str(remaining_days)
+    safe_new_days = str(new_days)
+
+    msg_final = (
         f"🔄 پیش‌نمایش تمدید سرویس\n"
-        f"پنل‌های کاربر : {str_all_panels}\n"
-        f"✅ *اعمال به : {str_target_panels}*\n"
+        f"پنل‌های کاربر : {safe_all_panels}\n"
+        f"✅ *اعمال به :* {safe_target_panels}\n"
         f"➖➖➖➖➖➖➖➖\n"
         f"🏷 پلن انتخابی\n"
-        f"{plan['name']}\n"
-        f"📊 {add_gb} GB\n"
-        f"⏳ {add_days} Day\n"
+        f"{safe_plan_name}\n"
+        f"📊 {safe_add_gb} GB\n"
+        f"⏳ {safe_add_days} Day\n"
         f"➖➖➖➖➖➖➖➖\n"
-        f"📦 تغییرات حجم کل\n"
-        f"{old_gb}GB ➔ +{add_gb} GB (per panel) ➔ {new_gb_total} GB\n"
+        f"📦 تغییرات حجم \(پنل‌های هدف\)\n"
+        f"{safe_old_gb}GB ➔ \+{safe_added_total_gb} GB ➔ {safe_new_gb_total} GB\n"
         f"⏳ تغییرات زمان\n"
-        f"{remaining_days} ➔ +{add_days} ➔ {new_days}\n"
+        f"{safe_remaining_days} ➔ \+{safe_add_days} ➔ {safe_new_days}\n"
         f"➖➖➖➖➖\n"
-        f"💰 مبلغ قابل پرداخت : {price:,.0f} تومان\n"
+        f"💰 مبلغ قابل پرداخت : {safe_price} تومان\n"
         f"❓ آیا عملیات تایید است؟"
     )
-    
-    safe_msg = escape_markdown(msg)
-    
+
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("✅ تایید نهایی", callback_data=f"admin:renew_exec:{plan_id}:{target_id}"),
         types.InlineKeyboardButton("❌ انصراف", callback_data=f"admin:us:{target_id}")
     )
     
-    await _safe_edit(uid, msg_id, safe_msg, reply_markup=kb, parse_mode="MarkdownV2")
+    await _safe_edit(uid, msg_id, msg_final, reply_markup=kb, parse_mode="MarkdownV2")
 
 async def handle_renew_confirm_exec(call, params):
-    """
-    مرحله ۲: انجام عملیات + ارسال پیام به کاربر
-    """
     plan_id, target_id = int(params[0]), int(params[1])
     uid, msg_id = call.from_user.id, call.message.message_id
     
@@ -349,10 +371,7 @@ async def handle_renew_confirm_exec(call, params):
     uuids = await db.uuids(target_id)
     if not uuids: return
     
-    # دریافت دسته‌بندی‌های مجاز برای محدودسازی
     allowed_cats = plan.get('allowed_categories', [])
-    
-    # اعمال تغییرات
     success = await combined_handler.modify_user_on_all_panels(
         identifier=str(uuids[0]['uuid']),
         add_gb=plan['volume_gb'],
@@ -361,20 +380,8 @@ async def handle_renew_confirm_exec(call, params):
     )
     
     if success:
-        # 1. ثبت تراکنش
         await db.add_payment_record(uuids[0]['id'])
-        
-        # 2. ✅ ارسال پیام به کاربر (User Notification)
         try:
-            from bot.utils.date_helpers import to_shamsi
-            import time
-            
-            # محاسبه تاریخ انقضای حدودی جدید برای نمایش در پیام
-            # نکته: دقیق‌ترین حالت این است که دوباره combined_user_info بگیرید، اما محاسباتی هم قابل قبول است
-            current_time = int(time.time())
-            # فرض ساده: زمان الان + روزهای اضافه شده (یا زمان قبلی + اضافه)
-            # برای پیام تبریک، نمایش "مدت زمان اضافه شده" کافیست
-            
             user_msg = (
                 f"✅ کاربر گرامی، سرویس شما با موفقیت تمدید شد.\n\n"
                 f"📦 حجم اضافه شده: {plan['volume_gb']} گیگابایت\n"
@@ -385,14 +392,13 @@ async def handle_renew_confirm_exec(call, params):
         except Exception as e:
             logger.error(f"Failed to send renewal notification to user {target_id}: {e}")
 
-        # 3. پیام موفقیت به ادمین
         success_msg = escape_markdown("✅ سرویس تمدید شد و پیام فعال‌سازی برای کاربر ارسال گردید.")
         await show_user_summary(uid, msg_id, target_id, extra_message=success_msg)
-        
     else:
         error_msg = escape_markdown("❌ خطا در انجام عملیات تمدید.")
         await _safe_edit(uid, msg_id, error_msg, 
                          reply_markup=await admin_menu.user_interactive_menu(str(target_id), True, 'both'))
+
         
 # --- Churn / Contact ---
 async def handle_churn_contact_user(call, params):
