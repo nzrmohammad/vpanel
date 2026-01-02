@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from bot.services.panels.factory import PanelFactory
 from bot.database import db
-from bot.db.base import UserUUID  # ایمپورت مدل برای Type Hinting
+from bot.db.base import UserUUID
 
 logger = logging.getLogger(__name__)
 
