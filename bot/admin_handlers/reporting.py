@@ -2,7 +2,6 @@
 
 import logging
 import os
-import csv
 import functools
 from datetime import datetime, timedelta
 import asyncio
@@ -13,10 +12,14 @@ from sqlalchemy import select, func, and_, or_, desc
 from bot.bot_instance import bot
 from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.database import db
-from bot.db.base import User, UserUUID, WalletTransaction, ScheduledMessage, Panel, UsageSnapshot, Plan
+from bot.db.base import (
+    User, UserUUID, WalletTransaction, ScheduledMessage, 
+    Panel, SystemConfig
+)
 from bot.db import queries
-from bot.utils.formatters import escape_markdown
+from bot.db.usage import calculate_daily_usage  # ✅ ایمپورت لاجیک محاسبه مصرف
 from bot.utils.network import _safe_edit
+from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage  # ✅ ایمپورت توابع کمکی
 from bot.services.panels import PanelFactory
 
 logger = logging.getLogger(__name__)
@@ -25,16 +28,28 @@ REPORT_DIR = "reports"
 os.makedirs(REPORT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------
-# توابع کمکی (Helpers)
+# تنظیمات داینامیک (Settings Helper)
 # ---------------------------------------------------------
 
-def write_csv_sync(filepath, users_data):
-    """عملیات سنگین CSV در ترد جداگانه."""
-    with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
-        fieldnames = ['UserID', 'Username', 'Name', 'Wallet Balance', 'Active Services', 'Referral Code']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(users_data)
+async def get_report_settings():
+    """
+    دریافت تنظیمات گزارش‌گیری از دیتابیس.
+    اگر مقادیر در دیتابیس نباشند، از پیش‌فرض‌های ۱۵ و ۳ استفاده می‌کند.
+    """
+    defaults = {
+        "report_page_size": 15,
+        "report_online_window": 3
+    }
+    
+    async with db.get_session() as session:
+        stmt = select(SystemConfig).where(SystemConfig.key.in_(defaults.keys()))
+        results = await session.execute(stmt)
+        configs = {row.key: row.value for row in results.scalars()}
+
+    return {
+        key: int(configs.get(key, default_val)) 
+        for key, default_val in defaults.items()
+    }
 
 # ---------------------------------------------------------
 # هندلرهای منو (Menu Handlers)
@@ -43,7 +58,6 @@ def write_csv_sync(filepath, users_data):
 @bot.callback_query_handler(func=lambda call: call.data == "admin:reports_menu")
 async def handle_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی اصلی گزارش‌گیری."""
-    
     active_panels = await db.get_active_panels()
     
     await _safe_edit(
@@ -88,7 +102,6 @@ async def handle_quick_dashboard(call: types.CallbackQuery, params: list = None)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin:panel_report"))
 async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی گزارش‌های اختصاصی یک پنل."""
-    # اگر params ارسال نشده بود (فراخوانی مستقیم توسط تلگرام)، آن را استخراج کن
     if params is None:
         params = call.data.split(':')[2:]
         
@@ -97,9 +110,7 @@ async def handle_panel_specific_reports_menu(call: types.CallbackQuery, params: 
 
     panel_id = int(params[0])
     
-    # دریافت نام پنل برای نمایش در متن پیام
     async with db.get_session() as session:
-        from bot.db.base import Panel
         panel_obj = await session.get(Panel, panel_id)
         panel_name = panel_obj.name if panel_obj else f"Panel {panel_id}"
 
@@ -156,13 +167,12 @@ async def handle_financial_report(call: types.CallbackQuery, params: list = None
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:financial_details")
 async def handle_financial_details(call: types.CallbackQuery, params: list = None):
-    """نمایش دکمه‌های لیست تراکنش‌ها."""
-    # فعلا هدایت به لیست پرداخت‌ها
+    """نمایش لیست تراکنش‌ها."""
     await handle_paginated_list(call, ["payments", "0"])
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:report_excel")
 async def handle_report_excel(call: types.CallbackQuery):
-    """خروجی اکسل کاربران."""
+    """خروجی اکسل (CSV) کاربران."""
     uid = call.from_user.id
     await bot.answer_callback_query(call.id, "📥 ساخت فایل...")
     msg = await bot.send_message(uid, "⏳ لطفاً صبر کنید...")
@@ -188,6 +198,7 @@ async def handle_report_excel(call: types.CallbackQuery):
                 })
 
         loop = asyncio.get_running_loop()
+        # استفاده از تابع کمکی منتقل شده به utils
         await loop.run_in_executor(None, functools.partial(write_csv_sync, filepath, users_data))
 
         async with aiofiles.open(filepath, 'rb') as f:
@@ -200,7 +211,7 @@ async def handle_report_excel(call: types.CallbackQuery):
         await bot.edit_message_text("❌ خطا در ساخت فایل.", uid, msg.message_id)
 
 # ---------------------------------------------------------
-# هندلر تسک‌های زمان‌بندی شده
+# هندلرهای تسک‌های زمان‌بندی شده
 # ---------------------------------------------------------
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:scheduled_tasks")
@@ -279,136 +290,179 @@ async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = 
     await _safe_edit(call.from_user.id, call.message.message_id, report, reply_markup=kb, parse_mode='HTML')
 
 # ---------------------------------------------------------
-# هندلر لیست‌های عمومی (Paginated Lists)
+# هندلر لیست‌های عمومی و داینامیک (Paginated Lists)
 # ---------------------------------------------------------
 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
-    نمایش لیست‌های صفحه‌بندی شده (کاربران آنلاین، فعال، غیرفعال و ...).
+    نمایش لیست‌های صفحه‌بندی شده.
+    شامل قابلیت دریافت اطلاعات زنده کاربران آنلاین و تنظیمات داینامیک.
     """
     list_type = params[0]
     
     # تعیین پارامترهای پنل یا پلن
     target_panel_id = int(params[1]) if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users'] else None
     plan_id = int(params[1]) if list_type == 'by_plan' else None
-    
-    # تعیین شماره صفحه
     page = int(params[2]) if (target_panel_id or plan_id is not None) else int(params[1])
 
-    PAGE_SIZE = 34
+    # ⚙️ 1. دریافت تنظیمات داینامیک از دیتابیس
+    settings = await get_report_settings()
+    PAGE_SIZE = settings['report_page_size']
+    ONLINE_WINDOW = settings['report_online_window']
+
     offset = page * PAGE_SIZE
     items, total_count, title = [], 0, "گزارش"
 
     async with db.get_session() as session:
-        # ---------------------------------------------------------
-        # ۱. انتخاب کوئری مناسب بر اساس نوع لیست
-        # ---------------------------------------------------------
+        # =========================================================
+        # 🟢 بخش کاربران آنلاین (Live Data + Daily Usage)
+        # =========================================================
         if list_type == 'online_users':
             panel_obj = await session.get(Panel, target_panel_id)
-            title = f"📡 آنلاین‌های لحظه‌ای (۱۰ دقیقه): {panel_obj.name}"
+            title = f"⚡️ <b>کاربران آنلاین ({ONLINE_WINDOW} دقیقه اخیر)</b>\nپنل: {panel_obj.name}"
             
-            # دریافت لیست همه کاربران از API پنل
+            # الف) دریافت لیست زنده همه کاربران از پنل
             try:
                 panel_service = await PanelFactory.get_panel(panel_obj.name)
-                online_data = await panel_service.get_all_users()
+                all_users_live = await panel_service.get_all_users()
             except Exception as e:
-                logger.error(f"Error fetching users from panel: {e}")
-                online_data = []
+                logger.error(f"Error fetching live users: {e}")
+                all_users_live = []
             
-            online_ids = []
-            
-            # تنظیم بازه زمانی (۱۰ دقیقه اخیر)
-            limit_minutes = 10
+            # ب) فیلتر کردن کاربرانی که در بازه زمانی تعیین شده فعال بوده‌اند
+            online_filtered = []
             now_utc = datetime.utcnow()
             
-            for u in online_data:
-                # تلاش برای یافتن فیلد زمان اتصال (نام فیلد در پنل‌های مختلف متفاوت است)
-                # Marzban: 'online_at', Hiddify/Others: 'last_connection', 'last_seen', 'last_online'
+            for u in all_users_live:
                 last_seen_raw = u.get('online_at') or u.get('last_online') or u.get('last_connection')
-                
-                if last_seen_raw:
-                    try:
-                        last_seen_dt = None
-                        
-                        # حالت ۱: اگر زمان به صورت Timestamp (عدد) باشد
-                        if isinstance(last_seen_raw, (int, float)):
-                            last_seen_dt = datetime.utcfromtimestamp(float(last_seen_raw))
-                            
-                        # حالت ۲: اگر زمان به صورت رشته (ISO Format) باشد (مثل مرزبان)
-                        elif isinstance(last_seen_raw, str):
-                            # تمیز کردن رشته زمان (حذف Z و میلی‌ثانیه اضافی)
-                            clean_time = last_seen_raw.replace('Z', '')
-                            if '.' in clean_time:
-                                clean_time = clean_time.split('.')[0]
-                            last_seen_dt = datetime.fromisoformat(clean_time)
+                if not last_seen_raw: continue
 
-                        # مقایسه زمان
-                        if last_seen_dt:
-                            # اگر اختلاف زمان کمتر از حد مجاز باشد (کاربر آنلاین است)
-                            if (now_utc - last_seen_dt) < timedelta(minutes=limit_minutes):
-                                online_ids.append(u.get('username') or u.get('uuid'))
-                                
-                    except Exception:
-                        pass # در صورت فرمت نامعتبر، نادیده بگیر
+                try:
+                    last_seen_dt = None
+                    if isinstance(last_seen_raw, (int, float)):
+                        last_seen_dt = datetime.utcfromtimestamp(float(last_seen_raw))
+                    elif isinstance(last_seen_raw, str):
+                        clean_time = last_seen_raw.replace('Z', '').split('.')[0]
+                        last_seen_dt = datetime.fromisoformat(clean_time)
 
-            # دریافت کوئری دیتابیس برای این لیست از شناسه‌ها
-            stmt = queries.get_online_users_query(target_panel_id, online_ids)
+                    if last_seen_dt and (now_utc - last_seen_dt) < timedelta(minutes=ONLINE_WINDOW):
+                        online_filtered.append(u)
+                except Exception:
+                    pass
+
+            total_count = len(online_filtered)
             
-        elif list_type == 'active_users':
-            title = "✅ فعال (۲۴س) پنل"
-            stmt = queries.get_active_users_query(target_panel_id)
-        elif list_type == 'inactive_users':
-            title = "⏳ غیرفعال‌های پنل"
-            stmt = queries.get_inactive_users_query(target_panel_id)
-        elif list_type == 'never_connected':
-            title = "🚫 هرگز متصل نشده"
-            stmt = queries.get_never_connected_query(target_panel_id)
-        elif list_type == 'by_plan':
-            title = "📊 گزارش بر اساس پلن"
-            stmt = queries.get_users_by_plan_query(plan_id)
-        elif list_type == 'bot_users':
-            title = "👥 کل کاربران ربات"
-            stmt = select(User).order_by(User.user_id.desc())
-        else:
-            # پیش‌فرض
-            title = "لیست کاربران"
-            stmt = select(User)
+            # ج) جدا کردن کاربران صفحه جاری
+            current_page_users = online_filtered[offset : offset + PAGE_SIZE]
 
-        # ---------------------------------------------------------
-        # ۲. اجرای کوئری با پجینیشن
-        # ---------------------------------------------------------
-        # شمارش کل نتایج برای محاسبه صفحات
-        total_count = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-        
-        # دریافت داده‌های صفحه جاری
-        result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
-        
-        for user in result.scalars():
-            u_name = user.first_name or "بدون نام"
-            u_user = f" (@{user.username})" if user.username else ""
-            # نمایش آیدی عددی و نام
-            items.append(f"• {u_name}{u_user} [<code>{user.user_id}</code>] |")
+            # د) آماده‌سازی داده‌ها برای محاسبه مصرف روزانه (مپ کردن نام کاربر پنل به شناسه دیتابیس)
+            identifiers = [u.get('uuid') or u.get('username') for u in current_page_users]
+            identifiers = [i for i in identifiers if i]
+
+            user_uuids_map = {} # { identifier_str : db_id }
+            live_usage_map = {} # { identifier_str : current_bytes }
+
+            if identifiers:
+                stmt = select(UserUUID.id, UserUUID.uuid, UserUUID.name).where(
+                    and_(
+                        UserUUID.allowed_panels.any(id=target_panel_id),
+                        or_(
+                            UserUUID.uuid.cast(str).in_(identifiers),
+                            UserUUID.name.in_(identifiers)
+                        )
+                    )
+                )
+                db_results = await session.execute(stmt)
+                for row in db_results:
+                    if row.uuid: user_uuids_map[str(row.uuid)] = row.id
+                    if row.name: user_uuids_map[row.name] = row.id
+
+            # ه) استخراج مصرف لحظه‌ای کاربران صفحه جاری
+            for u in current_page_users:
+                ident = u.get('uuid') or u.get('username')
+                if not ident: continue
+                
+                # دریافت مصرف کل (بسته به نوع پنل فیلد متفاوت است)
+                total_bytes = u.get('used_traffic') or (u.get('current_usage_GB', 0) * 1024**3)
+                live_usage_map[ident] = total_bytes
+            
+            # و) فراخوانی تابع خارجی برای محاسبه مصرف روزانه
+            daily_usage_data = await calculate_daily_usage(session, user_uuids_map, live_usage_map)
+
+            # ز) ساخت خروجی متنی نهایی
+            for u in current_page_users:
+                name = u.get('username') or u.get('name') or "No Name"
+                ident = u.get('uuid') or u.get('username')
+                
+                # 1. مصرف روزانه
+                daily_bytes = daily_usage_data.get(ident, 0)
+                usage_str = format_usage(daily_bytes / (1024**3)) # تبدیل به GB
+
+                # 2. روزهای باقی‌مانده
+                days_str = "?"
+                if 'expire' in u and u['expire']: # Marzban
+                    rem = (datetime.fromtimestamp(u['expire']) - datetime.now()).days
+                    days_str = f"{max(0, rem)} days"
+                elif 'package_days' in u: # Hiddify
+                    days_str = f"{u['package_days']} days"
+                else:
+                    days_str = "∞ days"
+
+                items.append(f"• {name} | {usage_str} | {days_str}")
+
+        # =========================================================
+        # ⚪️ سایر لیست‌ها (Active, Inactive, ...)
+        # =========================================================
+        else:
+            if list_type == 'active_users':
+                title = "✅ فعال (۲۴س) پنل"
+                stmt = queries.get_active_users_query(target_panel_id)
+            elif list_type == 'inactive_users':
+                title = "⏳ غیرفعال‌های پنل"
+                stmt = queries.get_inactive_users_query(target_panel_id)
+            elif list_type == 'never_connected':
+                title = "🚫 هرگز متصل نشده"
+                stmt = queries.get_never_connected_query(target_panel_id)
+            elif list_type == 'by_plan':
+                title = "📊 گزارش بر اساس پلن"
+                stmt = queries.get_users_by_plan_query(plan_id)
+            elif list_type == 'bot_users':
+                title = "👥 کل کاربران ربات"
+                stmt = select(User).order_by(User.user_id.desc())
+            else:
+                title = "لیست کاربران"
+                stmt = select(User)
+
+            # شمارش کل
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total_count = await session.scalar(count_stmt) or 0
+            
+            # دریافت داده‌ها
+            result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
+            
+            for user in result.scalars():
+                u_name = user.first_name or "بدون نام"
+                items.append(f"• {u_name} (<code>{user.user_id}</code>)")
 
     # ---------------------------------------------------------
-    # ۳. ساخت متن خروجی و دکمه‌ها
+    # 3. ساخت متن و دکمه‌های نهایی
     # ---------------------------------------------------------
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
-    text = f"<b>{title}</b>\n(صفحه {page + 1} از {max(1, total_pages)} | کل: {total_count})\n\n"
+    text = f"{title}\n(Page {page + 1}/{max(1, total_pages)} | Total: {total_count})\n{'─' * 20}\n\n"
     text += "\n".join(items) if items else "❌ موردی یافت نشد."
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
-    # تابع کمکی برای ساخت کالبک دکمه‌ها
+    # ساخت کالبک دیتا
     def get_cb(p):
-        if target_panel_id: return f"admin:list:{list_type}:{target_panel_id}:{p}"
+        prefix = f"admin:list:{list_type}"
+        if target_panel_id: return f"{prefix}:{target_panel_id}:{p}"
         if list_type == 'by_plan': return f"admin:list_by_plan:{plan_id}:{p}"
-        return f"admin:list:{list_type}:{p}"
+        return f"{prefix}:{p}"
 
-    # دکمه قبلی
     if page > 0:
         nav_btns.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=get_cb(page - 1)))
-    # دکمه بعدی
     if (page + 1) * PAGE_SIZE < total_count:
         nav_btns.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=get_cb(page + 1)))
 
@@ -416,19 +470,34 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
 
     # دکمه بازگشت هوشمند
     if list_type == 'by_plan':
-        back_cb = "admin:user_analysis_menu" # منوی انتخاب پلن
+        back_cb = "admin:user_analysis_menu"
     elif target_panel_id:
-        back_cb = f"admin:panel_report:{target_panel_id}" # منوی گزارش پنل
+        back_cb = f"admin:panel_report:{target_panel_id}"
     else:
-        back_cb = "admin:reports_menu" # منوی اصلی گزارشات
+        back_cb = "admin:reports_menu"
 
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
 
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
 # ---------------------------------------------------------
-# Placeholder Handlers
+# Missing / Placeholder Handlers
 # ---------------------------------------------------------
+
+async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: list = None):
+    """منوی انتخاب پلن."""
+    plans = await db.get_all_plans()
+    markup = await admin_menu.select_plan_for_report_menu(plans)
+    await _safe_edit(
+        call.from_user.id,
+        call.message.message_id,
+        "📊 <b>گزارش بر اساس پلن</b>\n\nلطفاً پلن مورد نظر را انتخاب کنید:",
+        reply_markup=markup,
+        parse_mode='HTML'
+    )
+
+# Alias for Router Compatibility
+handle_report_by_plan_selection = handle_select_plan_for_report_menu
 
 async def handle_list_users_by_plan(call, params):
     await handle_paginated_list(call, ["by_plan", params[0], params[1]])
@@ -444,30 +513,3 @@ async def handle_confirm_delete_transaction(call, params):
 
 async def handle_do_delete_transaction(call, params):
     pass
-
-# ---------------------------------------------------------
-# Missing Handlers (اضافه شده برای رفع خطا)
-# ---------------------------------------------------------
-
-async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: list = None):
-    """
-    نمایش منوی انتخاب پلن برای گزارش‌گیری.
-    این تابع توسط navigation.py و admin_router فراخوانی می‌شود.
-    """
-    # دریافت لیست پلن‌ها از دیتابیس
-    plans = await db.get_all_plans()
-    
-    # ساخت کیبورد انتخاب پلن
-    markup = await admin_menu.select_plan_for_report_menu(plans)
-    
-    await _safe_edit(
-        call.from_user.id,
-        call.message.message_id,
-        "📊 <b>گزارش بر اساس پلن</b>\n\nلطفاً پلن مورد نظر را برای مشاهده آمار انتخاب کنید:",
-        reply_markup=markup,
-        parse_mode='HTML'
-    )
-
-# ایجاد نام مستعار برای سازگاری با admin_router.py
-# در router با این نام صدا زده شده است: report_by_plan_select
-handle_report_by_plan_selection = handle_select_plan_for_report_menu

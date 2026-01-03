@@ -1,6 +1,7 @@
 # bot/utils/formatters.py
 import re
 import uuid
+import csv
 from datetime import datetime, date
 from bot.config import PROGRESS_COLORS
 
@@ -60,3 +61,11 @@ def create_progress_bar(percent: float, length: int = 16) -> str:
     bar = ('█' * filled) + ('░' * (length - filled))
     
     return f"\u200f{color} `{bar} {int(percent)}%`"
+
+def write_csv_sync(filepath, users_data):
+    """عملیات سنگین CSV در ترد جداگانه."""
+    with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        fieldnames = ['UserID', 'Username', 'Name', 'Wallet Balance', 'Active Services', 'Referral Code']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(users_data)
