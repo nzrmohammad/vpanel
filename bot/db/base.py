@@ -210,6 +210,7 @@ class UsageSnapshot(Base):
     uuid_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_uuids.id", ondelete="CASCADE"))
     hiddify_usage_gb: Mapped[float] = mapped_column(Float, default=0.0)
     marzban_usage_gb: Mapped[float] = mapped_column(Float, default=0.0)
+    remnawave_usage_gb: Mapped[float] = mapped_column(Float, default=0.0)
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     uuid_rel: Mapped["UserUUID"] = relationship("UserUUID", back_populates="snapshots")
     __table_args__ = (

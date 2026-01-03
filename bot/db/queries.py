@@ -32,21 +32,50 @@ def get_online_users_query(panel_id: int, online_identifiers: list):
     )
 
 def get_active_users_query(panel_id: int):
-    """کوئری کاربران فعال در ۲۴ ساعت گذشته."""
+    """
+    کاربران فعال (Active):
+    کسانی که در ۲۴ ساعت گذشته آپدیت شده‌اند (آنلاین بوده‌اند).
+    """
     yesterday = datetime.now() - timedelta(days=1)
     query = get_base_panel_query(panel_id)
-    return query.where(UserUUID.snapshots.any(UsageSnapshot.taken_at >= yesterday)).distinct()
+    
+    # شرط: تاریخ آخرین آپدیت/اتصال جدیدتر از دیروز باشد
+    return query.where(
+        UserUUID.updated_at >= yesterday
+    ).distinct()
 
 def get_inactive_users_query(panel_id: int):
-    """کوئری کاربران غیرفعال (بیش از ۷ روز)."""
-    week_ago = datetime.now() - timedelta(days=7)
+    """
+    کاربران غیرفعال (Inactive):
+    کسانی که بین ۱ تا ۷ روز پیش آنلاین بوده‌اند (اما الان نیستند).
+    """
+    now = datetime.now()
+    one_day_ago = now - timedelta(days=1)
+    seven_days_ago = now - timedelta(days=7)
+    
     query = get_base_panel_query(panel_id)
-    return query.where(or_(UserUUID.updated_at < week_ago, UserUUID.updated_at.is_(None))).distinct()
+    
+    return query.where(
+        and_(
+            UserUUID.updated_at < one_day_ago,    # قدیمی‌تر از دیروز
+            UserUUID.updated_at >= seven_days_ago # اما جدیدتر از هفته پیش
+        )
+    ).distinct()
 
 def get_never_connected_query(panel_id: int):
-    """کوئری کاربرانی که هرگز متصل نشده‌اند."""
+    """
+    هرگز متصل نشده (Never Connected):
+    کسانی که ترافیک مصرفی‌شان 0 است یا اصلاً رکوردی ندارند.
+    """
     query = get_base_panel_query(panel_id)
-    return query.where(UserUUID.first_connection_time.is_(None)).distinct()
+    
+    return query.where(
+        or_(
+            UserUUID.used_traffic == 0,
+            UserUUID.used_traffic.is_(None),
+            UserUUID.updated_at.is_(None) # یا تاریخ آپدیت ندارند
+        )
+    ).distinct()
 
 def get_users_by_plan_query(plan_id: int = None):
     """کوئری فیلتر بر اساس پلن یا بدون پلن."""
