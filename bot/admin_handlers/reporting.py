@@ -304,7 +304,11 @@ RLM = "\u200f"  # Right-to-Left Mark (برای قبل از متن فارسی)
 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
-    نسخه نهایی: پشتیبانی خودکار از Remnawave و تمام پنل‌های آینده (Dynamic Usage Calculation).
+    نسخه نهایی:
+    1. نام کاربر لینک شده به پروفایل (tg://user?id=...)
+    2. نمایش مصرف امروز (Daily Usage)
+    3. نمایش روزهای باقی‌مانده
+    4. پشتیبانی از تمام پنل‌ها (Dynamic Usage)
     """
     list_type = params[0]
     
@@ -390,13 +394,17 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 if include_user:
                     filtered_users.append(u)
 
-            # --- دریافت مصرف روزانه (هوشمند برای تمام پنل‌ها) ---
+            # --- دریافت مصرف روزانه و لینک پروفایل ---
             daily_usage_map = {}
-            if list_type == 'online_users' and filtered_users:
+            telegram_id_map = {} # مپ برای ذخیره آیدی تلگرام
+
+            # اگر لیستی داریم، اطلاعات تکمیلی را از دیتابیس بگیریم
+            if filtered_users:
                 idents = [u.get('uuid') or u.get('username') for u in filtered_users]
                 idents = [i for i in idents if i]
                 
                 if idents:
+                    # دریافت اطلاعات کاربران از دیتابیس (شامل user_id تلگرام)
                     uuid_stmt = select(UserUUID).where(
                         and_(
                             UserUUID.allowed_panels.any(id=target_panel_id),
@@ -406,43 +414,52 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                     db_users = (await session.execute(uuid_stmt)).scalars().all()
                     
                     if db_users:
-                        user_ids = [du.id for du in db_users]
-                        user_map = {str(du.uuid): du.id for du in db_users}
-                        user_map.update({du.name: du.id for du in db_users if du.name})
+                        user_ids_list = []
+                        user_map = {} # برای مپ کردن شناسه پنل به شناسه دیتابیس
 
-                        start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                        
-                        snap_stmt = select(UsageSnapshot).where(
-                            and_(
-                                UsageSnapshot.uuid_id.in_(user_ids),
-                                UsageSnapshot.taken_at >= start_of_day
-                            )
-                        ).order_by(UsageSnapshot.taken_at.asc())
-                        
-                        snapshots = (await session.execute(snap_stmt)).scalars().all()
-                        
-                        first_usage_today = {}
-                        for snap in snapshots:
-                            if snap.uuid_id not in first_usage_today:
-                                # 🟢 محاسبه هوشمند: جمع تمام ستون‌هایی که با _usage_gb تمام می‌شوند
-                                total_gb = 0.0
-                                # dir(snap) تمام ویژگی‌های آبجکت را برمی‌گرداند
-                                for attr in dir(snap):
-                                    # فقط ستون‌های عمومی که با _usage_gb تمام می‌شوند (مثل remnawave_usage_gb)
-                                    if attr.endswith('_usage_gb') and not attr.startswith('_'):
-                                        val = getattr(snap, attr, 0)
-                                        if val:
-                                            total_gb += float(val)
-                                
-                                first_usage_today[snap.uuid_id] = total_gb * (1024**3)
+                        for du in db_users:
+                            # ذخیره نگاشت برای پیدا کردن Telegram ID
+                            if du.uuid:
+                                telegram_id_map[str(du.uuid)] = du.user_id
+                                user_map[str(du.uuid)] = du.id
+                            if du.name:
+                                telegram_id_map[du.name] = du.user_id
+                                user_map[du.name] = du.id
+                            
+                            user_ids_list.append(du.id)
 
-                        for u in filtered_users:
-                            ident = u.get('uuid') or u.get('username')
-                            if ident and ident in user_map:
-                                db_id = user_map[ident]
-                                if db_id in first_usage_today:
-                                    daily = u['_used_bytes'] - first_usage_today[db_id]
-                                    daily_usage_map[ident] = max(0, daily)
+                        # فقط برای آنلاین‌ها مصرف روزانه را حساب می‌کنیم
+                        if list_type == 'online_users':
+                            start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            
+                            snap_stmt = select(UsageSnapshot).where(
+                                and_(
+                                    UsageSnapshot.uuid_id.in_(user_ids_list),
+                                    UsageSnapshot.taken_at >= start_of_day
+                                )
+                            ).order_by(UsageSnapshot.taken_at.asc())
+                            
+                            snapshots = (await session.execute(snap_stmt)).scalars().all()
+                            
+                            first_usage_today = {}
+                            for snap in snapshots:
+                                if snap.uuid_id not in first_usage_today:
+                                    # جمع هوشمند تمام ستون‌های مصرف
+                                    total_gb = 0.0
+                                    for attr in dir(snap):
+                                        if attr.endswith('_usage_gb') and not attr.startswith('_'):
+                                            val = getattr(snap, attr, 0)
+                                            if val: total_gb += float(val)
+                                    first_usage_today[snap.uuid_id] = total_gb * (1024**3)
+
+                            # محاسبه نهایی مصرف روزانه
+                            for u in filtered_users:
+                                ident = u.get('uuid') or u.get('username')
+                                if ident and ident in user_map:
+                                    db_id = user_map[ident]
+                                    if db_id in first_usage_today:
+                                        daily = u['_used_bytes'] - first_usage_today[db_id]
+                                        daily_usage_map[ident] = max(0, daily)
 
             # --- صفحه‌بندی ---
             total_count = len(filtered_users)
@@ -453,46 +470,29 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 raw_name = u.get('username') or u.get('name') or "No Name"
                 clean_name = raw_name.replace('<', '').replace('>', '')
                 name_esc = escape_markdown(clean_name)
+                
                 ident = u.get('uuid') or u.get('username')
+                
+                # 🔗 ساخت لینک پروفایل (اگر آیدی تلگرام پیدا شد)
+                linked_name = name_esc
+                if ident and ident in telegram_id_map and telegram_id_map[ident]:
+                    tg_id = telegram_id_map[ident]
+                    # لینک به پروفایل کاربر
+                    linked_name = f"[{name_esc}](tg://user?id={tg_id})"
 
-                if list_type == 'active_users':
-                    last_seen_date = "نامشخص"
-                    if u.get('_parsed_last_seen'):
-                        last_seen_date = to_shamsi(u['_parsed_last_seen'])
-                    limit = u.get('_limit_bytes', 0)
-                    used = u.get('_used_bytes', 0)
-                    percent = int((used / limit) * 100) if limit > 0 else 0
-                    line = f"• {name_esc}{LRM} \| {RLM}{escape_markdown(last_seen_date)} {RLM}\| {RLM}{percent}%"
-                    items.append(line)
-
-                elif list_type == 'inactive_users':
-                    time_ago_str = format_relative_time(u.get('_parsed_last_seen'))
-                    status = "فعال"
-                    try:
-                        if 'remaining_days' in u and u['remaining_days'] is not None and int(u['remaining_days']) < 0: status = "منقضی"
-                        elif 'expire' in u and u['expire'] and u['expire'] > 0 and u['expire'] < datetime.now().timestamp(): status = "منقضی"
-                    except: pass
-                    line = f"• {name_esc}{LRM} \| {RLM}{escape_markdown(time_ago_str)} {RLM}\| {RLM}{escape_markdown(status)}"
-                    items.append(line)
-
-                elif list_type == 'never_connected':
-                    limit_gb = u.get('_limit_bytes', 0) / (1024**3)
-                    limit_str = f"{limit_gb:.0f} GB" if limit_gb.is_integer() else f"{limit_gb:.1f} GB"
-                    days_str = "نامحدود"
-                    try:
-                        if 'package_days' in u: days_str = f"{u['package_days']} روز"
-                        elif 'remaining_days' in u and u['remaining_days'] is not None: days_str = f"{int(u['remaining_days'])} روز"
-                    except: pass
-                    line = f"• {name_esc}{LRM} \| {escape_markdown(limit_str)} \| {RLM}{escape_markdown(days_str)}"
-                    items.append(line)
-
-                else: # Online users & others
+                # ------------------------------------------
+                # ۱. فرمت آنلاین‌ها (Online Users)
+                # ساختار: نام (لینک) | مصرف امروز | روزهای مانده
+                # ------------------------------------------
+                if list_type == 'online_users':
+                    # الف) مصرف امروز
                     if ident and ident in daily_usage_map:
                         final_usage_bytes = daily_usage_map[ident]
                     else:
-                        final_usage_bytes = u.get('_used_bytes', 0)
+                        final_usage_bytes = u.get('_used_bytes', 0) # اگر مصرف امروز نبود، کل را نشان بده
                     usage_str = format_usage(final_usage_bytes / (1024**3))
-                    
+
+                    # ب) روزهای مانده
                     days_str = "Unlimited"
                     try:
                         if 'remaining_days' in u and u['remaining_days'] is not None:
@@ -506,8 +506,62 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                         elif 'package_days' in u and not u.get('expire'):
                              days_str = f"{u['package_days']} days"
                     except: pass
-                    line = f"• {name_esc}{LRM} \| {escape_markdown(usage_str)} \| {escape_markdown(days_str)}"
+                    
+                    # خط نهایی: نام لینک‌دار | مصرف | روز
+                    line = f"• {linked_name}{LRM} \| {escape_markdown(usage_str)} \| {escape_markdown(days_str)}"
                     items.append(line)
+
+                # ------------------------------------------
+                # ۲. فرمت فعال (Active Users)
+                # ساختار: نام | تاریخ | درصد
+                # ------------------------------------------
+                elif list_type == 'active_users':
+                    last_seen_date = "نامشخص"
+                    if u.get('_parsed_last_seen'):
+                        last_seen_date = to_shamsi(u['_parsed_last_seen'])
+                    limit = u.get('_limit_bytes', 0)
+                    used = u.get('_used_bytes', 0)
+                    percent = int((used / limit) * 100) if limit > 0 else 0
+                    
+                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(last_seen_date)} {RLM}\| {RLM}{percent}%"
+                    items.append(line)
+
+                # ------------------------------------------
+                # ۳. فرمت غیرفعال (Inactive Users)
+                # ساختار: نام | زمان نسبی | وضعیت
+                # ------------------------------------------
+                elif list_type == 'inactive_users':
+                    time_ago_str = format_relative_time(u.get('_parsed_last_seen'))
+                    status = "فعال"
+                    try:
+                        if 'remaining_days' in u and u['remaining_days'] is not None and int(u['remaining_days']) < 0: status = "منقضی"
+                        elif 'expire' in u and u['expire'] and u['expire'] > 0 and u['expire'] < datetime.now().timestamp(): status = "منقضی"
+                    except: pass
+                    
+                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(time_ago_str)} {RLM}\| {RLM}{escape_markdown(status)}"
+                    items.append(line)
+
+                # ------------------------------------------
+                # ۴. فرمت هرگز متصل نشده (Never Connected)
+                # ساختار: نام | حجم کل | اعتبار زمانی
+                # ------------------------------------------
+                elif list_type == 'never_connected':
+                    limit_gb = u.get('_limit_bytes', 0) / (1024**3)
+                    limit_str = f"{limit_gb:.0f} GB" if limit_gb.is_integer() else f"{limit_gb:.1f} GB"
+                    days_str = "نامحدود"
+                    try:
+                        if 'package_days' in u: days_str = f"{u['package_days']} روز"
+                        elif 'remaining_days' in u and u['remaining_days'] is not None: days_str = f"{int(u['remaining_days'])} روز"
+                    except: pass
+                    
+                    line = f"• {linked_name}{LRM} \| {escape_markdown(limit_str)} \| {RLM}{escape_markdown(days_str)}"
+                    items.append(line)
+                
+                # ------------------------------------------
+                # پیش‌فرض
+                # ------------------------------------------
+                else:
+                    items.append(f"• {linked_name}")
 
         # =========================================================
         # سایر لیست‌ها (Local DB)
@@ -527,7 +581,9 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
                 for user in result.scalars():
                     u_name = user.first_name or "بدون نام"
-                    items.append(f"• {escape_markdown(u_name)}{LRM} \(`{user.user_id}`\)")
+                    # لینک کردن نام در لیست‌های دیتابیسی هم
+                    u_link = f"[{escape_markdown(u_name)}](tg://user?id={user.user_id})"
+                    items.append(f"• {u_link}{LRM} \(`{user.user_id}`\)")
             else:
                  items.append(escape_markdown("⚠️ نوع گزارش نامعتبر است."))
 
@@ -562,7 +618,9 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
     else: back_cb = "admin:reports_menu"
 
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
-    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2')
+    
+    # نکته: برای اینکه لینک‌ها کار کنند، حتماً disable_web_page_preview=True باشد تا پیام شلوغ نشود
+    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2', disable_web_page_preview=True)
 
 # ---------------------------------------------------------
 # Missing / Placeholder Handlers
