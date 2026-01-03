@@ -3,11 +3,11 @@
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select, func, and_, or_, String
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func, and_, or_, String, desc
+from sqlalchemy.orm import Session, selectinload
 
 # ایمپورت‌های پروژه شما
-from bot.db.base import User, UserUUID, UsageSnapshot, Panel
+from bot.db.base import User, UserUUID, UsageSnapshot, Panel, WalletTransaction, ClientUserAgent
 from bot.db import queries
 from bot.utils.date_helpers import to_shamsi, format_relative_time, days_until_next_birthday
 from bot.utils.formatters import escape_markdown
@@ -330,3 +330,90 @@ class BotUsersStrategy(ReportStrategy):
             items.append(f"• {link}{LRM} \(`{user.user_id}`\)")
             
         return items, total_count, f"👥 *{escape_markdown('کل کاربران ربات')}*"
+
+class WalletBalancesStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        stmt = select(User).where(User.wallet_balance > 0).order_by(desc(User.wallet_balance))
+        
+        total_stmt = select(func.sum(User.wallet_balance)).where(User.wallet_balance > 0)
+        total_balance = await session.scalar(total_stmt) or 0
+        
+        count_stmt = select(func.count(User.user_id)).where(User.wallet_balance > 0)
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(stmt.offset(offset).limit(limit))
+        users = result.scalars().all()
+        
+        items = []
+        start_index = offset + 1
+        for idx, user in enumerate(users, start=start_index):
+            name = escape_markdown(user.first_name or "Unknown")
+            balance = escape_markdown(f"{int(user.wallet_balance):,}")
+            
+            line = f"{idx}\. {name} \(`{user.user_id}`\): `{balance}` تومان"
+            items.append(line)
+            
+        header_amount = escape_markdown(f"{int(total_balance):,}")
+        header = f"💰 *موجودی کیف پول کاربران \| مجموع کل: {header_amount} تومان*"
+        return items, total_count, header
+
+class PaymentHistoryStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        stmt = select(WalletTransaction).order_by(desc(WalletTransaction.transaction_date))
+        
+        count_stmt = select(func.count(WalletTransaction.id))
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(
+            stmt.options(selectinload(WalletTransaction.user))
+            .offset(offset).limit(limit)
+        )
+        txs = result.scalars().all()
+        
+        items = []
+        start_index = offset + 1
+        for idx, tx in enumerate(txs, start=start_index):
+            u_name = escape_markdown(tx.user.first_name if (tx.user and tx.user.first_name) else str(tx.user_id))
+            
+            raw_date = to_shamsi(tx.transaction_date)
+            date_str = escape_markdown(str(raw_date))
+            
+            line = f"{idx}\. {u_name} \(💳 {date_str}\)"
+            items.append(line)
+            
+        return items, total_count, f"📝 *گزارش تمام پرداخت‌های ثبت‌شده*"
+
+class ConnectedDevicesStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        from bot.db.base import ClientUserAgent, UserUUID
+        
+        stmt = (
+            select(ClientUserAgent, UserUUID.name)
+            .join(UserUUID, ClientUserAgent.uuid_id == UserUUID.id)
+            .order_by(desc(ClientUserAgent.last_seen))
+        )
+        
+        count_stmt = select(func.count(ClientUserAgent.id))
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(stmt.offset(offset).limit(limit))
+        rows = result.all()
+        
+        items = []
+        for row in rows:
+            agent, config_name = row
+            raw_ua = agent.user_agent[:30] + "..." if len(agent.user_agent) > 30 else agent.user_agent
+            ua_clean = escape_markdown(raw_ua)
+            conf_clean = escape_markdown(config_name)
+            time_ago = escape_markdown(format_relative_time(agent.last_seen))
+            items.append(f"• `{conf_clean}`: {ua_clean} \({time_ago}\)")
+            
+        return items, total_count, f"📱 *دستگاه‌های متصل اخیر*"
+
+class FeedbackReportStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        text = escape_markdown("🔧 این بخش به زودی تکمیل می‌شود.")
+        
+        items = [text]
+        total_count = 1
+        return items, total_count, f"🗣 *بازخورد کاربران*"

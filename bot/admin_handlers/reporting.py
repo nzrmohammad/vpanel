@@ -24,6 +24,21 @@ from bot.utils.date_helpers import to_shamsi, format_relative_time, days_until_n
 from bot.utils.network import _safe_edit
 from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage, format_currency
 from bot.services.panels import PanelFactory
+from bot.services.report_strategies import (
+    ReportStrategy,
+    OnlineUsersStrategy,
+    ActiveUsersStrategy,
+    InactiveUsersStrategy,
+    NeverConnectedStrategy,
+    PanelUsersStrategy,
+    BirthdayStrategy,
+    PlanReportStrategy,
+    BotUsersStrategy,
+    WalletBalancesStrategy,
+    PaymentHistoryStrategy,
+    ConnectedDevicesStrategy,
+    FeedbackReportStrategy
+)
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +398,11 @@ REPORT_STRATEGIES = {
     'birthdays': BirthdayStrategy(),
     'by_plan': PlanReportStrategy(),
     'bot_users': BotUsersStrategy(),
-    'payments': PaymentsReportStrategy()
+    'payments': PaymentsReportStrategy(),
+    'payments': PaymentHistoryStrategy(),
+    'balances': WalletBalancesStrategy(),
+    'connected_devices': ConnectedDevicesStrategy(),
+    'feedbacks': FeedbackReportStrategy()
 }
 
 # ---------------------------------------------------------

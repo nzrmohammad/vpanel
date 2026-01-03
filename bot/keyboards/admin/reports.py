@@ -16,14 +16,22 @@ class AdminReportsMenu(BaseMenu):
             panel_buttons.append(self.btn(btn_text, f"admin:panel_report_detail:{p['id']}"))
         if panel_buttons: kb.add(*panel_buttons)
 
+        # دکمه‌های اصلی
         kb.add(
-            self.btn("💳 تراکنش‌های مالی", "admin:list:payments:0"),
+            self.btn("📝 تمام پرداخت‌ها", "admin:list:payments:0"), # متن دکمه اصلاح شد
             self.btn("🤖 کاربران ربات", "admin:list:bot_users:0")
         )
         kb.add(
             self.btn("💰 موجودی کیف‌پول‌ها", "admin:list:balances:0"), 
             self.btn("🎂 تولد کاربران", "admin:list:birthdays")
         )
+        
+        # دکمه‌های جدید درخواستی
+        kb.add(
+            self.btn("📱 دستگاه‌های متصل", "admin:list:connected_devices:0"),
+            self.btn("🗣 بازخورد کاربران", "admin:list:feedbacks:0")
+        )
+
         kb.add(
             self.btn("📊 گزارش بر اساس پلن", "admin:user_analysis_menu"),
             self.btn("💸 گزارش سود و زیان", "admin:financial_report")

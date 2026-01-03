@@ -177,6 +177,10 @@ async def settings_main_panel(call: types.CallbackQuery, params: list):
         types.InlineKeyboardButton("🎁 جوایز", callback_data="admin:sys_conf:list:gift")
     )
 
+    markup.add(
+        types.InlineKeyboardButton("📊 گزارش‌گیری", callback_data="admin:sys_conf:list:reporting")
+    )
+
     markup.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
     
     text = (

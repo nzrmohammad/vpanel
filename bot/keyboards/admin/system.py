@@ -81,24 +81,34 @@ class AdminSystemMenu(BaseMenu):
         kb.add(self.btn("🔙 بازگشت", "admin:group_actions_menu"))
         return kb
 
-    async def broadcast_target_menu(self) -> types.InlineKeyboardMarkup:
-        kb = self.create_markup(row_width=2)
+    async def broadcast_target_menu(self, counts=None):
+        if counts is None: counts = {}
+        
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        
+        c_online = counts.get('online', 0)
+        c_active = counts.get('active_1', 0)
+        c_inactive7 = counts.get('inactive_7', 0)
+        c_inactive0 = counts.get('inactive_0', 0)
+        c_all = counts.get('all', 0)
+
         kb.add(
-            self.btn("📡 آنلاین (۲۴س)", "admin:broadcast_target:online"),
-            self.btn("✅ فعال (دارای سرویس)", "admin:broadcast_target:active_1")
+            types.InlineKeyboardButton(f"🟢 آنلاین در ۳ دقیقه اخیر ({c_online})", callback_data="admin:broadcast_target:online"),
+            types.InlineKeyboardButton(f"✅ فعال در ۲۴ ساعت اخیر ({c_active})", callback_data="admin:broadcast_target:active_1")
         )
         kb.add(
-            self.btn("⏳ غیرفعال (۷ روز)", "admin:broadcast_target:inactive_7"),
-            self.btn("🚫 هرگز متصل نشده", "admin:broadcast_target:inactive_0")
+            types.InlineKeyboardButton(f"⚠️ غیرفعال در ۷ روز گذشته ({c_inactive7})", callback_data="admin:broadcast_target:inactive_7"),
+            types.InlineKeyboardButton(f"🚫 هرگز متصل نشده ({c_inactive0})", callback_data="admin:broadcast_target:inactive_0")
         )
-        kb.add(self.btn("👥 همه کاربران", "admin:broadcast_target:all"))
-        kb.add(self.btn("🔙 لغو", "admin:panel"))
+        kb.add(types.InlineKeyboardButton(f"📣 همه کاربران ربات ({c_all})", callback_data="admin:broadcast_target:all"))
+        kb.add(types.InlineKeyboardButton("🔙 بازگشت به پنل مدیریت", callback_data="admin:panel"))
+        
         return kb
 
     async def confirm_broadcast_menu(self) -> types.InlineKeyboardMarkup:
         kb = self.create_markup(row_width=2)
         kb.add(
-            self.btn("✅ بله، ارسال شود", "admin:broadcast_confirm"),
-            self.btn("❌ خیر، لغو", "admin:panel")
+            self.btn("❌ خیر، لغو", "admin:panel"),
+            self.btn("✅ بله، ارسال شود", "admin:broadcast_confirm")
         )
         return kb
