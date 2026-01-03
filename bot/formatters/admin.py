@@ -1,6 +1,7 @@
 # bot/formatters/admin.py
 
 from bot.utils.formatters import format_currency, format_date, get_status_emoji
+from bot.utils.date_helpers import to_shamsi, days_until_next_birthday
 from bot.config import EMOJIS
 
 class AdminFormatter:
@@ -73,6 +74,44 @@ class AdminFormatter:
             extra_info = f"{usage:.1f}GB"
 
         return f"{index}. {status_icon} <b>{name}</b> | {extra_info}"
+
+    @staticmethod
+    def birthdays_list(users, page: int, total_count: int, page_size: int = 15) -> str:
+        """
+        لیست تولد کاربران (فرمت HTML)
+        """
+        title = "🎂 لیست تولد کاربران (مرتب شده بر اساس ماه)"
+        if not users:
+            return f"<b>{title}</b>\n\nهیچ کاربری تاریخ تولد خود را ثبت نکرده است."
+        
+        total_pages = (total_count + page_size - 1) // page_size
+        header = f"<b>{title}</b>\n(صفحه {page + 1} از {total_pages} | کل: {total_count})\n➖➖➖➖➖➖➖➖"
+        
+        lines = [header]
+        
+        for user in users:
+            # دریافت نام
+            name = AdminFormatter._get_val(user, 'first_name') or AdminFormatter._get_val(user, 'name') or "بی‌نام"
+            # ایمن‌سازی نام برای HTML
+            name = str(name).replace('<', '&lt;').replace('>', '&gt;')
+            
+            # تاریخ تولد
+            birthday = AdminFormatter._get_val(user, 'birthday')
+            date_str = to_shamsi(birthday)
+            
+            # روزهای باقیمانده
+            days = days_until_next_birthday(birthday)
+            if days == 0:
+                days_str = "امروز! 🎉"
+            elif days is not None:
+                days_str = f"{days} روز"
+            else:
+                days_str = "نامشخص"
+            
+            # ساخت خط: 🎂 Name | Date | Days
+            lines.append(f"🎂 <b>{name}</b> | {date_str} | {days_str}")
+            
+        return "\n".join(lines)
 
     @staticmethod
     def system_stats(stats: dict) -> str:

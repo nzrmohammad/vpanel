@@ -296,19 +296,66 @@ async def handle_show_scheduled_tasks(call: types.CallbackQuery, params: list = 
     
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
+async def _get_birthdays_report(session, offset, page_size):
+    """
+    تابع کمکی برای تولید دیتای گزارش تولد
+    خروجی: (لیست آیتم‌ها، تعداد کل، عنوان)
+    """
+    # 1. ایمپورت تابع محاسبه روز (اگر بالای فایل نیست اینجا ایمپورت کنید)
+    from bot.utils.date_helpers import days_until_next_birthday, to_shamsi
+
+    title = f"🎂 *{escape_markdown('لیست تولد کاربران (مرتب شده)')}*"
+    
+    # 2. دریافت کاربران دارای تاریخ تولد
+    stmt = select(User).where(User.birthday.isnot(None))
+    result = await session.execute(stmt)
+    users_with_bd = result.scalars().all()
+    
+    # 3. مرتب‌سازی بر اساس نزدیکی تولد
+    # (کاربرانی که تولدشان نزدیک‌تر است اول لیست می‌آیند)
+    users_sorted = sorted(users_with_bd, key=lambda u: days_until_next_birthday(u.birthday) if u.birthday else 999)
+    
+    total_count = len(users_sorted)
+    
+    # 4. برش لیست برای صفحه‌بندی (Pagination)
+    current_page_users = users_sorted[offset : offset + page_size]
+    
+    items = []
+    for user in current_page_users:
+        raw_name = user.first_name or 'ناشناس'
+        clean_name = raw_name.replace('<', '').replace('>', '').replace('|', '')
+        name = escape_markdown(clean_name)
+        
+        shamsi_str = to_shamsi(user.birthday)
+        rem_days = days_until_next_birthday(user.birthday)
+        
+        if rem_days == 0: 
+            days_str = "امروز! 🎉"
+        elif rem_days is not None: 
+            days_str = f"{rem_days} روز"
+        else: 
+            days_str = "نامشخص"
+        
+        # 🎂 Name | Date | Days
+        line = f"🎂 {name} \| {shamsi_str} \| {escape_markdown(days_str)}"
+        items.append(line)
+        
+    return items, total_count, title
+
 # ---------------------------------------------------------
 # هندلر لیست‌های عمومی و داینامیک (Paginated Lists)
 # ---------------------------------------------------------
 LRM = "\u200e"  # Left-to-Right Mark (برای بعد از نام انگلیسی)
 RLM = "\u200f"  # Right-to-Left Mark (برای قبل از متن فارسی)
 
+# bot/admin_handlers/reporting.py
+
+# ... (imports remain the same)
+
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
-    نسخه نهایی:
-    1. نام کاربر لینک شده به پروفایل (tg://user?id=...)
-    2. نمایش مصرف امروز (Daily Usage)
-    3. نمایش روزهای باقی‌مانده
-    4. پشتیبانی از تمام پنل‌ها (Dynamic Usage)
+    نسخه اصلاح شده برای نمایش لیست کاربران آنلاین با فرمت:
+    نام (لینک شده) | مصرف امروز | روزهای باقیمانده
     """
     list_type = params[0]
     
@@ -405,6 +452,7 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 
                 if idents:
                     # دریافت اطلاعات کاربران از دیتابیس (شامل user_id تلگرام)
+                    # اصلاح کوئری برای اطمینان از مپ شدن صحیح
                     uuid_stmt = select(UserUUID).where(
                         and_(
                             UserUUID.allowed_panels.any(id=target_panel_id),
@@ -415,16 +463,19 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                     
                     if db_users:
                         user_ids_list = []
-                        user_map = {} # برای مپ کردن شناسه پنل به شناسه دیتابیس
+                        user_map = {} # برای مپ کردن شناسه پنل به شناسه دیتابیس (برای محاسبه مصرف)
 
                         for du in db_users:
                             # ذخیره نگاشت برای پیدا کردن Telegram ID
-                            if du.uuid:
-                                telegram_id_map[str(du.uuid)] = du.user_id
-                                user_map[str(du.uuid)] = du.id
-                            if du.name:
-                                telegram_id_map[du.name] = du.user_id
-                                user_map[du.name] = du.id
+                            if du.user_id: # فقط اگر به اکانت تلگرام وصل بود
+                                if du.uuid:
+                                    telegram_id_map[str(du.uuid)] = du.user_id
+                                if du.name:
+                                    telegram_id_map[du.name] = du.user_id
+                            
+                            # مپ کردن برای محاسبه مصرف
+                            if du.uuid: user_map[str(du.uuid)] = du.id
+                            if du.name: user_map[du.name] = du.id
                             
                             user_ids_list.append(du.id)
 
@@ -468,7 +519,8 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
             # --- فرمت‌بندی خروجی ---
             for u in current_page_users:
                 raw_name = u.get('username') or u.get('name') or "No Name"
-                clean_name = raw_name.replace('<', '').replace('>', '')
+                # حذف کاراکترهای مزاحم از نام
+                clean_name = raw_name.replace('<', '').replace('>', '').replace('[', '').replace(']', '')
                 name_esc = escape_markdown(clean_name)
                 
                 ident = u.get('uuid') or u.get('username')
@@ -481,34 +533,66 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                     linked_name = f"[{name_esc}](tg://user?id={tg_id})"
 
                 # ------------------------------------------
-                # ۱. فرمت آنلاین‌ها (Online Users)
-                # ساختار: نام (لینک) | مصرف امروز | روزهای مانده
+                # ۱. فرمت آنلاین‌ها (Online Users) - اصلاح شده
+                # ساختار درخواستی: نام (لینک) | مصرف امروز | روزهای مانده
                 # ------------------------------------------
                 if list_type == 'online_users':
-                    # الف) مصرف امروز
+                    # الف) محاسبه مصرف امروز
                     if ident and ident in daily_usage_map:
                         final_usage_bytes = daily_usage_map[ident]
                     else:
-                        final_usage_bytes = u.get('_used_bytes', 0) # اگر مصرف امروز نبود، کل را نشان بده
-                    usage_str = format_usage(final_usage_bytes / (1024**3))
+                        # اگر دیتای امروز نبود، صفر نشان بده یا مصرف کل (اینجا صفر منطقی‌تره برای "مصرف امروز")
+                        final_usage_bytes = 0 
+                    
+                    usage_val_gb = final_usage_bytes / (1024**3)
+                    # فرمت‌بندی عدد به صورت کوتاه
+                    if usage_val_gb == 0:
+                        usage_str = "0 GB"
+                    elif usage_val_gb < 0.01: # برای مقادیر خیلی کم (زیر ۱۰ مگابایت)
+                         usage_str = f"{usage_val_gb * 1024:.0f} MB"
+                    else:
+                         usage_str = f"{usage_val_gb:.2f} GB"
 
                     # ب) روزهای مانده
-                    days_str = "Unlimited"
+                    days_str = "Unlimited" # پیش‌فرض
                     try:
+                        # 1. اگر پنل خودش روزهای باقیمانده را می‌دهد (مثل برخی نسخه‌های هیدیفای)
                         if 'remaining_days' in u and u['remaining_days'] is not None:
                              days = int(u['remaining_days'])
                              days_str = f"{days} days" if days >= 0 else "Expired"
+                        
+                        # 2. محاسبه بر اساس تاریخ انقضا (استانداردترین روش)
                         elif 'expire' in u and u['expire']:
                             expire_ts = float(u['expire'])
                             if expire_ts > 0:
-                                rem = (expire_ts - datetime.now().timestamp()) / 86400
-                                days_str = f"{int(rem)} days" if rem > 0 else "Expired"
-                        elif 'package_days' in u and not u.get('expire'):
-                             days_str = f"{u['package_days']} days"
-                    except: pass
+                                diff_seconds = expire_ts - datetime.now().timestamp()
+                                rem_days = int(diff_seconds / 86400)
+                                days_str = f"{rem_days} days" if rem_days >= 0 else "Expired"
+                            else:
+                                days_str = "Unlimited" # اگر expire صفر باشد یعنی نامحدود
+                        
+                        # 3. اگر انقضا نداشتیم اما تاریخ شروع و مدت پکیج داشتیم (محاسبه دستی)
+                        elif 'start_date' in u and u['start_date'] and 'package_days' in u:
+                             # تبدیل start_date به timestamp اگر رشته باشد
+                             start_ts = 0
+                             if isinstance(u['start_date'], str):
+                                 try: start_ts = datetime.fromisoformat(u['start_date']).timestamp()
+                                 except: pass
+                             elif isinstance(u['start_date'], (int, float)):
+                                 start_ts = u['start_date']
+                             
+                             if start_ts > 0:
+                                 expire_calc = start_ts + (u['package_days'] * 86400)
+                                 rem_days = int((expire_calc - datetime.now().timestamp()) / 86400)
+                                 days_str = f"{rem_days} days" if rem_days >= 0 else "Expired"
+
+                        # نکته: خطی که قبلاً package_days را مستقیم نشان می‌داد حذف شد تا کل روزها نمایش داده نشود.
+                    except: 
+                        days_str = "?"
                     
                     # خط نهایی: نام لینک‌دار | مصرف | روز
-                    line = f"• {linked_name}{LRM} \| {escape_markdown(usage_str)} \| {escape_markdown(days_str)}"
+                    # استفاده از ` ` برای اعداد جهت زیبایی بیشتر
+                    line = f"• {linked_name} \| `{escape_markdown(usage_str)}` \| `{escape_markdown(days_str)}`"
                     items.append(line)
 
                 # ------------------------------------------
@@ -523,7 +607,7 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                     used = u.get('_used_bytes', 0)
                     percent = int((used / limit) * 100) if limit > 0 else 0
                     
-                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(last_seen_date)} {RLM}\| {RLM}{percent}%"
+                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(last_seen_date)} {RLM}\| {RLM}`{percent}%`"
                     items.append(line)
 
                 # ------------------------------------------
@@ -544,24 +628,46 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 # ------------------------------------------
                 # ۴. فرمت هرگز متصل نشده (Never Connected)
                 # ساختار: نام | حجم کل | اعتبار زمانی
-                # ------------------------------------------
                 elif list_type == 'never_connected':
+                    # محاسبه حجم کل
                     limit_gb = u.get('_limit_bytes', 0) / (1024**3)
-                    limit_str = f"{limit_gb:.0f} GB" if limit_gb.is_integer() else f"{limit_gb:.1f} GB"
+                    
+                    # فرمت‌بندی عدد حجم کل (بدون اعشار اگر عدد صحیح باشد)
+                    if limit_gb.is_integer():
+                        limit_str = f"{limit_gb:.0f}GB"
+                    else:
+                        limit_str = f"{limit_gb:.1f}GB"
+                    
+                    # ساخت رشته نمایش: "0GB / 30GB"
+                    # اینطوری دقیق مشخص میشه که 0 گیگ مصرف کرده از 30 گیگ
+                    display_str = f"0GB/{limit_str}"
+
                     days_str = "نامحدود"
                     try:
-                        if 'package_days' in u: days_str = f"{u['package_days']} روز"
-                        elif 'remaining_days' in u and u['remaining_days'] is not None: days_str = f"{int(u['remaining_days'])} روز"
+                        # اولویت با روزهای باقیمانده واقعی (اگر پنل یا دیتابیس داده باشد)
+                        if 'remaining_days' in u and u['remaining_days'] is not None:
+                             days_str = f"{int(u['remaining_days'])} روز"
+                        
+                        # محاسبه بر اساس تاریخ انقضا
+                        elif 'expire' in u and u['expire']:
+                            expire_ts = float(u['expire'])
+                            if expire_ts > 0:
+                                diff = expire_ts - datetime.now().timestamp()
+                                rem_days = int(diff / 86400)
+                                days_str = f"{rem_days} روز" if rem_days >= 0 else "منقضی"
+                        
+                        # اگر هیچکدام نبود و package_days داشتیم
+                        elif 'package_days' in u: 
+                            days_str = f"{u['package_days']} روز"
+                    
                     except: pass
                     
-                    line = f"• {linked_name}{LRM} \| {escape_markdown(limit_str)} \| {RLM}{escape_markdown(days_str)}"
+                    # نمایش نهایی داخل Code Block برای زیبایی
+                    line = f"• {linked_name}{LRM} \| `{escape_markdown(display_str)}` \| {RLM}`{escape_markdown(days_str)}`"
                     items.append(line)
-                
-                # ------------------------------------------
-                # پیش‌فرض
-                # ------------------------------------------
-                else:
-                    items.append(f"• {linked_name}")
+                elif list_type == 'birthdays':
+                    items, total_count, title = await _get_birthdays_report(session, offset, PAGE_SIZE)
+
 
         # =========================================================
         # سایر لیست‌ها (Local DB)
@@ -619,7 +725,7 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
 
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
     
-    # نکته: برای اینکه لینک‌ها کار کنند، حتماً disable_web_page_preview=True باشد تا پیام شلوغ نشود
+    # نکته: disable_web_page_preview=True برای جلوگیری از نمایش پیش‌نمایش پروفایل‌ها
     await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2', disable_web_page_preview=True)
 
 # ---------------------------------------------------------

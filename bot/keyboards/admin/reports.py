@@ -22,7 +22,7 @@ class AdminReportsMenu(BaseMenu):
         )
         kb.add(
             self.btn("💰 موجودی کیف‌پول‌ها", "admin:list:balances:0"), 
-            self.btn("🏆 لیدربرد امتیازات", "admin:list:leaderboard:0")
+            self.btn("🎂 تولد کاربران", "admin:list:birthdays")
         )
         kb.add(
             self.btn("📊 گزارش بر اساس پلن", "admin:user_analysis_menu"),
