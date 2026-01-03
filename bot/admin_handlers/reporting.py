@@ -3,11 +3,14 @@
 import logging
 import os
 import functools
-from datetime import datetime, timedelta, timezone
 import asyncio
 import aiofiles
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+
 from telebot import types
 from sqlalchemy import select, func, and_, or_, desc, distinct, String
+from sqlalchemy.orm import selectinload
 
 from bot.bot_instance import bot
 from bot.keyboards.admin import admin_keyboard as admin_menu
@@ -17,9 +20,9 @@ from bot.db.base import (
     Panel, SystemConfig, UsageSnapshot
 )
 from bot.db import queries
-from bot.utils.date_helpers import to_shamsi, format_relative_time
+from bot.utils.date_helpers import to_shamsi, format_relative_time, days_until_next_birthday
 from bot.utils.network import _safe_edit
-from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage
+from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage, format_currency
 from bot.services.panels import PanelFactory
 
 logger = logging.getLogger(__name__)
@@ -27,87 +30,373 @@ logger = logging.getLogger(__name__)
 REPORT_DIR = "reports"
 os.makedirs(REPORT_DIR, exist_ok=True)
 
+LRM = "\u200e"
+RLM = "\u200f"
+
+# ---------------------------------------------------------
+# بخش ۱: استراتژی‌های گزارش (Report Strategies)
+# ---------------------------------------------------------
+
+class ReportStrategy(ABC):
+    """کلاس پایه برای تمام انواع گزارش‌ها"""
+    @abstractmethod
+    async def generate(self, session, params: list, offset: int, limit: int) -> tuple[list, int, str]:
+        """
+        خروجی: (لیست آیتم‌های فرمت شده، تعداد کل، عنوان گزارش)
+        """
+        pass
+
+# --- استراتژی‌های مربوط به پنل ---
+
+class BasePanelStrategy(ReportStrategy):
+    """کلاس والد برای گزارش‌های پنل جهت جلوگیری از تکرار کد"""
+    
+    async def _fetch_and_parse_users(self, session, panel_id):
+        panel_obj = await session.get(Panel, panel_id)
+        if not panel_obj:
+            raise ValueError("Panel not found")
+
+        try:
+            panel_service = await PanelFactory.get_panel(panel_obj.name)
+            all_users = await panel_service.get_all_users()
+        except Exception as e:
+            logger.error(f"Failed to fetch users from panel {panel_obj.name}: {e}")
+            return [], panel_obj
+        
+        parsed_users = []
+        for u in all_users:
+            last_seen_raw = u.get('online_at') or u.get('last_online') or u.get('last_connection')
+            last_seen_dt = None
+            if last_seen_raw:
+                try:
+                    if isinstance(last_seen_raw, (int, float)):
+                        last_seen_dt = datetime.utcfromtimestamp(float(last_seen_raw))
+                    elif isinstance(last_seen_raw, str):
+                        clean_time = last_seen_raw.replace('Z', '').split('.')[0]
+                        last_seen_dt = datetime.fromisoformat(clean_time)
+                except: pass
+            
+            u['_parsed_last_seen'] = last_seen_dt
+            u['_used_bytes'] = u.get('used_traffic') or (u.get('current_usage_GB', 0) * 1024**3)
+            u['_limit_bytes'] = u.get('transfer_enable') or (u.get('usage_limit_GB', 0) * 1024**3)
+            parsed_users.append(u)
+            
+        return parsed_users, panel_obj
+
+    async def _enrich_with_db_info(self, session, users_list, panel_id):
+        idents = [u.get('uuid') or u.get('username') for u in users_list]
+        idents = [i for i in idents if i]
+        
+        telegram_map = {}
+        db_id_map = {}
+        
+        if idents:
+            stmt = select(UserUUID).where(
+                and_(
+                    UserUUID.allowed_panels.any(id=panel_id),
+                    or_(UserUUID.uuid.cast(String).in_(idents), UserUUID.name.in_(idents))
+                )
+            )
+            db_users = (await session.execute(stmt)).scalars().all()
+            for du in db_users:
+                key_uuid = str(du.uuid) if du.uuid else None
+                key_name = du.name
+                
+                if du.user_id:
+                    if key_uuid: telegram_map[key_uuid] = du.user_id
+                    if key_name: telegram_map[key_name] = du.user_id
+                
+                if key_uuid: db_id_map[key_uuid] = du.id
+                if key_name: db_id_map[key_name] = du.id
+                
+        return telegram_map, db_id_map
+
+    def _format_user_line(self, user, display_name, telegram_id=None):
+        clean_name = display_name.replace('<', '').replace('>', '').replace('[', '').replace(']', '')
+        name_esc = escape_markdown(clean_name)
+        if telegram_id:
+            return f"[{name_esc}](tg://user?id={telegram_id})"
+        return name_esc
+
+class OnlineUsersStrategy(BasePanelStrategy):
+    async def generate(self, session, params, offset, limit):
+        panel_id = int(params[1])
+        users, panel_obj = await self._fetch_and_parse_users(session, panel_id)
+        
+        # فیلتر آنلاین‌ها (۳ دقیقه اخیر)
+        window = timedelta(minutes=3)
+        now_utc = datetime.utcnow()
+        filtered = [u for u in users if u['_parsed_last_seen'] and (now_utc - u['_parsed_last_seen']) < window]
+        
+        tg_map, db_id_map = await self._enrich_with_db_info(session, filtered, panel_id)
+        
+        # محاسبه مصرف روزانه
+        daily_usage = {}
+        if db_id_map:
+            start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            snap_stmt = select(UsageSnapshot).where(
+                and_(
+                    UsageSnapshot.uuid_id.in_(list(db_id_map.values())),
+                    UsageSnapshot.taken_at >= start_of_day
+                )
+            )
+            snapshots = (await session.execute(snap_stmt)).scalars().all()
+            
+            first_usage_today = {}
+            for snap in snapshots:
+                if snap.uuid_id not in first_usage_today:
+                    total_gb = (snap.hiddify_usage_gb or 0) + (snap.marzban_usage_gb or 0)
+                    first_usage_today[snap.uuid_id] = total_gb * (1024**3)
+
+            for u in filtered:
+                ident = u.get('uuid') or u.get('username')
+                if ident and ident in db_id_map:
+                    db_id = db_id_map[ident]
+                    if db_id in first_usage_today:
+                        daily = u['_used_bytes'] - first_usage_today[db_id]
+                        daily_usage[ident] = max(0, daily)
+
+        total_count = len(filtered)
+        paged_users = filtered[offset : offset + limit]
+        
+        items = []
+        for u in paged_users:
+            ident = u.get('uuid') or u.get('username')
+            name = u.get('username') or u.get('name') or "No Name"
+            link = self._format_user_line(u, name, tg_map.get(ident))
+            
+            usage_bytes = daily_usage.get(ident, 0)
+            usage_str = f"{usage_bytes / (1024**3):.2f} GB" if usage_bytes >= 0.01 * (1024**3) else f"{usage_bytes / (1024**2):.0f} MB"
+            
+            days_str = "?"
+            try:
+                if 'remaining_days' in u and u['remaining_days'] is not None:
+                    days_str = f"{int(u['remaining_days'])}d"
+                elif 'expire' in u and u['expire']:
+                    ts = float(u['expire'])
+                    if ts > 0:
+                        rem = int((ts - datetime.now().timestamp()) / 86400)
+                        days_str = f"{rem}d" if rem >= 0 else "Exp"
+                    else:
+                        days_str = "∞"
+            except: pass
+
+            items.append(f"• {link} \| `{escape_markdown(usage_str)}` \| `{escape_markdown(days_str)}`")
+
+        return items, total_count, f"⚡️ *{escape_markdown(f'کاربران آنلاین ({panel_obj.name})')}*"
+
+class ActiveUsersStrategy(BasePanelStrategy):
+    async def generate(self, session, params, offset, limit):
+        panel_id = int(params[1])
+        users, panel_obj = await self._fetch_and_parse_users(session, panel_id)
+        
+        window = timedelta(hours=24)
+        now_utc = datetime.utcnow()
+        filtered = [u for u in users if u['_parsed_last_seen'] and (now_utc - u['_parsed_last_seen']) < window]
+        
+        tg_map, _ = await self._enrich_with_db_info(session, filtered, panel_id)
+        
+        total_count = len(filtered)
+        paged = filtered[offset : offset + limit]
+        items = []
+        
+        for u in paged:
+            ident = u.get('uuid') or u.get('username')
+            name = u.get('username') or u.get('name') or "No Name"
+            link = self._format_user_line(u, name, tg_map.get(ident))
+            
+            last_seen = to_shamsi(u['_parsed_last_seen'])
+            percent = int((u['_used_bytes'] / u['_limit_bytes']) * 100) if u['_limit_bytes'] > 0 else 0
+            
+            items.append(f"• {link}{LRM} \| {RLM}{escape_markdown(last_seen)} {RLM}\| {RLM}`{percent}%`")
+            
+        return items, total_count, f"✅ *{escape_markdown(f'کاربران فعال ({panel_obj.name})')}*"
+
+class InactiveUsersStrategy(BasePanelStrategy):
+    async def generate(self, session, params, offset, limit):
+        panel_id = int(params[1])
+        users, panel_obj = await self._fetch_and_parse_users(session, panel_id)
+        
+        now = datetime.utcnow()
+        filtered = []
+        for u in users:
+            dt = u['_parsed_last_seen']
+            if dt:
+                diff = now - dt
+                if timedelta(days=1) <= diff < timedelta(days=7):
+                    filtered.append(u)
+
+        tg_map, _ = await self._enrich_with_db_info(session, filtered, panel_id)
+        total_count = len(filtered)
+        paged = filtered[offset : offset + limit]
+        items = []
+
+        for u in paged:
+            ident = u.get('uuid') or u.get('username')
+            name = u.get('username') or u.get('name') or "No Name"
+            link = self._format_user_line(u, name, tg_map.get(ident))
+            time_ago = format_relative_time(u['_parsed_last_seen'])
+            
+            items.append(f"• {link}{LRM} \| {RLM}{escape_markdown(time_ago)}")
+            
+        return items, total_count, f"⏳ *{escape_markdown(f'کاربران غیرفعال ({panel_obj.name})')}*"
+
+class NeverConnectedStrategy(BasePanelStrategy):
+    async def generate(self, session, params, offset, limit):
+        panel_id = int(params[1])
+        users, panel_obj = await self._fetch_and_parse_users(session, panel_id)
+        
+        filtered = [u for u in users if not u['_parsed_last_seen'] or u['_used_bytes'] == 0]
+        
+        tg_map, _ = await self._enrich_with_db_info(session, filtered, panel_id)
+        total_count = len(filtered)
+        paged = filtered[offset : offset + limit]
+        items = []
+
+        for u in paged:
+            ident = u.get('uuid') or u.get('username')
+            name = u.get('username') or u.get('name') or "No Name"
+            link = self._format_user_line(u, name, tg_map.get(ident))
+            
+            limit_gb = u.get('_limit_bytes', 0) / (1024**3)
+            limit_str = f"{limit_gb:.0f}GB" if limit_gb.is_integer() else f"{limit_gb:.1f}GB"
+            
+            items.append(f"• {link}{LRM} \| `0/{limit_str}`")
+            
+        return items, total_count, f"🚫 *{escape_markdown(f'هرگز متصل نشده ({panel_obj.name})')}*"
+
+class PanelUsersStrategy(BasePanelStrategy):
+    async def generate(self, session, params, offset, limit):
+        panel_id = int(params[1])
+        users, panel_obj = await self._fetch_and_parse_users(session, panel_id)
+        
+        tg_map, _ = await self._enrich_with_db_info(session, users, panel_id)
+        total_count = len(users)
+        paged = users[offset : offset + limit]
+        items = []
+
+        for u in paged:
+            ident = u.get('uuid') or u.get('username')
+            name = u.get('username') or u.get('name') or "No Name"
+            link = self._format_user_line(u, name, tg_map.get(ident))
+            items.append(f"• {link}")
+            
+        return items, total_count, f"👥 *{escape_markdown(f'همه کاربران پنل {panel_obj.name}')}*"
+
+# --- استراتژی‌های دیتابیس داخلی ---
+
+class BirthdayStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        stmt = select(User).where(User.birthday.isnot(None))
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        
+        # سورت بر اساس نزدیکی تولد
+        users_sorted = sorted(users, key=lambda u: days_until_next_birthday(u.birthday) if u.birthday else 999)
+        total_count = len(users_sorted)
+        paged = users_sorted[offset : offset + limit]
+        
+        items = []
+        for user in paged:
+            name = escape_markdown((user.first_name or 'ناشناس').replace('|', ''))
+            shamsi = to_shamsi(user.birthday)
+            rem = days_until_next_birthday(user.birthday)
+            
+            if rem == 0: days_str = "امروز! 🎉"
+            elif rem is not None: days_str = f"{rem} روز"
+            else: days_str = "نامشخص"
+            
+            items.append(f"🎂 {name} \| {shamsi} \| {escape_markdown(days_str)}")
+            
+        return items, total_count, f"🎂 *{escape_markdown('لیست تولد کاربران') }*"
+
+class PlanReportStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        plan_id = int(params[1])
+        stmt = queries.get_users_by_plan_query(plan_id)
+        
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(stmt.offset(offset).limit(limit))
+        users = result.scalars().all()
+        
+        items = []
+        for user in users:
+            name = escape_markdown(user.first_name or "بدون نام")
+            link = f"[{name}](tg://user?id={user.user_id})"
+            items.append(f"• {link}{LRM} \(`{user.user_id}`\)")
+            
+        return items, total_count, f"📊 *{escape_markdown('گزارش بر اساس پلن')}*"
+
+class BotUsersStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        stmt = select(User).order_by(User.user_id.desc())
+        
+        count_stmt = select(func.count(User.user_id))
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(stmt.offset(offset).limit(limit))
+        users = result.scalars().all()
+        
+        items = []
+        for user in users:
+            name = escape_markdown(user.first_name or "بدون نام")
+            link = f"[{name}](tg://user?id={user.user_id})"
+            items.append(f"• {link}{LRM} \(`{user.user_id}`\)")
+            
+        return items, total_count, f"👥 *{escape_markdown('کل کاربران ربات')}*"
+
+class PaymentsReportStrategy(ReportStrategy):
+    async def generate(self, session, params, offset, limit):
+        stmt = select(WalletTransaction).order_by(WalletTransaction.transaction_date.desc())
+        
+        count_stmt = select(func.count(WalletTransaction.id))
+        total_count = await session.scalar(count_stmt) or 0
+        
+        result = await session.execute(stmt.options(selectinload(WalletTransaction.user)).offset(offset).limit(limit))
+        txs = result.scalars().all()
+        
+        items = []
+        for tx in txs:
+            u_name = tx.user.first_name if tx.user else str(tx.user_id)
+            clean_name = escape_markdown(u_name)
+            amount = f"{int(abs(tx.amount)):,}"
+            date_str = to_shamsi(tx.transaction_date)
+            
+            icon = "🟢" if tx.amount > 0 else "🔴"
+            type_map = {'charge': 'شارژ', 'purchase': 'خرید', 'addon_purchase': 'خرید حجم'}
+            t_type = type_map.get(tx.type, tx.type)
+            
+            # Icon | Name | Type | Amount | Date
+            items.append(f"{icon} {clean_name} \| {t_type} \| `{amount}` \| {date_str}")
+            
+        return items, total_count, f"💰 *{escape_markdown('آخرین تراکنش‌های مالی')}*"
+
+# مپینگ استراتژی‌ها
+REPORT_STRATEGIES = {
+    'online_users': OnlineUsersStrategy(),
+    'active_users': ActiveUsersStrategy(),
+    'inactive_users': InactiveUsersStrategy(),
+    'never_connected': NeverConnectedStrategy(),
+    'panel_users': PanelUsersStrategy(),
+    'birthdays': BirthdayStrategy(),
+    'by_plan': PlanReportStrategy(),
+    'bot_users': BotUsersStrategy(),
+    'payments': PaymentsReportStrategy()
+}
+
 # ---------------------------------------------------------
 # توابع کمکی (Helpers)
 # ---------------------------------------------------------
 
 async def get_report_settings():
-    """
-    دریافت تنظیمات گزارش‌گیری از دیتابیس.
-    """
-    defaults = {
-        "report_page_size": 15,
-        "report_online_window": 3
-    }
-    
+    defaults = {"report_page_size": 15}
     async with db.get_session() as session:
         stmt = select(SystemConfig).where(SystemConfig.key.in_(defaults.keys()))
         results = await session.execute(stmt)
         configs = {row.key: row.value for row in results.scalars()}
-
-    return {
-        key: int(configs.get(key, default_val)) 
-        for key, default_val in defaults.items()
-    }
-
-async def calculate_live_daily_usage(session, user_uuids_map: dict, live_usage_map: dict) -> dict:
-    """
-    محاسبه مصرف روزانه با مقایسه دیتای زنده پنل و اسنپ‌شات اول روز در دیتابیس.
-    
-    :param user_uuids_map: { 'identifier': db_uuid_id }
-    :param live_usage_map: { 'identifier': current_total_bytes }
-    :return: { 'identifier': daily_usage_bytes }
-    """
-    if not user_uuids_map:
-        return {}
-
-    # محاسبه شروع روز به وقت UTC (برای کوئری دیتابیس)
-    # فرض بر این است که اسنپ‌شات‌ها UTC هستند. برای دقت بالاتر می‌توان تایم‌زون تهران را لحاظ کرد.
-    now_utc = datetime.now(timezone.utc)
-    today_midnight = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    uuid_ids = list(user_uuids_map.values())
-    
-    # دریافت آخرین اسنپ‌شات قبل از نیمه‌شب (Baseline)
-    # استفاده از DISTINCT ON مخصوص پستگرس برای سرعت بالا
-    stmt = (
-        select(UsageSnapshot)
-        .distinct(UsageSnapshot.uuid_id)
-        .where(
-            and_(
-                UsageSnapshot.uuid_id.in_(uuid_ids),
-                UsageSnapshot.taken_at < today_midnight
-            )
-        )
-        .order_by(UsageSnapshot.uuid_id, desc(UsageSnapshot.taken_at))
-    )
-    
-    result = await session.execute(stmt)
-    snapshots = result.scalars().all()
-    
-    # ساخت مپ { db_uuid_id : start_of_day_bytes }
-    start_usage_map = {}
-    for snap in snapshots:
-        # تبدیل GB دیتابیس به بایت
-        total_gb = (snap.hiddify_usage_gb or 0) + (snap.marzban_usage_gb or 0)
-        start_usage_map[snap.uuid_id] = total_gb * (1024**3)
-
-    final_daily_usage = {}
-    
-    for identifier, db_id in user_uuids_map.items():
-        current_bytes = live_usage_map.get(identifier, 0)
-        start_bytes = start_usage_map.get(db_id, 0)
-        
-        # محاسبه اختلاف (با در نظر گرفتن ریست شدن احتمالی پنل)
-        if current_bytes >= start_bytes:
-            daily_bytes = current_bytes - start_bytes
-        else:
-            # اگر مصرف فعلی کمتر از شروع روز بود، یعنی پنل ریست شده -> کل مصرف فعلی مال امروز است
-            daily_bytes = current_bytes
-            
-        final_daily_usage[identifier] = daily_bytes
-
-    return final_daily_usage
+    return {key: int(configs.get(key, default_val)) for key, default_val in defaults.items()}
 
 # ---------------------------------------------------------
 # هندلرهای منو (Menu Handlers)
@@ -117,7 +406,6 @@ async def calculate_live_daily_usage(session, user_uuids_map: dict, live_usage_m
 async def handle_reports_menu(call: types.CallbackQuery, params: list = None):
     """منوی اصلی گزارش‌گیری."""
     active_panels = await db.get_active_panels()
-    
     await _safe_edit(
         call.from_user.id,
         call.message.message_id,
@@ -226,6 +514,7 @@ async def handle_financial_report(call: types.CallbackQuery, params: list = None
 @bot.callback_query_handler(func=lambda call: call.data == "admin:financial_details")
 async def handle_financial_details(call: types.CallbackQuery, params: list = None):
     """نمایش لیست تراکنش‌ها."""
+    # ارسال به هندلر عمومی با نوع گزارش payments
     await handle_paginated_list(call, ["payments", "0"])
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin:report_excel")
@@ -239,7 +528,6 @@ async def handle_report_excel(call: types.CallbackQuery):
     
     try:
         async with db.get_session() as session:
-            from sqlalchemy.orm import selectinload
             result = await session.execute(select(User).options(selectinload(User.uuids)))
             users = result.scalars().all()
             
@@ -283,7 +571,6 @@ async def handle_show_scheduled_tasks(call: types.CallbackQuery, params: list = 
         tasks = result.scalars().all()
 
     text = f"⏰ <b>وضعیت کارهای زمان‌بندی شده</b>\n\nتعداد کل: {count}\n\n"
-    
     if tasks:
         for t in tasks:
             text += f"🔹 <code>{t.job_type}</code> | Chat: {t.chat_id}\n"
@@ -293,447 +580,116 @@ async def handle_show_scheduled_tasks(call: types.CallbackQuery, params: list = 
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔄 رفرش", callback_data="admin:scheduled_tasks"))
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:panel"))
-    
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
-async def _get_birthdays_report(session, offset, page_size):
-    """
-    تابع کمکی برای تولید دیتای گزارش تولد
-    خروجی: (لیست آیتم‌ها، تعداد کل، عنوان)
-    """
-    # 1. ایمپورت تابع محاسبه روز (اگر بالای فایل نیست اینجا ایمپورت کنید)
-    from bot.utils.date_helpers import days_until_next_birthday, to_shamsi
-
-    title = f"🎂 *{escape_markdown('لیست تولد کاربران (مرتب شده)')}*"
-    
-    # 2. دریافت کاربران دارای تاریخ تولد
-    stmt = select(User).where(User.birthday.isnot(None))
-    result = await session.execute(stmt)
-    users_with_bd = result.scalars().all()
-    
-    # 3. مرتب‌سازی بر اساس نزدیکی تولد
-    # (کاربرانی که تولدشان نزدیک‌تر است اول لیست می‌آیند)
-    users_sorted = sorted(users_with_bd, key=lambda u: days_until_next_birthday(u.birthday) if u.birthday else 999)
-    
-    total_count = len(users_sorted)
-    
-    # 4. برش لیست برای صفحه‌بندی (Pagination)
-    current_page_users = users_sorted[offset : offset + page_size]
-    
-    items = []
-    for user in current_page_users:
-        raw_name = user.first_name or 'ناشناس'
-        clean_name = raw_name.replace('<', '').replace('>', '').replace('|', '')
-        name = escape_markdown(clean_name)
-        
-        shamsi_str = to_shamsi(user.birthday)
-        rem_days = days_until_next_birthday(user.birthday)
-        
-        if rem_days == 0: 
-            days_str = "امروز! 🎉"
-        elif rem_days is not None: 
-            days_str = f"{rem_days} روز"
-        else: 
-            days_str = "نامشخص"
-        
-        # 🎂 Name | Date | Days
-        line = f"🎂 {name} \| {shamsi_str} \| {escape_markdown(days_str)}"
-        items.append(line)
-        
-    return items, total_count, title
-
 # ---------------------------------------------------------
-# هندلر لیست‌های عمومی و داینامیک (Paginated Lists)
+# هندلر اصلی لیست‌های داینامیک (The New Paginated Handler)
 # ---------------------------------------------------------
-LRM = "\u200e"  # Left-to-Right Mark (برای بعد از نام انگلیسی)
-RLM = "\u200f"  # Right-to-Left Mark (برای قبل از متن فارسی)
-
-# bot/admin_handlers/reporting.py
-
-# ... (imports remain the same)
 
 async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
-    نسخه اصلاح شده برای نمایش لیست کاربران آنلاین با فرمت:
-    نام (لینک شده) | مصرف امروز | روزهای باقیمانده
+    هندلر مرکزی و بازنویسی شده برای نمایش تمام لیست‌ها.
     """
     list_type = params[0]
     
-    target_panel_id = int(params[1]) if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users'] else None
-    plan_id = int(params[1]) if list_type == 'by_plan' else None
+    # 1. یافتن استراتژی مناسب
+    strategy = REPORT_STRATEGIES.get(list_type)
+    if not strategy:
+        # اگر استراتژی پیدا نشد، شاید هندلر قدیمی باشد یا اشتباه
+        await bot.answer_callback_query(call.id, "❌ نوع گزارش نامعتبر است.")
+        return
+
+    # 2. استخراج پارامترهای صفحه‌بندی
+    # معمولاً آخرین پارامتر شماره صفحه است.
+    # فرمت‌های ممکن:
+    # [type, page] -> birthdays,0
+    # [type, panel_id, page] -> online_users,1,0
+    # [type, plan_id, page] -> by_plan,5,0
     
-    page_index_param = 2 if (target_panel_id or plan_id is not None) else 1
-    page = int(params[page_index_param]) if len(params) > page_index_param else 0
+    try:
+        page = int(params[-1])
+    except (ValueError, IndexError):
+        page = 0
+
+    # بررسی خاص برای اینکه آیا پارامتر ماقبل آخر ID است یا خیر
+    # این فقط برای بازسازی دکمه‌ها (Callback Data) مهم است
+    extra_id = None
+    if len(params) >= 3:
+         try:
+             extra_id = int(params[1])
+         except: pass
 
     PAGE_SIZE = 20
-    ONLINE_WINDOW = 3
-
     offset = page * PAGE_SIZE
-    items, total_count, title = [], 0, escape_markdown("گزارش")
+    
+    items, total_count, title = [], 0, ""
 
+    # 3. اجرای استراتژی
     async with db.get_session() as session:
-        
-        live_report_types = ['online_users', 'active_users', 'inactive_users', 'never_connected', 'panel_users']
-        
-        if list_type in live_report_types and target_panel_id:
-            panel_obj = await session.get(Panel, target_panel_id)
-            if not panel_obj:
-                await bot.answer_callback_query(call.id, "پنل یافت نشد.")
-                return
-
-            try:
-                panel_service = await PanelFactory.get_panel(panel_obj.name)
-                all_users_live = await panel_service.get_all_users()
-            except Exception as e:
-                logger.error(f"Error fetching live users: {e}")
-                await bot.answer_callback_query(call.id, "❌ خطا در اتصال به پنل")
-                return
-
-            # --- پردازش اولیه داده‌ها ---
-            filtered_users = []
-            now_utc = datetime.utcnow()
+        try:
+            # نمایش وضعیت "در حال بارگذاری" برای کاربر
+            # await bot.answer_callback_query(call.id, "⏳ در حال دریافت داده‌ها...")
             
-            for u in all_users_live:
-                # 1. استانداردسازی زمان
-                last_seen_raw = u.get('online_at') or u.get('last_online') or u.get('last_connection')
-                last_seen_dt = None
-                if last_seen_raw:
-                    try:
-                        if isinstance(last_seen_raw, (int, float)):
-                            last_seen_dt = datetime.utcfromtimestamp(float(last_seen_raw))
-                        elif isinstance(last_seen_raw, str):
-                            clean_time = last_seen_raw.replace('Z', '').split('.')[0]
-                            last_seen_dt = datetime.fromisoformat(clean_time)
-                    except: pass
-                
-                u['_parsed_last_seen'] = last_seen_dt
-                u['_used_bytes'] = u.get('used_traffic') or (u.get('current_usage_GB', 0) * 1024**3)
-                u['_limit_bytes'] = u.get('transfer_enable') or (u.get('usage_limit_GB', 0) * 1024**3)
+            items, total_count, title = await strategy.generate(session, params, offset, PAGE_SIZE)
+        except Exception as e:
+            logger.error(f"Error generating report {list_type}: {e}", exc_info=True)
+            await bot.answer_callback_query(call.id, "❌ خطا در دریافت اطلاعات.")
+            return
 
-                # 2. فیلتر کردن
-                include_user = False
-                if list_type == 'online_users':
-                    if last_seen_dt and (now_utc - last_seen_dt) < timedelta(minutes=ONLINE_WINDOW):
-                        include_user = True
-                        title = f"⚡️ *{escape_markdown(f'کاربران آنلاین ({ONLINE_WINDOW} دقیقه اخیر)')}*"
-
-                elif list_type == 'active_users':
-                    if last_seen_dt and (now_utc - last_seen_dt) < timedelta(hours=24):
-                        include_user = True
-                        title = f"✅ *{escape_markdown('کاربران فعال (۲۴ ساعت اخیر)')}*"
-
-                elif list_type == 'inactive_users':
-                    if last_seen_dt:
-                        diff = now_utc - last_seen_dt
-                        if timedelta(days=1) <= diff < timedelta(days=7):
-                            include_user = True
-                            title = f"⏳ *{escape_markdown('کاربران غیرفعال (۱ تا ۷ روز)')}*"
-
-                elif list_type == 'never_connected':
-                    if not last_seen_dt or u['_used_bytes'] == 0:
-                        include_user = True
-                        title = f"🚫 *{escape_markdown('کاربران هرگز متصل نشده')}*"
-                
-                elif list_type == 'panel_users':
-                    include_user = True
-                    title = f"👥 *{escape_markdown(f'همه کاربران پنل {panel_obj.name}')}*"
-
-                if include_user:
-                    filtered_users.append(u)
-
-            # --- دریافت مصرف روزانه و لینک پروفایل ---
-            daily_usage_map = {}
-            telegram_id_map = {} # مپ برای ذخیره آیدی تلگرام
-
-            # اگر لیستی داریم، اطلاعات تکمیلی را از دیتابیس بگیریم
-            if filtered_users:
-                idents = [u.get('uuid') or u.get('username') for u in filtered_users]
-                idents = [i for i in idents if i]
-                
-                if idents:
-                    # دریافت اطلاعات کاربران از دیتابیس (شامل user_id تلگرام)
-                    # اصلاح کوئری برای اطمینان از مپ شدن صحیح
-                    uuid_stmt = select(UserUUID).where(
-                        and_(
-                            UserUUID.allowed_panels.any(id=target_panel_id),
-                            or_(UserUUID.uuid.cast(String).in_(idents), UserUUID.name.in_(idents))
-                        )
-                    )
-                    db_users = (await session.execute(uuid_stmt)).scalars().all()
-                    
-                    if db_users:
-                        user_ids_list = []
-                        user_map = {} # برای مپ کردن شناسه پنل به شناسه دیتابیس (برای محاسبه مصرف)
-
-                        for du in db_users:
-                            # ذخیره نگاشت برای پیدا کردن Telegram ID
-                            if du.user_id: # فقط اگر به اکانت تلگرام وصل بود
-                                if du.uuid:
-                                    telegram_id_map[str(du.uuid)] = du.user_id
-                                if du.name:
-                                    telegram_id_map[du.name] = du.user_id
-                            
-                            # مپ کردن برای محاسبه مصرف
-                            if du.uuid: user_map[str(du.uuid)] = du.id
-                            if du.name: user_map[du.name] = du.id
-                            
-                            user_ids_list.append(du.id)
-
-                        # فقط برای آنلاین‌ها مصرف روزانه را حساب می‌کنیم
-                        if list_type == 'online_users':
-                            start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                            
-                            snap_stmt = select(UsageSnapshot).where(
-                                and_(
-                                    UsageSnapshot.uuid_id.in_(user_ids_list),
-                                    UsageSnapshot.taken_at >= start_of_day
-                                )
-                            ).order_by(UsageSnapshot.taken_at.asc())
-                            
-                            snapshots = (await session.execute(snap_stmt)).scalars().all()
-                            
-                            first_usage_today = {}
-                            for snap in snapshots:
-                                if snap.uuid_id not in first_usage_today:
-                                    # جمع هوشمند تمام ستون‌های مصرف
-                                    total_gb = 0.0
-                                    for attr in dir(snap):
-                                        if attr.endswith('_usage_gb') and not attr.startswith('_'):
-                                            val = getattr(snap, attr, 0)
-                                            if val: total_gb += float(val)
-                                    first_usage_today[snap.uuid_id] = total_gb * (1024**3)
-
-                            # محاسبه نهایی مصرف روزانه
-                            for u in filtered_users:
-                                ident = u.get('uuid') or u.get('username')
-                                if ident and ident in user_map:
-                                    db_id = user_map[ident]
-                                    if db_id in first_usage_today:
-                                        daily = u['_used_bytes'] - first_usage_today[db_id]
-                                        daily_usage_map[ident] = max(0, daily)
-
-            # --- صفحه‌بندی ---
-            total_count = len(filtered_users)
-            current_page_users = filtered_users[offset : offset + PAGE_SIZE]
-
-            # --- فرمت‌بندی خروجی ---
-            for u in current_page_users:
-                raw_name = u.get('username') or u.get('name') or "No Name"
-                # حذف کاراکترهای مزاحم از نام
-                clean_name = raw_name.replace('<', '').replace('>', '').replace('[', '').replace(']', '')
-                name_esc = escape_markdown(clean_name)
-                
-                ident = u.get('uuid') or u.get('username')
-                
-                # 🔗 ساخت لینک پروفایل (اگر آیدی تلگرام پیدا شد)
-                linked_name = name_esc
-                if ident and ident in telegram_id_map and telegram_id_map[ident]:
-                    tg_id = telegram_id_map[ident]
-                    # لینک به پروفایل کاربر
-                    linked_name = f"[{name_esc}](tg://user?id={tg_id})"
-
-                # ------------------------------------------
-                # ۱. فرمت آنلاین‌ها (Online Users) - اصلاح شده
-                # ساختار درخواستی: نام (لینک) | مصرف امروز | روزهای مانده
-                # ------------------------------------------
-                if list_type == 'online_users':
-                    # الف) محاسبه مصرف امروز
-                    if ident and ident in daily_usage_map:
-                        final_usage_bytes = daily_usage_map[ident]
-                    else:
-                        # اگر دیتای امروز نبود، صفر نشان بده یا مصرف کل (اینجا صفر منطقی‌تره برای "مصرف امروز")
-                        final_usage_bytes = 0 
-                    
-                    usage_val_gb = final_usage_bytes / (1024**3)
-                    # فرمت‌بندی عدد به صورت کوتاه
-                    if usage_val_gb == 0:
-                        usage_str = "0 GB"
-                    elif usage_val_gb < 0.01: # برای مقادیر خیلی کم (زیر ۱۰ مگابایت)
-                         usage_str = f"{usage_val_gb * 1024:.0f} MB"
-                    else:
-                         usage_str = f"{usage_val_gb:.2f} GB"
-
-                    # ب) روزهای مانده
-                    days_str = "Unlimited" # پیش‌فرض
-                    try:
-                        # 1. اگر پنل خودش روزهای باقیمانده را می‌دهد (مثل برخی نسخه‌های هیدیفای)
-                        if 'remaining_days' in u and u['remaining_days'] is not None:
-                             days = int(u['remaining_days'])
-                             days_str = f"{days} days" if days >= 0 else "Expired"
-                        
-                        # 2. محاسبه بر اساس تاریخ انقضا (استانداردترین روش)
-                        elif 'expire' in u and u['expire']:
-                            expire_ts = float(u['expire'])
-                            if expire_ts > 0:
-                                diff_seconds = expire_ts - datetime.now().timestamp()
-                                rem_days = int(diff_seconds / 86400)
-                                days_str = f"{rem_days} days" if rem_days >= 0 else "Expired"
-                            else:
-                                days_str = "Unlimited" # اگر expire صفر باشد یعنی نامحدود
-                        
-                        # 3. اگر انقضا نداشتیم اما تاریخ شروع و مدت پکیج داشتیم (محاسبه دستی)
-                        elif 'start_date' in u and u['start_date'] and 'package_days' in u:
-                             # تبدیل start_date به timestamp اگر رشته باشد
-                             start_ts = 0
-                             if isinstance(u['start_date'], str):
-                                 try: start_ts = datetime.fromisoformat(u['start_date']).timestamp()
-                                 except: pass
-                             elif isinstance(u['start_date'], (int, float)):
-                                 start_ts = u['start_date']
-                             
-                             if start_ts > 0:
-                                 expire_calc = start_ts + (u['package_days'] * 86400)
-                                 rem_days = int((expire_calc - datetime.now().timestamp()) / 86400)
-                                 days_str = f"{rem_days} days" if rem_days >= 0 else "Expired"
-
-                        # نکته: خطی که قبلاً package_days را مستقیم نشان می‌داد حذف شد تا کل روزها نمایش داده نشود.
-                    except: 
-                        days_str = "?"
-                    
-                    # خط نهایی: نام لینک‌دار | مصرف | روز
-                    # استفاده از ` ` برای اعداد جهت زیبایی بیشتر
-                    line = f"• {linked_name} \| `{escape_markdown(usage_str)}` \| `{escape_markdown(days_str)}`"
-                    items.append(line)
-
-                # ------------------------------------------
-                # ۲. فرمت فعال (Active Users)
-                # ساختار: نام | تاریخ | درصد
-                # ------------------------------------------
-                elif list_type == 'active_users':
-                    last_seen_date = "نامشخص"
-                    if u.get('_parsed_last_seen'):
-                        last_seen_date = to_shamsi(u['_parsed_last_seen'])
-                    limit = u.get('_limit_bytes', 0)
-                    used = u.get('_used_bytes', 0)
-                    percent = int((used / limit) * 100) if limit > 0 else 0
-                    
-                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(last_seen_date)} {RLM}\| {RLM}`{percent}%`"
-                    items.append(line)
-
-                # ------------------------------------------
-                # ۳. فرمت غیرفعال (Inactive Users)
-                # ساختار: نام | زمان نسبی | وضعیت
-                # ------------------------------------------
-                elif list_type == 'inactive_users':
-                    time_ago_str = format_relative_time(u.get('_parsed_last_seen'))
-                    status = "فعال"
-                    try:
-                        if 'remaining_days' in u and u['remaining_days'] is not None and int(u['remaining_days']) < 0: status = "منقضی"
-                        elif 'expire' in u and u['expire'] and u['expire'] > 0 and u['expire'] < datetime.now().timestamp(): status = "منقضی"
-                    except: pass
-                    
-                    line = f"• {linked_name}{LRM} \| {RLM}{escape_markdown(time_ago_str)} {RLM}\| {RLM}{escape_markdown(status)}"
-                    items.append(line)
-
-                # ------------------------------------------
-                # ۴. فرمت هرگز متصل نشده (Never Connected)
-                # ساختار: نام | حجم کل | اعتبار زمانی
-                elif list_type == 'never_connected':
-                    # محاسبه حجم کل
-                    limit_gb = u.get('_limit_bytes', 0) / (1024**3)
-                    
-                    # فرمت‌بندی عدد حجم کل (بدون اعشار اگر عدد صحیح باشد)
-                    if limit_gb.is_integer():
-                        limit_str = f"{limit_gb:.0f}GB"
-                    else:
-                        limit_str = f"{limit_gb:.1f}GB"
-                    
-                    # ساخت رشته نمایش: "0GB / 30GB"
-                    # اینطوری دقیق مشخص میشه که 0 گیگ مصرف کرده از 30 گیگ
-                    display_str = f"0GB/{limit_str}"
-
-                    days_str = "نامحدود"
-                    try:
-                        # اولویت با روزهای باقیمانده واقعی (اگر پنل یا دیتابیس داده باشد)
-                        if 'remaining_days' in u and u['remaining_days'] is not None:
-                             days_str = f"{int(u['remaining_days'])} روز"
-                        
-                        # محاسبه بر اساس تاریخ انقضا
-                        elif 'expire' in u and u['expire']:
-                            expire_ts = float(u['expire'])
-                            if expire_ts > 0:
-                                diff = expire_ts - datetime.now().timestamp()
-                                rem_days = int(diff / 86400)
-                                days_str = f"{rem_days} روز" if rem_days >= 0 else "منقضی"
-                        
-                        # اگر هیچکدام نبود و package_days داشتیم
-                        elif 'package_days' in u: 
-                            days_str = f"{u['package_days']} روز"
-                    
-                    except: pass
-                    
-                    # نمایش نهایی داخل Code Block برای زیبایی
-                    line = f"• {linked_name}{LRM} \| `{escape_markdown(display_str)}` \| {RLM}`{escape_markdown(days_str)}`"
-                    items.append(line)
-                elif list_type == 'birthdays':
-                    items, total_count, title = await _get_birthdays_report(session, offset, PAGE_SIZE)
-
-
-        # =========================================================
-        # سایر لیست‌ها (Local DB)
-        # =========================================================
-        else:
-            stmt = None
-            if list_type == 'by_plan':
-                title = f"📊 *{escape_markdown('گزارش بر اساس پلن')}*"
-                stmt = queries.get_users_by_plan_query(plan_id)
-            elif list_type == 'bot_users':
-                title = f"👥 *{escape_markdown('کل کاربران ربات')}*"
-                stmt = select(User).order_by(User.user_id.desc())
-            
-            if stmt is not None:
-                count_stmt = select(func.count()).select_from(stmt.subquery())
-                total_count = await session.scalar(count_stmt) or 0
-                result = await session.execute(stmt.offset(offset).limit(PAGE_SIZE))
-                for user in result.scalars():
-                    u_name = user.first_name or "بدون نام"
-                    # لینک کردن نام در لیست‌های دیتابیسی هم
-                    u_link = f"[{escape_markdown(u_name)}](tg://user?id={user.user_id})"
-                    items.append(f"• {u_link}{LRM} \(`{user.user_id}`\)")
-            else:
-                 items.append(escape_markdown("⚠️ نوع گزارش نامعتبر است."))
-
-    # ---------------------------------------------------------
-    # ساخت متن نهایی
-    # ---------------------------------------------------------
+    # 4. ساخت متن و دکمه‌ها
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
-    pagination_text = f"{RLM}\(صفحه {page + 1} از {max(1, total_pages)} \| کل: {total_count}\)"
+    pagination_info = f"{RLM}\(صفحه {page + 1} از {max(1, total_pages)} \| کل: {total_count}\)"
     separator = escape_markdown("──────────────────")
     
-    text = f"{title}\n{pagination_text}\n{separator}\n\n"
-    text += "\n".join(items) if items else escape_markdown("❌ موردی یافت نشد.")
+    final_text = f"{title}\n{pagination_info}\n{separator}\n\n"
+    final_text += "\n".join(items) if items else escape_markdown("❌ موردی یافت نشد.")
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
-    def get_cb(p):
-        prefix = f"admin:list:{list_type}"
-        if target_panel_id: return f"{prefix}:{target_panel_id}:{p}"
-        if list_type == 'by_plan': return f"admin:list_by_plan:{plan_id}:{p}"
-        return f"{prefix}:{p}"
+    # تابع کمکی برای ساخت دکمه‌های ناوبری
+    def get_cb_data(target_page):
+        # بازسازی دقیق فرمت ورودی برای دکمه‌های بعدی/قبلی
+        base = f"admin:list:{list_type}"
+        
+        # هندل کردن حالت‌های خاص (by_plan در کد قبلی فرمت خاصی داشت)
+        if list_type == 'by_plan':
+            # فرمت قدیمی: admin:list_by_plan:ID:PAGE
+            # اما اینجا ما همه را یکدست کردیم، مگر اینکه در admin_router تفکیک شده باشد.
+            # فرض بر این است که روتر همه را به اینجا می‌فرستد.
+            # اگر روتر شما فرمت admin:list_by_plan را جدا هندل می‌کند، باید آن را اینجا رعایت کنید.
+            # با توجه به کد اصلی، by_plan جدا صدا زده می‌شد.
+            # برای اطمینان، از فرمت جنریک استفاده می‌کنیم:
+            return f"admin:list_by_plan:{extra_id}:{target_page}"
+        
+        if extra_id is not None:
+            return f"{base}:{extra_id}:{target_page}"
+        
+        return f"{base}:{target_page}"
 
     if page > 0:
-        nav_btns.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=get_cb(page - 1)))
+        nav_btns.append(types.InlineKeyboardButton("⬅️ قبلی", callback_data=get_cb_data(page - 1)))
     if (page + 1) * PAGE_SIZE < total_count:
-        nav_btns.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=get_cb(page + 1)))
+        nav_btns.append(types.InlineKeyboardButton("بعدی ➡️", callback_data=get_cb_data(page + 1)))
 
     if nav_btns: kb.add(*nav_btns)
 
+    # دکمه بازگشت
     if list_type == 'by_plan': back_cb = "admin:user_analysis_menu"
-    elif target_panel_id: back_cb = f"admin:panel_report:{target_panel_id}"
+    elif extra_id and list_type != 'payments': back_cb = f"admin:panel_report:{extra_id}" # برگشت به منوی پنل
+    elif list_type == 'payments': back_cb = "admin:report_financial"
     else: back_cb = "admin:reports_menu"
 
     kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data=back_cb))
     
-    # نکته: disable_web_page_preview=True برای جلوگیری از نمایش پیش‌نمایش پروفایل‌ها
-    await _safe_edit(call.from_user.id, call.message.message_id, text, reply_markup=kb, parse_mode='MarkdownV2', disable_web_page_preview=True)
+    await _safe_edit(call.from_user.id, call.message.message_id, final_text, reply_markup=kb, parse_mode='MarkdownV2', disable_web_page_preview=True)
 
 # ---------------------------------------------------------
-# Missing / Placeholder Handlers
+# هندلرهای متفرقه (Legacy / Placeholder)
 # ---------------------------------------------------------
 
 async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: list = None):
-    """منوی انتخاب پلن."""
+    """منوی انتخاب پلن برای گزارش."""
     plans = await db.get_all_plans()
     markup = await admin_menu.select_plan_for_report_menu(plans)
     await _safe_edit(
@@ -744,28 +700,23 @@ async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: 
         parse_mode='HTML'
     )
 
-handle_report_by_plan_selection = handle_select_plan_for_report_menu
-
-# ---------------------------------------------------------
-# Missing Handlers (Added to fix AttributeError)
-# ---------------------------------------------------------
-
 async def handle_health_check(call: types.CallbackQuery, params: list = None):
-    """
-    بررسی وضعیت سلامت سیستم
-    """
-    # در اینجا می‌توانید لاجیک بررسی دیتابیس یا پنل‌ها را اضافه کنید
-    # فعلاً یک پیام ساده برمی‌گردانیم تا ارور رفع شود
+    """بررسی وضعیت سلامت سیستم."""
     await bot.answer_callback_query(call.id, "✅ سیستم در وضعیت نرمال است.", show_alert=True)
 
 async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = None):
-    """
-    نمایش آمار سیستم (مخصوص مرزبان یا کلی)
-    """
+    """نمایش آمار سیستم (مخصوص مرزبان)."""
     await bot.answer_callback_query(call.id, "🚧 این بخش در حال تکمیل است...", show_alert=True)
 
+# توابع واسط برای روتر (برای سازگاری با Callback های قدیمی)
 async def handle_list_users_by_plan(call, params):
-    await handle_paginated_list(call, ["by_plan", params[0], params[1]])
+    # params: [plan_id, page]
+    # تبدیل به فرمت استاندارد: ['by_plan', plan_id, page]
+    new_params = ['by_plan'] + params
+    await handle_paginated_list(call, new_params)
+
+async def handle_report_by_plan_selection(call, params):
+    await handle_select_plan_for_report_menu(call, params)
 
 async def handle_list_users_no_plan(call, params):
     await bot.answer_callback_query(call.id, "این بخش هنوز فعال نیست.")
