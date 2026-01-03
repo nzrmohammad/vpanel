@@ -9,15 +9,17 @@ import jdatetime
 from sqlalchemy import select, delete, func, desc, and_, case, cast, Date, extract, distinct
 from sqlalchemy.orm import aliased
 
-from .base import UsageSnapshot, UserUUID, User, DatabaseManager
+# نکته مهم: اینجا دیگر DatabaseManager را ایمپورت نمی‌کنیم یا از آن ارث نمی‌بریم.
+# این کلاس فرض می‌کند که کلاسی که از آن استفاده می‌کند (BotDatabase) متد get_session را دارد.
+from .base import UsageSnapshot, UserUUID, User
 
 logger = logging.getLogger(__name__)
 
 
-class UsageDB(DatabaseManager):
+class UsageDB:
     """
-    کلاسی برای مدیریت تمام عملیات مربوط به آمار مصرف (usage) کاربران و سیستم.
-    کاملاً بهینه‌شده برای PostgreSQL (Async) با تبدیل تمام متدهای قدیمی.
+    کلاسی برای مدیریت تمام عملیات مربوط به آمار مصرف (usage).
+    این کلاس به صورت Mixin طراحی شده و نباید از DatabaseManager ارث‌بری کند.
     """
 
     def _calculate_diff(self, start_val: float, end_val: float) -> float:
@@ -569,16 +571,6 @@ class UsageDB(DatabaseManager):
         
         if not active_uuid_strs: return results
 
-        # برای تشخیص دقیق نوع پنل (مرزبان فرانسه/ترکیه و...) نیاز به دسترسی دیتابیس است
-        # اما چون این متد ورودی لیست دارد، احتمالاً در لایه سرویس لاجیک بهتری دارد.
-        # اینجا یک پیاده سازی ساده بر اساس Log های قبلی انجام می‌دهیم.
-        async with self.get_session() as session:
-            # دریافت اطلاعات دسترسی UUID های آنلاین
-            # فرض: پنل‌ها در جدول UUIDPanelAccess یا مشابه آن هستند
-            # چون ساختار دقیق پنل‌های fr/tr در مدل‌های provided نیست، فقط کلی برمی‌گردانیم
-            # یا اگر نام پنل در آبجکت user موجود است از آن استفاده می‌کنیم.
-            pass 
-            
         # فعلاً تعداد کل را در hiddify می‌ریزیم چون تفکیک دقیق بدون کوئری پیچیده ممکن نیست
         results['hiddify'] = len(active_uuid_strs)
         return results

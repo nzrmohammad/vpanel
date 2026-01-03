@@ -3,23 +3,22 @@
 import logging
 import os
 import functools
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import aiofiles
 from telebot import types
-from sqlalchemy import select, func, and_, or_, desc
+from sqlalchemy import select, func, and_, or_, desc, distinct
 
 from bot.bot_instance import bot
 from bot.keyboards.admin import admin_keyboard as admin_menu
 from bot.database import db
 from bot.db.base import (
     User, UserUUID, WalletTransaction, ScheduledMessage, 
-    Panel, SystemConfig
+    Panel, SystemConfig, UsageSnapshot
 )
 from bot.db import queries
-from bot.db.usage import calculate_daily_usage  # ✅ ایمپورت لاجیک محاسبه مصرف
 from bot.utils.network import _safe_edit
-from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage  # ✅ ایمپورت توابع کمکی
+from bot.utils.formatters import escape_markdown, write_csv_sync, format_usage
 from bot.services.panels import PanelFactory
 
 logger = logging.getLogger(__name__)
@@ -28,13 +27,12 @@ REPORT_DIR = "reports"
 os.makedirs(REPORT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------
-# تنظیمات داینامیک (Settings Helper)
+# توابع کمکی (Helpers)
 # ---------------------------------------------------------
 
 async def get_report_settings():
     """
     دریافت تنظیمات گزارش‌گیری از دیتابیس.
-    اگر مقادیر در دیتابیس نباشند، از پیش‌فرض‌های ۱۵ و ۳ استفاده می‌کند.
     """
     defaults = {
         "report_page_size": 15,
@@ -50,6 +48,65 @@ async def get_report_settings():
         key: int(configs.get(key, default_val)) 
         for key, default_val in defaults.items()
     }
+
+async def calculate_live_daily_usage(session, user_uuids_map: dict, live_usage_map: dict) -> dict:
+    """
+    محاسبه مصرف روزانه با مقایسه دیتای زنده پنل و اسنپ‌شات اول روز در دیتابیس.
+    
+    :param user_uuids_map: { 'identifier': db_uuid_id }
+    :param live_usage_map: { 'identifier': current_total_bytes }
+    :return: { 'identifier': daily_usage_bytes }
+    """
+    if not user_uuids_map:
+        return {}
+
+    # محاسبه شروع روز به وقت UTC (برای کوئری دیتابیس)
+    # فرض بر این است که اسنپ‌شات‌ها UTC هستند. برای دقت بالاتر می‌توان تایم‌زون تهران را لحاظ کرد.
+    now_utc = datetime.now(timezone.utc)
+    today_midnight = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    uuid_ids = list(user_uuids_map.values())
+    
+    # دریافت آخرین اسنپ‌شات قبل از نیمه‌شب (Baseline)
+    # استفاده از DISTINCT ON مخصوص پستگرس برای سرعت بالا
+    stmt = (
+        select(UsageSnapshot)
+        .distinct(UsageSnapshot.uuid_id)
+        .where(
+            and_(
+                UsageSnapshot.uuid_id.in_(uuid_ids),
+                UsageSnapshot.taken_at < today_midnight
+            )
+        )
+        .order_by(UsageSnapshot.uuid_id, desc(UsageSnapshot.taken_at))
+    )
+    
+    result = await session.execute(stmt)
+    snapshots = result.scalars().all()
+    
+    # ساخت مپ { db_uuid_id : start_of_day_bytes }
+    start_usage_map = {}
+    for snap in snapshots:
+        # تبدیل GB دیتابیس به بایت
+        total_gb = (snap.hiddify_usage_gb or 0) + (snap.marzban_usage_gb or 0)
+        start_usage_map[snap.uuid_id] = total_gb * (1024**3)
+
+    final_daily_usage = {}
+    
+    for identifier, db_id in user_uuids_map.items():
+        current_bytes = live_usage_map.get(identifier, 0)
+        start_bytes = start_usage_map.get(db_id, 0)
+        
+        # محاسبه اختلاف (با در نظر گرفتن ریست شدن احتمالی پنل)
+        if current_bytes >= start_bytes:
+            daily_bytes = current_bytes - start_bytes
+        else:
+            # اگر مصرف فعلی کمتر از شروع روز بود، یعنی پنل ریست شده -> کل مصرف فعلی مال امروز است
+            daily_bytes = current_bytes
+            
+        final_daily_usage[identifier] = daily_bytes
+
+    return final_daily_usage
 
 # ---------------------------------------------------------
 # هندلرهای منو (Menu Handlers)
@@ -198,7 +255,6 @@ async def handle_report_excel(call: types.CallbackQuery):
                 })
 
         loop = asyncio.get_running_loop()
-        # استفاده از تابع کمکی منتقل شده به utils
         await loop.run_in_executor(None, functools.partial(write_csv_sync, filepath, users_data))
 
         async with aiofiles.open(filepath, 'rb') as f:
@@ -240,56 +296,6 @@ async def handle_show_scheduled_tasks(call: types.CallbackQuery, params: list = 
     await _safe_edit(uid, call.message.message_id, text, reply_markup=kb, parse_mode='HTML')
 
 # ---------------------------------------------------------
-# هندلرهای وضعیت سیستم (Health Check)
-# ---------------------------------------------------------
-
-async def handle_health_check(call: types.CallbackQuery, params: list = None):
-    """بررسی وضعیت سلامت سرورهای هیدیفای."""
-    await bot.answer_callback_query(call.id, "🩺 در حال بررسی اتصال...")
-    
-    active_panels = await db.get_active_panels()
-    hiddify_panels = [p for p in active_panels if p['panel_type'] == 'hiddify']
-    
-    report = "<b>وضعیت سرورهای Hiddify:</b>\n\n"
-    
-    for p in hiddify_panels:
-        try:
-            panel = await PanelFactory.get_panel(p['name'])
-            stats = await panel.get_system_stats()
-            status = "✅ آنلاین" if stats else "❌ آفلاین"
-            usage = f"(CPU: {stats.get('cpu_usage', '?')}%)" if stats else ""
-            report += f"🔹 <b>{p['name']}</b>: {status} {usage}\n"
-        except Exception as e:
-            report += f"🔹 <b>{p['name']}</b>: ❌ خطا\n"
-
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:system_status_menu"))
-    await _safe_edit(call.from_user.id, call.message.message_id, report, reply_markup=kb, parse_mode='HTML')
-
-async def handle_marzban_system_stats(call: types.CallbackQuery, params: list = None):
-    """بررسی وضعیت سلامت سرورهای مرزبان."""
-    await bot.answer_callback_query(call.id, "🩺 در حال بررسی اتصال...")
-    
-    active_panels = await db.get_active_panels()
-    marzban_panels = [p for p in active_panels if p['panel_type'] == 'marzban']
-    
-    report = "<b>وضعیت سرورهای Marzban:</b>\n\n"
-    
-    for p in marzban_panels:
-        try:
-            panel = await PanelFactory.get_panel(p['name'])
-            stats = await panel.get_system_stats()
-            status = "✅ آنلاین" if stats else "❌ آفلاین"
-            version = f"(v{stats.get('version', '?')})" if stats else ""
-            report += f"🔹 <b>{p['name']}</b>: {status} {version}\n"
-        except Exception:
-            report += f"🔹 <b>{p['name']}</b>: ❌ خطا\n"
-
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin:system_status_menu"))
-    await _safe_edit(call.from_user.id, call.message.message_id, report, reply_markup=kb, parse_mode='HTML')
-
-# ---------------------------------------------------------
 # هندلر لیست‌های عمومی و داینامیک (Paginated Lists)
 # ---------------------------------------------------------
 
@@ -300,12 +306,11 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
     """
     list_type = params[0]
     
-    # تعیین پارامترهای پنل یا پلن
     target_panel_id = int(params[1]) if list_type in ['panel_users', 'active_users', 'online_users', 'never_connected', 'inactive_users'] else None
     plan_id = int(params[1]) if list_type == 'by_plan' else None
     page = int(params[2]) if (target_panel_id or plan_id is not None) else int(params[1])
 
-    # ⚙️ 1. دریافت تنظیمات داینامیک از دیتابیس
+    # ⚙️ 1. دریافت تنظیمات داینامیک
     settings = await get_report_settings()
     PAGE_SIZE = settings['report_page_size']
     ONLINE_WINDOW = settings['report_online_window']
@@ -351,8 +356,6 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                     pass
 
             total_count = len(online_filtered)
-            
-            # ج) جدا کردن کاربران صفحه جاری
             current_page_users = online_filtered[offset : offset + PAGE_SIZE]
 
             # د) آماده‌سازی داده‌ها برای محاسبه مصرف روزانه (مپ کردن نام کاربر پنل به شناسه دیتابیس)
@@ -383,11 +386,12 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 if not ident: continue
                 
                 # دریافت مصرف کل (بسته به نوع پنل فیلد متفاوت است)
+                # برای هیدیفای current_usage_GB است و برای مرزبان used_traffic
                 total_bytes = u.get('used_traffic') or (u.get('current_usage_GB', 0) * 1024**3)
                 live_usage_map[ident] = total_bytes
             
-            # و) فراخوانی تابع خارجی برای محاسبه مصرف روزانه
-            daily_usage_data = await calculate_daily_usage(session, user_uuids_map, live_usage_map)
+            # و) محاسبه مصرف روزانه با استفاده از تابع داخلی همین فایل
+            daily_usage_data = await calculate_live_daily_usage(session, user_uuids_map, live_usage_map)
 
             # ز) ساخت خروجی متنی نهایی
             for u in current_page_users:
@@ -396,7 +400,7 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
                 
                 # 1. مصرف روزانه
                 daily_bytes = daily_usage_data.get(ident, 0)
-                usage_str = format_usage(daily_bytes / (1024**3)) # تبدیل به GB
+                usage_str = format_usage(daily_bytes / (1024**3)) # تبدیل به GB برای فرمتر
 
                 # 2. روزهای باقی‌مانده
                 days_str = "?"
@@ -454,7 +458,6 @@ async def handle_paginated_list(call: types.CallbackQuery, params: list):
     kb = types.InlineKeyboardMarkup(row_width=2)
     nav_btns = []
     
-    # ساخت کالبک دیتا
     def get_cb(p):
         prefix = f"admin:list:{list_type}"
         if target_panel_id: return f"{prefix}:{target_panel_id}:{p}"
@@ -496,7 +499,6 @@ async def handle_select_plan_for_report_menu(call: types.CallbackQuery, params: 
         parse_mode='HTML'
     )
 
-# Alias for Router Compatibility
 handle_report_by_plan_selection = handle_select_plan_for_report_menu
 
 async def handle_list_users_by_plan(call, params):
