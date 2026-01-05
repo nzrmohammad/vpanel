@@ -10,6 +10,7 @@ from bot.utils.formatters import escape_markdown
 from bot.utils.network import _safe_edit
 from datetime import datetime
 from bot.services import cache_manager
+from bot.services.context_service import ContextService
 import logging
 import asyncio
 
@@ -127,8 +128,9 @@ async def account_detail_handler(call: types.CallbackQuery):
 
         if info:
             # نمایش اطلاعات اکانت
+            context_data = await ContextService.get_user_context_data(user_id)
             info['db_id'] = acc_id 
-            text = await user_formatter.profile_info(info, lang)
+            text = user_formatter.profile.profile_info(info, lang, context_data)
             markup = await user_menu.account_menu(acc_id, lang)
             
             await bot.edit_message_text(
@@ -280,10 +282,16 @@ async def process_change_name_step(message: types.Message):
             uuid_str = str(account['uuid'])
             info = await combined_handler.get_combined_user_info(uuid_str)
             if info:
+                # --- تغییر اصلاحی ---
+                # دریافت کانتکست برای نمایش صحیح پرچم‌ها و اطلاعات تکمیلی
+                context_data = await ContextService.get_user_context_data(user_id)
+
                 info['db_id'] = acc_id
                 info['name'] = new_name
                 
-                text = await user_formatter.profile_info(info, lang)
+                # اصلاح فراخوانی: حذف await، دسترسی از طریق .profile و پاس دادن context_data
+                text = user_formatter.profile.profile_info(info, lang, context_data)
+                
                 markup = await user_menu.account_menu(acc_id, lang)
                 
                 await bot.edit_message_text(
@@ -297,7 +305,7 @@ async def process_change_name_step(message: types.Message):
                 # تاییدیه کوتاه (Toast)
                 await bot.answer_callback_query(callback_query_id=step_data.get('cb_id', '0'), text=get_string('msg_name_changed_success', lang))
     except Exception as e:
-        logger.error(f"Change Name Refresh Error: {e}")
+        logger.error(f"Change Name Refresh Error: {e}", exc_info=True)
 
 # --- 5. حذف اکانت (Delete) ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))

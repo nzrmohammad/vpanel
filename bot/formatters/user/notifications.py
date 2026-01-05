@@ -1,3 +1,5 @@
+# bot/formatters/user/notifications.py
+from datetime import datetime
 from bot.utils.formatters import escape_markdown, format_daily_usage
 
 class NotificationFormatter:
@@ -13,7 +15,6 @@ class NotificationFormatter:
         breakdown = user_data.get('breakdown', {})
         
         # تابع کمکی داخلی برای اسکیپ کردن اعداد در MarkdownV2
-        # نقطه و منفی را به فرمت قابل قبول تلگرام تبدیل می‌کند
         def esc_num(val):
             return str(val).replace('.', '\\.').replace('-', '\\-')
 
@@ -42,13 +43,11 @@ class NotificationFormatter:
             total_used_all += u
 
         total_remain_all = max(0, total_limit_all - total_used_all)
-        total_daily_all = sum(daily_usage.values())
 
         lines = []
         
         lines.append(f"👤 اکانت : *{name}*")
         
-        # اصلاح: استفاده از replace برای اسکیپ کردن نقطه در اعداد اعشاری
         lines.append(f"📊 حجم‌کل : {esc_num(f'{total_limit_all:.2f}')} GB")
         for flag, info in stats_by_flag.items():
             if info['limit'] > 0:
@@ -72,28 +71,37 @@ class NotificationFormatter:
             flag = type_flags_map.get(d_type, '🏳️')
             daily_by_flag[flag] = daily_by_flag.get(flag, 0.0) + d_val
 
+        # نمایش مصرف روزانه فقط به صورت تفکیک شده (با پرچم)
         if stats_by_flag:
             for flag in stats_by_flag.keys():
                 val = daily_by_flag.get(flag, 0.0)
-                # فرض بر این است که format_daily_usage خودش خروجی امن می‌دهد
-                # اما اگر آن تابع هم نقطه دارد، باید آن را هم اسکیپ کنید:
                 formatted_val = format_daily_usage(val).replace('.', '\\.')
                 lines.append(f"{flag} : {formatted_val}")
         else:
-             # اصلاح: دبل بک‌اسلش برای ارسال صحیح کاراکتر اسکیپ شده
              lines.append("   \\(بدون سرویس\\)")
 
-        expire_days = user_data.get('remaining_days')
-        if expire_days is not None:
-            # اصلاح: اسکیپ کردن علامت منفی احتمالی
-            lines.append(f"📅 انقضا : {esc_num(expire_days)} روز")
+        # اصلاح بخش انقضا: محاسبه روزهای باقی‌مانده از روی timestamp
+        expire_ts = user_data.get('expire')
+        if expire_ts:
+            try:
+                # تبدیل timestamp به datetime
+                if isinstance(expire_ts, (int, float)):
+                    expire_dt = datetime.fromtimestamp(expire_ts)
+                else:
+                    expire_dt = expire_ts # فرض بر اینکه شاید خودش datetime باشد
+
+                now = datetime.now()
+                # محاسبه اختلاف روز
+                remaining_days = (expire_dt - now).days
+                
+                if remaining_days < 0:
+                    lines.append(f"📅 انقضا : منقضی شده")
+                else:
+                    lines.append(f"📅 انقضا : {esc_num(remaining_days)} روز")
+            except Exception:
+                # در صورت خطا در تبدیل تاریخ
+                lines.append(f"📅 انقضا : نامحدود")
         else:
             lines.append(f"📅 انقضا : نامحدود")
-
-        lines.append("") 
-        
-        # اصلاح نهایی برای مجموع مصرف امروز
-        final_daily = format_daily_usage(total_daily_all).replace('.', '\\.')
-        lines.append(f"⚡️ مجموع کل مصرف امروز : {final_daily}")
 
         return "\n".join(lines)
