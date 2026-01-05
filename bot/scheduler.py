@@ -59,7 +59,7 @@ class SchedulerManager:
             # ارسال گزارش شبانه (هم ادمین و هم کاربران)
             self.scheduler.add_job(
                 reports.nightly_report,  # نام صحیح تابع
-                trigger=CronTrigger(hour=13, minute=31),
+                trigger=CronTrigger(hour=14, minute=36),
                 args=[self.bot],
                 id="job_nightly_report",
                 replace_existing=True

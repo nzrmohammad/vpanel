@@ -14,6 +14,9 @@ from bot.formatters.admin import fmt_weekly_admin_summary
 from bot.formatters.user import fmt_user_report
 from bot.formatters.user import fmt_user_weekly_report
 
+# --- اضافه شدن ایمپورت منو ---
+from bot.keyboards.user.main import UserMainMenu
+
 from bot.config import ADMIN_IDS
 from bot.language import get_string
 
@@ -36,7 +39,7 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
     logger.info(f"SCHEDULER (Async): ----- Running nightly report at {now_str} -----")
 
     try:
-        # دریافت اطلاعات از پنل‌ها (I/O)
+        # دریافت اطلاعات از پنل‌ها (I/O سنگین - اجرا در ترد جداگانه)
         all_users_info_from_api = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
         
         if not all_users_info_from_api:
@@ -62,10 +65,12 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                         chunks = [admin_full_message[i:i + 4090] for i in range(0, len(admin_full_message), 4090)]
                         for i, chunk in enumerate(chunks):
                             if i > 0: chunk = f"*{escape_markdown('(ادامه گزارش جامع)')}*\n\n" + chunk
-                            await loop.run_in_executor(None, lambda: bot.send_message(chat_id=main_group_id, text=chunk, parse_mode="MarkdownV2", message_thread_id=thread_id))
+                            # اصلاح: حذف executor و استفاده مستقیم از await
+                            await bot.send_message(chat_id=main_group_id, text=chunk, parse_mode="MarkdownV2", message_thread_id=thread_id)
                             await asyncio.sleep(0.5)
                     else:
-                        await loop.run_in_executor(None, lambda: bot.send_message(chat_id=main_group_id, text=admin_full_message, parse_mode="MarkdownV2", message_thread_id=thread_id))
+                        # اصلاح: حذف executor و استفاده مستقیم از await
+                        await bot.send_message(chat_id=main_group_id, text=admin_full_message, parse_mode="MarkdownV2", message_thread_id=thread_id)
                     
                     logger.info("SCHEDULER: Admin comprehensive report sent to supergroup.")
 
@@ -78,7 +83,7 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
 
         for user_id in user_ids_to_process:
             try:
-                # جمعه‌ها گزارش شبانه نمی‌رود (چون گزارش هفتگی می‌رود)، مگر برای ادمین یا تست دستی
+                # جمعه‌ها گزارش شبانه نمی‌رود (مگر تست دستی)
                 if is_friday and user_id not in ADMIN_IDS and not target_user_id:
                     continue
 
@@ -101,7 +106,9 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                     user_report_text = await loop.run_in_executor(None, fmt_user_report, user_infos_for_report, lang_code)
                     user_full_message = user_header + user_report_text
                     
-                    sent_message = await loop.run_in_executor(None, lambda: bot.send_message(user_id, user_full_message, parse_mode="MarkdownV2"))
+                    # اصلاح: حذف executor و استفاده مستقیم از await
+                    sent_message = await bot.send_message(user_id, user_full_message, parse_mode="MarkdownV2")
+                    
                     if sent_message:
                         await loop.run_in_executor(None, db.add_sent_report, user_id, sent_message.message_id)
                 
@@ -135,7 +142,6 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
     try:
         now_str = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M")
         
-        # دریافت اطلاعات کاربران (I/O)
         all_users_info = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
         if not all_users_info:
             return
@@ -160,7 +166,8 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
                     
                     final_message = header + report_text
                     
-                    sent_message = await loop.run_in_executor(None, lambda: bot.send_message(user_id, final_message, parse_mode="MarkdownV2"))
+                    # اصلاح: استفاده مستقیم از await
+                    sent_message = await bot.send_message(user_id, final_message, parse_mode="MarkdownV2")
                     if sent_message:
                         await loop.run_in_executor(None, db.add_sent_report, user_id, sent_message.message_id)
                 
@@ -194,23 +201,20 @@ async def send_weekly_admin_summary(bot) -> None:
     loop = asyncio.get_running_loop()
 
     try:
-        # ۱. دریافت آمار و ارسال گزارش به ادمین
         report_data = await loop.run_in_executor(None, db.get_weekly_top_consumers_report)
         report_text = await loop.run_in_executor(None, fmt_weekly_admin_summary, report_data)
 
-        # ارسال به ادمین‌ها
         for admin_id in ADMIN_IDS:
             try:
-                await loop.run_in_executor(None, lambda: bot.send_message(admin_id, report_text, parse_mode="MarkdownV2"))
+                # اصلاح: استفاده مستقیم
+                await bot.send_message(admin_id, report_text, parse_mode="MarkdownV2")
             except Exception as e:
                 logger.error(f"Failed to send weekly admin summary to {admin_id}: {e}")
 
-        # ۲. ارسال پیام به کاربران برتر
         top_users = report_data.get('top_20_overall', [])
         if top_users:
             all_bot_users_with_uuids = await loop.run_in_executor(None, db.get_all_bot_users_with_uuids)
             
-            # مپ کردن نام کانفیگ به آیدی عددی تلگرام
             user_map = {}
             for user in all_bot_users_with_uuids:
                 name = user.get('config_name')
@@ -229,37 +233,21 @@ async def send_weekly_admin_summary(bot) -> None:
                     if user_id:
                         lang_code = await loop.run_in_executor(None, db.get_user_language, user_id)
                         
-                        # انتخاب کلید مناسب بر اساس رتبه
-                        if rank == 1:
-                            key = "weekly_top_user_rank_1"
-                        elif rank == 2:
-                            key = "weekly_top_user_rank_2"
-                        elif rank == 3:
-                            key = "weekly_top_user_rank_3"
-                        elif rank == 4:
-                            key = "weekly_top_user_rank_4"
-                        elif rank == 5:
-                            key = "weekly_top_user_rank_5"
-                        else:
-                            key = "weekly_top_user_rank_6_to_20"
+                        if rank == 1: key = "weekly_top_user_rank_1"
+                        elif rank == 2: key = "weekly_top_user_rank_2"
+                        elif rank == 3: key = "weekly_top_user_rank_3"
+                        elif rank == 4: key = "weekly_top_user_rank_4"
+                        elif rank == 5: key = "weekly_top_user_rank_5"
+                        else: key = "weekly_top_user_rank_6_to_20"
                         
-                        # دریافت متن خام از فایل زبان
                         template = get_string(key, lang_code)
-                        
-                        # جایگذاری متغیرها
-                        # نکته: اگر در متن رتبه‌های ۱ تا ۵ متغیر {rank} نباشد، پایتون ارور نمی‌دهد (چون kwargs اضافی نادیده گرفته نمی‌شود اما format منعطف نیست)
-                        # پس بهتر است دیکشنری متغیرها را بسازیم و آنپک کنیم
-                        format_args = {
-                            "usage": formatted_usage,
-                            "rank": rank
-                        }
-                        
+                        format_args = {"usage": formatted_usage, "rank": rank}
                         final_msg = template.format(**format_args)
                         
-                        # ارسال پیام
-                        await loop.run_in_executor(None, send_warning_message, bot, user_id, final_msg, name=user_name)
+                        # اصلاح مهم: اگر send_warning_message ناهمگام است (که باید باشد)، نباید در executor اجرا شود.
+                        # فرض بر این است که تابع زیر async است.
+                        await send_warning_message(bot, user_id, final_msg, name=user_name)
                         
-                        # وقفه کوتاه برای جلوگیری از لیمیت تلگرام
                         await asyncio.sleep(0.5)
 
                 except KeyError as e:
@@ -285,7 +273,6 @@ async def send_monthly_satisfaction_survey(bot) -> None:
         now_gregorian = datetime.now(tehran_tz)
         now_shamsi = jdatetime.datetime.fromgregorian(datetime=now_gregorian)
         
-        # چک کردن آیا آخرین جمعه ماه شمسی است؟
         next_week_gregorian = now_gregorian + timedelta(days=7)
         next_week_shamsi = jdatetime.datetime.fromgregorian(datetime=next_week_gregorian)
         is_last_shamsi_friday = (now_shamsi.month != next_week_shamsi.month)
@@ -297,12 +284,17 @@ async def send_monthly_satisfaction_survey(bot) -> None:
         logger.info("SCHEDULER: It's the last Shamsi Friday! Sending survey.")
         
         user_ids = list(await loop.run_in_executor(None, db.get_all_user_ids))
-        kb = menu.feedback_rating_menu() # منو استاتیک است نیاز به executor ندارد
+        
+        # اصلاح: ساخت نمونه از کلاس منو و فراخوانی صحیح
+        menu = UserMainMenu()
+        kb = await menu.feedback_rating_menu() 
+
         prompt = "🗓 *گزارش ماهانه*\n\nچقدر از عملکرد و پایداری سرویس ما در این ماه راضی بودید؟\n\nلطفاً با انتخاب ستاره‌ها، به ما امتیاز دهید:"
         
         for uid in user_ids:
             try:
-                await loop.run_in_executor(None, lambda: bot.send_message(uid, prompt, reply_markup=kb, parse_mode="Markdown"))
+                # اصلاح: استفاده مستقیم
+                await bot.send_message(uid, prompt, reply_markup=kb, parse_mode="Markdown")
                 await asyncio.sleep(0.05)
             except Exception as e:
                 logger.warning(f"Failed to send feedback poll to user {uid}: {e}")
