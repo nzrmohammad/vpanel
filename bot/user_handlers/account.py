@@ -127,9 +127,8 @@ async def account_detail_handler(call: types.CallbackQuery):
             info = await combined_handler.get_combined_user_info(str(uuid_str))
 
         if info:
-            # نمایش اطلاعات اکانت
-            context_data = await ContextService.get_user_context_data(user_id)
-            info['db_id'] = acc_id 
+            context_data = await ContextService.get_user_context_full(str(uuid_str))
+            info['db_id'] = acc_id
             text = user_formatter.profile.profile_info(info, lang, context_data)
             markup = await user_menu.account_menu(acc_id, lang)
             
@@ -177,7 +176,7 @@ async def _show_quick_stats(call: types.CallbackQuery, page: int):
     lang = await db.get_user_language(user_id)
     accounts = await db.uuids(user_id)
     
-    text, menu_data = await user_formatter.quick_stats(accounts, page, lang)
+    text, menu_data = await user_formatter.profile.quick_stats(accounts, page, lang)
     
     markup = await user_menu.quick_stats_menu(
         num_accounts=menu_data['num_accounts'], 
@@ -284,7 +283,7 @@ async def process_change_name_step(message: types.Message):
             if info:
                 # --- تغییر اصلاحی ---
                 # دریافت کانتکست برای نمایش صحیح پرچم‌ها و اطلاعات تکمیلی
-                context_data = await ContextService.get_user_context_data(user_id)
+                context_data = await ContextService.get_user_context_full(uuid_str)
 
                 info['db_id'] = acc_id
                 info['name'] = new_name

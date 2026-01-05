@@ -3,6 +3,7 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 import pytz
 import jdatetime
 from sqlalchemy import select
@@ -10,7 +11,6 @@ from telebot import apihelper
 
 from bot import combined_handler
 from bot.database import db
-# تغییر: اضافه کردن ServerCategory به ایمپورت‌ها
 from bot.db.base import Panel, ServerCategory
 from bot.utils.formatters import escape_markdown
 
@@ -29,28 +29,23 @@ logger = logging.getLogger(__name__)
 async def get_dynamic_type_flags() -> dict:
     """
     پرچم‌های سیستم را بر اساس پنل‌های فعال موجود در دیتابیس استخراج می‌کند.
-    خروجی: {'hiddify': '🇩🇪', 'marzban': '🇫🇷🇮🇷', ...}
     """
     type_flags = {}
     try:
         async with db.get_session() as session:
-            # تغییر: جوین کردن با ServerCategory برای دریافت ایموجی پرچم
             stmt = select(Panel, ServerCategory).join(
                 ServerCategory, Panel.category == ServerCategory.code, isouter=True
             ).where(Panel.is_active == True)
             
-            # دریافت نتیجه به صورت تاپل (Panel, ServerCategory)
             rows = (await session.execute(stmt)).all()
             
             temp_map = {}
             for panel, category in rows:
-                # تغییر: استفاده از panel_type به جای type که وجود نداشت
                 if not panel.panel_type: continue
                 
                 p_type = panel.panel_type
                 if p_type not in temp_map: temp_map[p_type] = set()
                 
-                # تغییر: دریافت پرچم از category.emoji
                 flag = category.emoji if (category and category.emoji) else '🏳️'
                 temp_map[p_type].add(flag)
             
@@ -87,14 +82,13 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
     start_of_day_tehran = now_tehran.replace(hour=0, minute=0, second=0, microsecond=0)
     start_of_day_utc = start_of_day_tehran.astimezone(timezone.utc)
 
-    # بررسی جمعه (0 شنبه تا 6 جمعه در jdatetime)
     is_friday = jdatetime.datetime.fromgregorian(datetime=now_tehran).weekday() == 6
     now_str = jdatetime.datetime.fromgregorian(datetime=now_tehran).strftime("%Y/%m/%d - %H:%M")
     
     logger.info(f"SCHEDULER (Async): ----- Running nightly report at {now_str} -----")
 
     try:
-        # 1. دریافت پرچم‌ها از سیستم
+        # 1. دریافت پرچم‌ها
         type_flags_map = await get_dynamic_type_flags()
 
         # 2. دریافت لیست کامل کاربران
@@ -102,8 +96,37 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
         if not all_users_info_from_api:
             return
 
-        user_info_map = {user['uuid']: user for user in all_users_info_from_api}
+        # --- اصلاح شده: ایندکس کردن بر اساس هم UUID و هم Name ---
+        uuid_groups = defaultdict(list)
+        name_groups = defaultdict(list)
+
+        for u in all_users_info_from_api:
+            # گروه‌بندی بر اساس UUID (اولویت اول)
+            u_uuid = u.get('uuid')
+            if u_uuid:
+                uuid_groups[str(u_uuid)].append(u)
+            
+            # گروه‌بندی بر اساس Name (برای مرزبان که شاید UUID نداشته باشد)
+            u_name = u.get('name')
+            if u_name:
+                name_groups[str(u_name).lower()].append(u)
         
+        # ساخت مپ نهایی (ادغام شده)
+        user_map_by_uuid = {}
+        for uid, u_list in uuid_groups.items():
+            if len(u_list) > 1:
+                user_map_by_uuid[uid] = combined_handler._merge_users_runtime(u_list)
+            else:
+                user_map_by_uuid[uid] = u_list[0]
+
+        user_map_by_name = {}
+        for uname, u_list in name_groups.items():
+            if len(u_list) > 1:
+                user_map_by_name[uname] = combined_handler._merge_users_runtime(u_list)
+            else:
+                user_map_by_name[uname] = u_list[0]
+        # ----------------------------------------------------------
+
         # 3. دریافت مصرف امروز
         daily_usage_map = await db.get_all_daily_usage_since_midnight()
 
@@ -140,8 +163,6 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                     else:
                         await bot.send_message(chat_id=main_group_id, text=admin_report_text, parse_mode="MarkdownV2", message_thread_id=thread_id)
                     
-                    logger.info("SCHEDULER: Admin report sent.")
-
             except Exception as e:
                 logger.error(f"SCHEDULER: Failed to send admin report: {e}", exc_info=True)
 
@@ -166,14 +187,21 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                 reports_content = []
                 
                 for u_row in user_uuids_from_db:
-                    # تغییر مهم: تبدیل آبجکت UUID به رشته برای مقایسه درست
                     uuid_str = str(u_row['uuid'])
                     
-                    if uuid_str in user_info_map:
-                        user_data = user_info_map[uuid_str]
+                    # 1. تلاش برای پیدا کردن با UUID
+                    user_data = user_map_by_uuid.get(uuid_str)
+                    
+                    # 2. اگر با UUID پیدا نشد، تلاش برای پیدا کردن با Name
+                    if not user_data:
+                        # دریافت نام از رکورد دیتابیس (در صورتی که وجود داشته باشد)
+                        row_name = u_row.get('name')
+                        if row_name:
+                            user_data = user_map_by_name.get(str(row_name).lower())
+                    
+                    if user_data:
                         this_uuid_daily = daily_usage_map.get(uuid_str, {})
                         
-                        # تولید گزارش کاربر
                         report_block = user_formatter.notification.nightly_report(
                             user_data, 
                             this_uuid_daily,
@@ -219,7 +247,24 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
         all_users_info = await combined_handler.get_all_users_combined()
         if not all_users_info: return
         
-        user_info_map = {u['uuid']: u for u in all_users_info}
+        # --- اصلاح شده: مپینگ دوگانه برای گزارش هفتگی هم اعمال شد ---
+        uuid_groups = defaultdict(list)
+        name_groups = defaultdict(list)
+
+        for u in all_users_info:
+            if u.get('uuid'):
+                uuid_groups[str(u.get('uuid'))].append(u)
+            if u.get('name'):
+                name_groups[str(u.get('name')).lower()].append(u)
+        
+        user_map_by_uuid = {}
+        for uid, u_list in uuid_groups.items():
+            user_map_by_uuid[uid] = combined_handler._merge_users_runtime(u_list) if len(u_list) > 1 else u_list[0]
+
+        user_map_by_name = {}
+        for uname, u_list in name_groups.items():
+            user_map_by_name[uname] = combined_handler._merge_users_runtime(u_list) if len(u_list) > 1 else u_list[0]
+        # ----------------------------------------------------------
         
         if target_user_id:
             user_ids_to_process = [target_user_id]
@@ -236,13 +281,17 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
 
                 user_uuids = await db.uuids(user_id)
                 
-                # دریافت اطلاعات uuidهایی که در مپ وجود دارند
-                # نکته: اینجا هم تبدیل str لازم است اگر db.uuids آبجکت برگرداند
                 user_infos = []
                 for u in user_uuids:
                     uuid_str = str(u['uuid'])
-                    if uuid_str in user_info_map:
-                        user_infos.append(user_info_map[uuid_str])
+                    
+                    # جستجوی دو مرحله‌ای
+                    data = user_map_by_uuid.get(uuid_str)
+                    if not data and u.get('name'):
+                         data = user_map_by_name.get(str(u['name']).lower())
+                    
+                    if data:
+                        user_infos.append(data)
                 
                 if user_infos:
                     header = f"📊 *گزارش هفتگی* {escape_markdown('-')} {escape_markdown(now_str)}{separator}"
@@ -282,7 +331,7 @@ async def send_weekly_admin_summary(bot) -> None:
                 await bot.send_message(admin_id, report_text, parse_mode="MarkdownV2")
             except Exception: pass
 
-        # ارسال پیام تشویقی/هشدار به کاربران پرمصرف (Top Users)
+        # ارسال پیام تشویقی/هشدار به کاربران پرمصرف
         top_users = top_list
         if top_users:
             all_bot_users_with_uuids = await db.get_all_bot_users_with_uuids()
@@ -342,7 +391,6 @@ async def send_monthly_satisfaction_survey(bot) -> None:
         next_week_shamsi = jdatetime.datetime.fromgregorian(datetime=next_week_gregorian)
         is_last_shamsi_friday = (now_shamsi.month != next_week_shamsi.month)
         
-        # فقط جمعه‌ها اجرا می‌شود (توسط Cron تنظیم شده)، پس شرط اضافی لازم نیست جز ماه
         if not is_last_shamsi_friday:
             logger.info("SCHEDULER: Not the last Shamsi Friday. Skipping.")
             return

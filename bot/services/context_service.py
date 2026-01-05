@@ -6,12 +6,12 @@ from sqlalchemy.orm import selectinload
 from bot.database import db
 from bot.db.base import ServerCategory, Panel, PanelNode, UserUUID, User
 
-# کش ساده برای کاهش بار دیتابیس
+# کش ساده
 _CACHE = {
     "cat_map": {"data": {}, "time": 0},
     "panel_map": {"data": {}, "time": 0}
 }
-CACHE_TTL = 300  # 5 دقیقه
+CACHE_TTL = 300 
 
 class ContextService:
     @staticmethod
@@ -32,7 +32,7 @@ class ContextService:
 
     @staticmethod
     async def get_panel_map_data():
-        """دریافت اطلاعات پنل‌ها و نودها"""
+        """دریافت اطلاعات پنل‌ها برای پرچم‌ها"""
         now = time.time()
         if now - _CACHE["panel_map"]["time"] < CACHE_TTL:
             return _CACHE["panel_map"]["data"]
@@ -66,6 +66,11 @@ class ContextService:
     @staticmethod
     async def get_user_context_full(uuid_str: str):
         """دریافت تمام اطلاعات مورد نیاز برای نمایش پروفایل کاربر"""
+        
+        # 1. دریافت مپ‌های عمومی (پرچم‌ها)
+        panel_map = await ContextService.get_panel_map_data()
+        cat_emoji_map = await ContextService.get_category_map()
+        
         async with db.get_session() as session:
             # دریافت UUID و پنل‌های مجاز
             stmt = select(UserUUID).where(UserUUID.uuid == uuid_str).options(selectinload(UserUUID.allowed_panels))
@@ -76,9 +81,13 @@ class ContextService:
             user_categories = set()
             user_id = None
             user_settings = {}
+            daily_usage = {} # مصرف روزانه
 
             if user_uuid_obj:
                 user_id = user_uuid_obj.user_id
+                # دریافت مصرف روزانه برای این اکانت خاص
+                daily_usage = await db.get_usage_since_midnight(user_uuid_obj.id)
+                
                 if user_uuid_obj.allowed_panels:
                     for panel in user_uuid_obj.allowed_panels:
                         if panel.category:
@@ -96,5 +105,8 @@ class ContextService:
             "panel_cat_map": panel_cat_map,
             "user_categories": user_categories,
             "settings": user_settings,
-            "uuid_obj": user_uuid_obj
+            "uuid_obj": user_uuid_obj,
+            "daily_usage": daily_usage,
+            "panel_map": panel_map,
+            "cat_emoji_map": cat_emoji_map
         }

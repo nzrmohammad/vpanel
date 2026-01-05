@@ -8,7 +8,9 @@ from telebot import types, apihelper
 
 from bot.database import db
 from bot.utils import escape_markdown, bytes_to_gb
-from bot.services import user_aggregator, user_modifier 
+# تغییر مهم: استفاده از combined_handler به جای user_aggregator
+from bot import combined_handler 
+from bot.services import user_modifier 
 from bot.keyboards.user import wallet as wallet_kb 
 
 logger = logging.getLogger(__name__)
@@ -66,18 +68,23 @@ async def check_and_send_warnings(bot):
     logger.info("Starting warnings check job...")
     
     try:
-        WARNING_DAYS = int(await db.get_setting('warning_days_before_expiry', 3))
-        INACTIVE_DAYS = int(await db.get_setting('inactive_days_threshold', 7))
-        EMERGENCY_GB = float(await db.get_setting('emergency_volume_gb', 1.0))
+        # اصلاح شده: استفاده از get_config به جای get_setting
+        WARNING_DAYS = int(await db.get_config('warning_days_before_expiry', 3))
+        INACTIVE_DAYS = int(await db.get_config('inactive_days_threshold', 7))
+        EMERGENCY_GB = float(await db.get_config('emergency_volume_gb', 1.0))
     except Exception as e:
         logger.error(f"Error fetching settings, using defaults: {e}")
         WARNING_DAYS = 3
         INACTIVE_DAYS = 7
         EMERGENCY_GB = 1.0
 
-    # 2. دریافت اطلاعات کاربران
-    all_users = await user_aggregator.get_all_users_info()
+    # 2. اصلاح شده: دریافت اطلاعات کاربران از combined_handler
+    all_users = await combined_handler.get_all_users_combined()
     
+    if not all_users:
+        logger.info("No users found in cache/combined handler.")
+        return
+
     for user in all_users:
         try:
             uuid = user.get('uuid')
@@ -108,12 +115,11 @@ async def check_and_send_warnings(bot):
                 days_left = (datetime.fromtimestamp(expire_ts) - datetime.now()).days
 
             # ====================================================
-            # 4. هشدار اتمام حجم + هدیه اضطراری (استفاده از تنظیمات)
+            # 4. هشدار اتمام حجم + هدیه اضطراری
             # ====================================================
             if 0 < remaining_gb < 0.2 and user.get('enable'):
                 if not await db.has_recent_warning(uuid_id_in_db, 'volume_depleted', hours=72):
                     
-                    # اضافه کردن حجم تعیین شده در تنظیمات
                     add_success = await user_modifier.add_traffic(uuid, EMERGENCY_GB)
                     
                     if add_success:
@@ -148,9 +154,8 @@ async def check_and_send_warnings(bot):
                 continue
 
             # ====================================================
-            # 3. هشدار انقضای نزدیک (استفاده از تنظیمات)
+            # 3. هشدار انقضای نزدیک
             # ====================================================
-            # استفاده از متغیر WARNING_DAYS که از دیتابیس خوانده شده
             if 0 <= days_left <= WARNING_DAYS:
                 if not await db.has_recent_warning(uuid_id_in_db, f'expiry_{days_left}d', hours=20):
                     
@@ -168,7 +173,7 @@ async def check_and_send_warnings(bot):
                 continue
 
             # ====================================================
-            # 5. پیام عدم فعالیت (استفاده از تنظیمات)
+            # 5. پیام عدم فعالیت
             # ====================================================
             last_seen_str = user.get('last_online')
             if last_seen_str and remaining_gb > 1:
@@ -180,7 +185,6 @@ async def check_and_send_warnings(bot):
                     
                     days_inactive = (datetime.utcnow() - last_seen_dt).days
                     
-                    # استفاده از متغیر INACTIVE_DAYS که از دیتابیس خوانده شده
                     if days_inactive >= INACTIVE_DAYS:
                         if not await db.has_recent_warning(uuid_id_in_db, 'inactive_reminder', hours=168):
                             msg = (

@@ -63,25 +63,19 @@ def get_status_emoji(is_active: bool) -> str:
 # توابع گرافیکی و ابزارها
 # ---------------------------------------------------------
 
-def create_progress_bar(percent: float, length: int = 12) -> str:
-    """
-    ساخت نوار پیشرفت گرافیکی
-    خروجی: 🟢 `████░░░░ 50%`
-    """
+def create_progress_bar(percent: float, length: int = 16) -> str:
+    """خروجی: 🔴 88% ███████░░░ (قسمت پر در سمت چپِ نوار)"""
     percent = max(0, min(100, percent))
     
-    # تعیین رنگ بر اساس درصد مصرف
     if percent < 60: color = "🟢"
     elif percent < 85: color = "🟡"
     else: color = "🔴"
         
     filled = int(percent / 100 * length)
-    empty = length - filled
     
-    # کاراکترهای پر و خالی
-    bar = ('█' * filled) + ('░' * empty)
+    bar = ('█' * filled) + ('░' * (length - filled))
     
-    return f"{color} `{bar} {int(percent)}%`"
+    return f"\u200f{color} `{bar} {int(percent)}%`"
 
 def json_serializer(obj):
     """تابع کمکی برای تبدیل آبجکت‌های datetime و UUID به رشته در JSON"""

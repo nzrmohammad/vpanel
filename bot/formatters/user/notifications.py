@@ -7,101 +7,91 @@ class NotificationFormatter:
     @staticmethod
     def nightly_report(user_data: dict, daily_usage: dict, type_flags_map: dict = None) -> str:
         """
-        تولید گزارش شبانه با فرمت دقیق و تفکیک شده.
+        تولید گزارش شبانه به صورت تفکیک شده (هر سرویس یک بخش مجزا)
         """
         if type_flags_map is None: type_flags_map = {}
         
         name = escape_markdown(user_data.get('name', 'User'))
         breakdown = user_data.get('breakdown', {})
         
-        # تابع کمکی داخلی برای اسکیپ کردن اعداد در MarkdownV2
-        def esc_num(val):
+        # تابع کمکی برای اسکیپ کردن اعداد در MarkdownV2
+        def esc(val):
             return str(val).replace('.', '\\.').replace('-', '\\-')
 
-        stats_by_flag = {}
-        total_limit_all = 0.0
-        total_used_all = 0.0
+        # شروع ساخت متن گزارش
+        lines = []
+        lines.append(f"👤 اکانت : *{name}*")
+        lines.append("──────────────────")
         
-        for p_uuid, p_info in breakdown.items():
+        if not breakdown:
+            lines.append("❌ هیچ سرویس فعالی یافت نشد\\.")
+            return "\n".join(lines)
+
+        # مرتب‌سازی سرویس‌ها برای نظم در نمایش
+        # مرتب‌سازی بر اساس نام سرویس یا نوع آن
+        sorted_items = sorted(breakdown.items(), key=lambda x: x[0])
+
+        for p_key, p_info in sorted_items:
             p_type = p_info.get('type', 'unknown')
             data = p_info.get('data', {})
             
-            flag = data.get('flag') 
+            # --- 1. تعیین پرچم ---
+            flag = data.get('flag')
             if not flag:
                 flag = type_flags_map.get(p_type, '🏳️')
             
-            l = float(data.get('usage_limit_GB', 0) or 0)
-            u = float(data.get('current_usage_GB', 0) or 0)
+            # --- 2. استخراج اعداد ---
+            limit = float(data.get('usage_limit_GB', 0) or 0)
+            used = float(data.get('current_usage_GB', 0) or 0)
+            remain = max(0, limit - used)
             
-            if flag not in stats_by_flag:
-                stats_by_flag[flag] = {'limit': 0.0, 'used': 0.0}
-
-            stats_by_flag[flag]['limit'] += l
-            stats_by_flag[flag]['used'] += u
+            # مصرف امروز (تقریبی بر اساس نوع پنل)
+            today_usage = daily_usage.get(p_type, 0.0)
             
-            total_limit_all += l
-            total_used_all += u
+            # --- 3. محاسبات انقضا ---
+            expire_str = "نامحدود"
+            expire_val = data.get('expire')
+            pkg_days = data.get('package_days')
+            start_date = data.get('start_date')
 
-        total_remain_all = max(0, total_limit_all - total_used_all)
+            if isinstance(expire_val, (int, float)) and expire_val > 100_000_000:
+                try:
+                    dt = datetime.fromtimestamp(expire_val)
+                    diff = (dt - datetime.now()).days
+                    if diff < 0:
+                        expire_str = "منقضی شده"
+                    else:
+                        expire_str = f"{diff} روز"
+                except: pass
+            elif pkg_days is not None:
+                try:
+                    if start_date:
+                        start = datetime.strptime(str(start_date).split(' ')[0], "%Y-%m-%d")
+                        passed = (datetime.now() - start).days
+                        rem = int(pkg_days) - passed
+                        expire_str = f"{max(0, rem)} روز"
+                    else:
+                        expire_str = f"{int(pkg_days)} روز"
+                except:
+                    expire_str = f"{int(pkg_days)} روز"
 
-        lines = []
-        
-        lines.append(f"👤 اکانت : *{name}*")
-        
-        lines.append(f"📊 حجم‌کل : {esc_num(f'{total_limit_all:.2f}')} GB")
-        for flag, info in stats_by_flag.items():
-            if info['limit'] > 0:
-                lines.append(f"{flag} : {esc_num(f'{info['limit']:.2f}')} GB")
-        
-        lines.append(f"🔥 حجم‌مصرف شده : {esc_num(f'{total_used_all:.2f}')} GB")
-        for flag, info in stats_by_flag.items():
-            if info['used'] > 0:
-                lines.append(f"{flag} : {esc_num(f'{info['used']:.2f}')} GB")
-
-        lines.append(f"📥 حجم‌باقی‌مانده : {esc_num(f'{total_remain_all:.2f}')} GB")
-        for flag, info in stats_by_flag.items():
-            remain = max(0, info['limit'] - info['used'])
-            if info['limit'] > 0:
-                lines.append(f"{flag} : {esc_num(f'{remain:.2f}')} GB")
-
-        lines.append(f"⚡️ حجم مصرف شده امروز:")
-        
-        daily_by_flag = {}
-        for d_type, d_val in daily_usage.items():
-            flag = type_flags_map.get(d_type, '🏳️')
-            daily_by_flag[flag] = daily_by_flag.get(flag, 0.0) + d_val
-
-        # نمایش مصرف روزانه فقط به صورت تفکیک شده (با پرچم)
-        if stats_by_flag:
-            for flag in stats_by_flag.keys():
-                val = daily_by_flag.get(flag, 0.0)
-                formatted_val = format_daily_usage(val).replace('.', '\\.')
-                lines.append(f"{flag} : {formatted_val}")
-        else:
-             lines.append("   \\(بدون سرویس\\)")
-
-        # اصلاح بخش انقضا: محاسبه روزهای باقی‌مانده از روی timestamp
-        expire_ts = user_data.get('expire')
-        if expire_ts:
-            try:
-                # تبدیل timestamp به datetime
-                if isinstance(expire_ts, (int, float)):
-                    expire_dt = datetime.fromtimestamp(expire_ts)
-                else:
-                    expire_dt = expire_ts # فرض بر اینکه شاید خودش datetime باشد
-
-                now = datetime.now()
-                # محاسبه اختلاف روز
-                remaining_days = (expire_dt - now).days
-                
-                if remaining_days < 0:
-                    lines.append(f"📅 انقضا : منقضی شده")
-                else:
-                    lines.append(f"📅 انقضا : {esc_num(remaining_days)} روز")
-            except Exception:
-                # در صورت خطا در تبدیل تاریخ
-                lines.append(f"📅 انقضا : نامحدود")
-        else:
-            lines.append(f"📅 انقضا : نامحدود")
+            # --- 4. ساخت بلوک نمایشی ---
+            # هدر بلوک: پرچم و نوع پنل (مثلاً: سرور 🇩🇪)
+            lines.append(f"سرور {flag}")
+            
+            # ردیف‌های اطلاعاتی
+            lines.append(f"📊 حجم‌کل : {esc(f'{limit:.2f}')} GB")
+            lines.append(f"🔥 حجم‌مصرف شده : {esc(f'{used:.2f}')} GB")
+            lines.append(f"📥 حجم‌باقی‌مانده : {esc(f'{remain:.2f}')} GB")
+            
+            # مصرف امروز
+            daily_fmt = format_daily_usage(today_usage).replace('.', '\\.')
+            lines.append(f"⚡️ حجم مصرف شده امروز : {daily_fmt}")
+            
+            # انقضا
+            lines.append(f"📅 انقضا : {esc(expire_str)}")
+            
+            # خط جداکننده برای پایان این بلوک
+            lines.append("──────────────────")
 
         return "\n".join(lines)

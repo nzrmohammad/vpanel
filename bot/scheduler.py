@@ -59,7 +59,7 @@ class SchedulerManager:
             # زمان اجرا: هر شب ساعت 23:59
             self.scheduler.add_job(
                 reports.nightly_report,
-                trigger=CronTrigger(hour=19, minute=51),
+                trigger=CronTrigger(hour=23, minute=59),
                 args=[self.bot],
                 id="job_nightly_report",
                 replace_existing=True
