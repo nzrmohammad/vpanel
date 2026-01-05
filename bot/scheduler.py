@@ -56,22 +56,14 @@ class SchedulerManager:
         # 2. گزارش‌های سیستمی (Reports)
         # -----------------------------------------------------------
         if reports:
-            # گزارش شبانه به ادمین (مثلاً ساعت 23:55)
+            # ارسال گزارش شبانه (هم ادمین و هم کاربران)
             self.scheduler.add_job(
-                reports.send_daily_admin_report, # نام تابعی که گزارش جامع ادمین را می‌فرستد
-                trigger=CronTrigger(hour=23, minute=55),
+                reports.nightly_report,  # نام صحیح تابع
+                trigger=CronTrigger(hour=13, minute=31),
                 args=[self.bot],
-                id="job_nightly_report_admin",
+                id="job_nightly_report",
                 replace_existing=True
             )
-            
-            # گزارش شبانه به کاربران (اختیاری - ساعت 21:00)
-            # self.scheduler.add_job(
-            #     reports.send_nightly_user_reports,
-            #     trigger=CronTrigger(hour=21, minute=0),
-            #     args=[self.bot],
-            #     id="job_nightly_report_users"
-            # )
 
         # -----------------------------------------------------------
         # 3. نگهداری و تعمیرات (Maintenance)
@@ -91,18 +83,6 @@ class SchedulerManager:
                 trigger=IntervalTrigger(hours=24),
                 args=[],
                 id="job_cleanup"
-            )
-
-        # -----------------------------------------------------------
-        # 4. امور مالی (Financials)
-        # -----------------------------------------------------------
-        if financials:
-            # بررسی تمدیدهای خودکار (مثلاً ساعت 4:30 صبح)
-            self.scheduler.add_job(
-                financials.process_auto_renewals,
-                trigger=CronTrigger(hour=4, minute=30),
-                args=[self.bot],
-                id="job_auto_renewals"
             )
 
         # شروع موتور زمان‌بندی
