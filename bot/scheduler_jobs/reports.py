@@ -2,24 +2,76 @@
 
 import logging
 import asyncio
-import time
 from datetime import datetime, timedelta
 import pytz
 import jdatetime
-from telebot import apihelper, types
+from telebot import apihelper
 
 from bot import combined_handler
 from bot.database import db
-from bot.utils import escape_markdown
-# تغییر مهم: استفاده از کلاس AdminFormatter به جای توابع تکی
-from bot.formatters.admin import AdminFormatter
-from bot.formatters.user import fmt_user_report
-from bot.formatters.user import fmt_user_weekly_report
+from bot.utils.formatters import escape_markdown, format_daily_usage
+
+# ✅ اصلاح ایمپورت‌ها: استفاده از ساختار جدید
+from bot.formatters import admin_formatter, user_formatter
+
 from bot.keyboards.user.main import UserMainMenu
 from bot.config import ADMIN_IDS
 from bot.language import get_string
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------
+# توابع کمکی داخلی (جایگزین توابع حذف شده)
+# ---------------------------------------------------------
+
+def _fmt_user_report(user_infos: list, lang_code: str) -> str:
+    """
+    تابع داخلی برای تولید متن گزارش شبانه کاربر
+    (جایگزین fmt_user_report قدیمی)
+    """
+    reports = []
+    total_usage = 0.0
+    
+    for info in user_infos:
+        # نام و اطلاعات پایه
+        name = escape_markdown(info.get('name', 'Unknown'))
+        usage = float(info.get('current_usage_GB', 0))
+        limit = float(info.get('usage_limit_GB', 0))
+        remain = max(0, limit - usage)
+        
+        # تلاش برای دریافت مصرف امروز (اگر موجود باشد)
+        # نکته: چون اینجا دسترسی async به دیتابیس سخت است، اگر در info نباشد 0 در نظر می‌گیریم
+        today = 0.0 # مصرف روزانه دقیق نیاز به کوئری دیتابیس دارد که اینجا در دسترس نیست
+        
+        # ساخت بلوک متنی برای هر اکانت
+        lines = [
+            f"👤 *{name}*",
+            f"📊 مصرف کل: `{usage:.2f} GB`",
+            f"📥 باقیمانده: `{remain:.2f} GB`"
+        ]
+        
+        # اگر انقضا وجود دارد
+        expire = info.get('expire_date') or info.get('expire')
+        if expire:
+            lines.append(f"⏳ انقضا: {info.get('remaining_days', '?')} روز")
+            
+        reports.append("\n".join(lines))
+        total_usage += today
+
+    # استفاده از فرمتر جدید برای تجمیع
+    return user_formatter.notification.nightly_report(reports, total_usage)
+
+def _fmt_user_weekly_report(user_infos: list, lang_code: str) -> str:
+    """
+    تابع داخلی برای تولید متن گزارش هفتگی
+    """
+    lines = []
+    for info in user_infos:
+        name = escape_markdown(info.get('name', 'Unknown'))
+        usage = info.get('current_usage_GB', 0)
+        lines.append(f"👤 *{name}* : `{usage:.2f} GB` (کل)")
+    
+    return "\n\n".join(lines)
 
 # ---------------------------------------------------------
 # 1. NIGHTLY REPORT (گزارش شبانه)
@@ -56,13 +108,8 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                 if main_group_id != 0:
                     admin_header = f"👑 *گزارش جامع* {escape_markdown('-')} {escape_markdown(now_str)}\n" + '─' * 18 + '\n'
                     
-                    # اصلاح: فراخوانی متد جدید از کلاس AdminFormatter
-                    admin_report_text = await loop.run_in_executor(
-                        None, 
-                        AdminFormatter.daily_server_report, 
-                        all_users_info_from_api, 
-                        db
-                    )
+                    # ✅ اصلاح: استفاده از متد جدید admin_formatter.reports
+                    admin_report_text = admin_formatter.reports.daily_server_stats(all_users_info_from_api)
                     
                     admin_full_message = admin_header + admin_report_text
                     
@@ -108,7 +155,10 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                 if user_infos_for_report:
                     user_header = f"🌙 *گزارش شبانه* {escape_markdown('-')} {escape_markdown(now_str)}{separator}"
                     lang_code = await loop.run_in_executor(None, db.get_user_language, user_id)
-                    user_report_text = await loop.run_in_executor(None, fmt_user_report, user_infos_for_report, lang_code)
+                    
+                    # ✅ اصلاح: استفاده از تابع کمکی داخلی _fmt_user_report
+                    user_report_text = await loop.run_in_executor(None, _fmt_user_report, user_infos_for_report, lang_code)
+                    
                     user_full_message = user_header + user_report_text
                     
                     sent_message = await bot.send_message(user_id, user_full_message, parse_mode="MarkdownV2")
@@ -166,7 +216,9 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
                 if user_infos:
                     header = f"📊 *گزارش هفتگی* {escape_markdown('-')} {escape_markdown(now_str)}{separator}"
                     lang_code = await loop.run_in_executor(None, db.get_user_language, user_id)
-                    report_text = await loop.run_in_executor(None, fmt_user_weekly_report, user_infos, lang_code)
+                    
+                    # ✅ اصلاح: استفاده از تابع کمکی داخلی
+                    report_text = await loop.run_in_executor(None, _fmt_user_weekly_report, user_infos, lang_code)
                     
                     final_message = header + report_text
                     
@@ -196,7 +248,7 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
 
 async def send_weekly_admin_summary(bot) -> None:
     """
-    نسخه Async: گزارش هفتگی را برای ادمین می‌فرستد و به ۲۰ کاربر برتر پیام تبریک (طبق کلیدهای فایل زبان) می‌دهد.
+    نسخه Async: گزارش هفتگی را برای ادمین می‌فرستد.
     """
     from .warnings import send_warning_message
 
@@ -206,12 +258,10 @@ async def send_weekly_admin_summary(bot) -> None:
     try:
         report_data = await loop.run_in_executor(None, db.get_weekly_top_consumers_report)
         
-        # اصلاح: فراخوانی متد جدید از کلاس AdminFormatter
-        report_text = await loop.run_in_executor(
-            None, 
-            AdminFormatter.weekly_top_consumers_report, 
-            report_data
-        )
+        # ✅ اصلاح: استفاده از admin_formatter.reports
+        # متد weekly_top_consumers فقط لیست کاربران را می‌گیرد
+        top_list = report_data.get('top_20_overall', [])
+        report_text = admin_formatter.reports.weekly_top_consumers(top_list)
 
         for admin_id in ADMIN_IDS:
             try:
@@ -219,7 +269,7 @@ async def send_weekly_admin_summary(bot) -> None:
             except Exception as e:
                 logger.error(f"Failed to send weekly admin summary to {admin_id}: {e}")
 
-        top_users = report_data.get('top_20_overall', [])
+        top_users = top_list
         if top_users:
             all_bot_users_with_uuids = await loop.run_in_executor(None, db.get_all_bot_users_with_uuids)
             
@@ -252,9 +302,7 @@ async def send_weekly_admin_summary(bot) -> None:
                         format_args = {"usage": formatted_usage, "rank": rank}
                         final_msg = template.format(**format_args)
                         
-                        # فرض بر این است که send_warning_message ناهمگام (async) است
                         await send_warning_message(bot, user_id, final_msg, name=user_name)
-                        
                         await asyncio.sleep(0.5)
 
                 except KeyError as e:

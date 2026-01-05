@@ -9,12 +9,11 @@ from sqlalchemy import select
 
 from bot.bot_instance import bot
 from bot.keyboards import user_menu
-from bot.formatters import user_formatter
+from bot.formatters import user_formatter, admin_formatter
 from bot.database import db
 from bot.db.base import UserUUID, Panel
 from bot.language import get_string
 from bot.services.panels import PanelFactory
-from bot.formatters.admin import AdminFormatter
 from bot.utils.formatters import escape_markdown
 from bot import combined_handler
 
@@ -187,7 +186,8 @@ async def _show_new_service_preview(call, plan_id, user_id):
     plan_cat_code = plan['allowed_categories'][0] if plan['allowed_categories'] else None
     plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
     
-    text = user_formatter.generate_new_preview_text(plan, plan_cat_info)
+    cat_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
+    text = user_formatter.services.new_service_preview(plan, cat_emoji)
     
     markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_buy_new:{plan_id}",lang_code=lang)
     
@@ -278,7 +278,8 @@ async def handler_preview_renew(call: types.CallbackQuery):
         plan_cat_info = next((c for c in categories if c['code'] == plan_cat_code), None)
         
         # تولید متن پیش‌نمایش
-        text = await user_formatter.generate_renewal_preview_text(uuid_obj, plan, plan_cat_info, categories, current_stats)
+        cat_emoji = plan_cat_info['emoji'] if plan_cat_info else ""
+        text = user_formatter.services.renewal_preview(current_stats, plan, cat_emoji)
         
         markup = await user_menu.confirm_payment_menu(confirm_callback=f"wallet:do_renew:{uuid_id}:{plan_id}",cancel_callback="view_plans",lang_code=lang)
         
@@ -479,9 +480,9 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
     markup = await user_menu.post_charge_menu(lang)
     
     # ✅ استفاده از متد جدید purchase_receipt
-    success_text = user_formatter.purchase_receipt(
+    success_text = user_formatter.wallet.purchase_receipt(
         plan_name=plan['name'],
-        limit_gb=int(plan['volume_gb']),
+        limit=int(plan['volume_gb']),
         days=plan['days'],
         service_name=username,
         server_name=panel_name
@@ -499,21 +500,22 @@ async def _finalize_transaction(user_id, plan, username, service_data, panel_nam
         if main_group_id and int(main_group_id) != 0:
             user_info = await bot.get_chat(user_id)
             
-            # ✅ استفاده از متد جدید purchase_report
-            log_text = AdminFormatter.purchase_report(
-                user_name=user_info.first_name,
-                user_id=user_id,
-                service_name=username,
-                type_text="#تمدید" if is_renewal else "#خرید_جدید",
-                plan_name=plan['name'],
-                limit_gb=int(plan['volume_gb']),
-                days=plan['days'],
-                price=int(plan['price']),
-                uuid_str=service_data.get('uuid', username),
-                date_str=datetime.now().strftime('%Y-%m-%d %H:%M'),
-                wallet_balance=current_balance,  # مقدار جدید
-                server_name=panel_name           # مقدار جدید
-            )
+            log_data = {
+                'user_name': user_info.first_name,
+                'user_id': user_id,
+                'service_name': username,
+                'type_text': "#تمدید" if is_renewal else "#خرید_جدید",
+                'plan_name': plan['name'],
+                'limit_gb': int(plan['volume_gb']),
+                'days': plan['days'],
+                'price': int(plan['price']),
+                'uuid': service_data.get('uuid', username),
+                'date_str': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                'wallet_balance': current_balance,
+                'server_name': panel_name
+            }
+            
+            log_text = admin_formatter.reports.purchase_log(log_data)
             
             target_thread = int(shop_topic_id) if shop_topic_id and int(shop_topic_id) != 0 else None
             

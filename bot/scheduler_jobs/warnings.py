@@ -8,11 +8,44 @@ from telebot import types, apihelper
 
 from bot.database import db
 from bot.utils import escape_markdown, bytes_to_gb
-from bot.formatters.reports import get_dynamic_flags_for_user 
 from bot.services import user_aggregator, user_modifier 
 from bot.keyboards.user import wallet as wallet_kb 
 
 logger = logging.getLogger(__name__)
+
+# --- شروع کدهای اضافه شده ---
+COUNTRY_TO_EMOJI = {
+    'ir': '🇮🇷', 'fr': '🇫🇷', 'de': '🇩🇪', 'tr': '🇹🇷',
+    'us': '🇺🇸', 'gb': '🇬🇧', 'nl': '🇳🇱', 'fi': '🇫🇮',
+    'ro': '🇷🇴', 'ru': '🇷🇺', 'ua': '🇺🇦', 'ae': '🇦🇪',
+    'pl': '🇵🇱', 'ca': '🇨🇦', 'es': '🇪🇸', 'ch': '🇨🇭',
+    'se': '🇸🇪', 'no': '🇳🇴', 'it': '🇮🇹', 'in': '🇮🇳'
+}
+
+def get_dynamic_flags_for_user(user_db_record, panel_type: str) -> str:
+    """نسخه داخلی تابع دریافت پرچم"""
+    if not user_db_record: return '🌐'
+    unique_countries = set()
+    
+    # پشتیبانی از دیکشنری یا آبجکت
+    panels = user_db_record.get('allowed_panels', []) if isinstance(user_db_record, dict) else getattr(user_db_record, 'allowed_panels', [])
+    
+    if panels:
+        for panel in panels:
+            # دریافت مقادیر به صورت ایمن (هم آبجکت هم دیکشنری)
+            p_type = getattr(panel, 'type', None) if not isinstance(panel, dict) else panel.get('type')
+            if p_type and panel_type and str(p_type).lower() != str(panel_type).lower():
+                continue
+            
+            code = getattr(panel, 'country', None) if not isinstance(panel, dict) else panel.get('country')
+            if not code:
+                code = getattr(panel, 'category', None) if not isinstance(panel, dict) else panel.get('category')
+            
+            if code: unique_countries.add(code)
+            
+    if not unique_countries: return '🏳️'
+    return "".join([COUNTRY_TO_EMOJI.get(str(c).lower(), '🌐') for c in sorted(unique_countries)])
+# --- پایان کدهای اضافه شده ---
 
 async def send_warning_message(bot, user_id: int, message: str, reply_markup=None):
     """تابع کمکی برای ارسال پیام امن"""
