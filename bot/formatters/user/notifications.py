@@ -57,47 +57,50 @@ class NotificationFormatter:
         lines.append(f"📊 حجم‌کل : `{total_limit_all:.2f} GB`")
         for flag, info in stats_by_flag.items():
             if info['limit'] > 0:
-                lines.append(f"{flag} : `{info['limit']:.2f} GB`")
+                lines.append(f"{flag} : {info['limit']:.2f} GB")
         
         # بخش ۲: حجم مصرف شده
-        lines.append(f"🔥 حجم‌مصرف شده : `{total_used_all:.2f} GB`")
+        lines.append(f"🔥 حجم‌مصرف شده : {total_used_all:.2f} GB")
         for flag, info in stats_by_flag.items():
             if info['used'] > 0:
-                lines.append(f"{flag} : `{info['used']:.2f} GB`")
+                lines.append(f"{flag} : {info['used']:.2f} GB")
 
         # بخش ۳: حجم باقی‌مانده
-        lines.append(f"📥 حجم‌باقی‌مانده : `{total_remain_all:.2f} GB`")
+        lines.append(f"📥 حجم‌باقی‌مانده : {total_remain_all:.2f} GB")
         for flag, info in stats_by_flag.items():
             remain = max(0, info['limit'] - info['used'])
             if info['limit'] > 0:
-                lines.append(f"{flag} : `{remain:.2f} GB`")
+                lines.append(f"{flag} : {remain:.2f} GB")
 
         # بخش ۴: مصرف امروز (daily_usage کلیدش نوع پنل است، باید به پرچم تبدیل شود)
         lines.append(f"⚡️ حجم مصرف شده امروز:")
-        has_daily = False
         
         # تبدیل daily_usage (که بر اساس تایپ است) به گروه‌بندی پرچمی
         daily_by_flag = {}
         for d_type, d_val in daily_usage.items():
-            if d_val > 0.001:
-                flag = type_flags_map.get(d_type, '🏳️')
-                daily_by_flag[flag] = daily_by_flag.get(flag, 0.0) + d_val
+            # تمام مقادیر را جمع می‌کنیم (حتی صفرها)
+            flag = type_flags_map.get(d_type, '🏳️')
+            daily_by_flag[flag] = daily_by_flag.get(flag, 0.0) + d_val
 
-        for flag, val in daily_by_flag.items():
-            lines.append(f"{flag} : `{format_daily_usage(val)}`")
-            has_daily = True
-        
-        if not has_daily:
-            lines.append("   (بدون مصرف)")
+        # تغییر کلیدی: پیمایش روی تمام پرچم‌هایی که کاربر دارد (stats_by_flag)
+        # این باعث می‌شود حتی اگر مصرف امروز 0 باشد، پرچم نمایش داده شود.
+        if stats_by_flag:
+            for flag in stats_by_flag.keys():
+                val = daily_by_flag.get(flag, 0.0)
+                lines.append(f"{flag} : {format_daily_usage(val)}")
+        else:
+             # حالت بسیار نادر که کاربر هیچ سرویسی ندارد
+             lines.append("   \(بدون سرویس\)")
 
         # بخش ۵: انقضا
         expire_days = user_data.get('remaining_days')
         if expire_days is not None:
+            # نمایش عدد داخل Code Block برای جلوگیری از بهم ریختگی اعداد منفی
             lines.append(f"📅 انقضا : {expire_days} روز")
         else:
             lines.append(f"📅 انقضا : نامحدود")
 
         lines.append("") 
-        lines.append(f"⚡️ مجموع کل مصرف امروز : `{format_daily_usage(total_daily_all)}`")
+        lines.append(f"⚡️ مجموع کل مصرف امروز : {format_daily_usage(total_daily_all)}")
 
         return "\n".join(lines)

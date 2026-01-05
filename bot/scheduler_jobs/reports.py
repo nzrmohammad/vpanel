@@ -10,7 +10,8 @@ from telebot import apihelper
 
 from bot import combined_handler
 from bot.database import db
-from bot.db.base import Panel
+# تغییر: اضافه کردن ServerCategory به ایمپورت‌ها
+from bot.db.base import Panel, ServerCategory
 from bot.utils.formatters import escape_markdown
 
 # ایمپورت‌های ضروری
@@ -33,15 +34,25 @@ async def get_dynamic_type_flags() -> dict:
     type_flags = {}
     try:
         async with db.get_session() as session:
-            stmt = select(Panel).where(Panel.is_active == True)
-            panels = (await session.execute(stmt)).scalars().all()
+            # تغییر: جوین کردن با ServerCategory برای دریافت ایموجی پرچم
+            stmt = select(Panel, ServerCategory).join(
+                ServerCategory, Panel.category == ServerCategory.code, isouter=True
+            ).where(Panel.is_active == True)
+            
+            # دریافت نتیجه به صورت تاپل (Panel, ServerCategory)
+            rows = (await session.execute(stmt)).all()
             
             temp_map = {}
-            for p in panels:
-                if not p.type: continue
-                if p.type not in temp_map: temp_map[p.type] = set()
-                if p.flag:
-                    temp_map[p.type].add(p.flag)
+            for panel, category in rows:
+                # تغییر: استفاده از panel_type به جای type که وجود نداشت
+                if not panel.panel_type: continue
+                
+                p_type = panel.panel_type
+                if p_type not in temp_map: temp_map[p_type] = set()
+                
+                # تغییر: دریافت پرچم از category.emoji
+                flag = category.emoji if (category and category.emoji) else '🏳️'
+                temp_map[p_type].add(flag)
             
             for p_type, flags_set in temp_map.items():
                 sorted_flags = "".join(sorted(list(flags_set)))
@@ -76,6 +87,7 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
     start_of_day_tehran = now_tehran.replace(hour=0, minute=0, second=0, microsecond=0)
     start_of_day_utc = start_of_day_tehran.astimezone(timezone.utc)
 
+    # بررسی جمعه (0 شنبه تا 6 جمعه در jdatetime)
     is_friday = jdatetime.datetime.fromgregorian(datetime=now_tehran).weekday() == 6
     now_str = jdatetime.datetime.fromgregorian(datetime=now_tehran).strftime("%Y/%m/%d - %H:%M")
     
@@ -154,7 +166,9 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                 reports_content = []
                 
                 for u_row in user_uuids_from_db:
-                    uuid_str = u_row['uuid']
+                    # تغییر مهم: تبدیل آبجکت UUID به رشته برای مقایسه درست
+                    uuid_str = str(u_row['uuid'])
+                    
                     if uuid_str in user_info_map:
                         user_data = user_info_map[uuid_str]
                         this_uuid_daily = daily_usage_map.get(uuid_str, {})
@@ -221,7 +235,14 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
                     continue
 
                 user_uuids = await db.uuids(user_id)
-                user_infos = [user_info_map[u['uuid']] for u in user_uuids if u['uuid'] in user_info_map]
+                
+                # دریافت اطلاعات uuidهایی که در مپ وجود دارند
+                # نکته: اینجا هم تبدیل str لازم است اگر db.uuids آبجکت برگرداند
+                user_infos = []
+                for u in user_uuids:
+                    uuid_str = str(u['uuid'])
+                    if uuid_str in user_info_map:
+                        user_infos.append(user_info_map[uuid_str])
                 
                 if user_infos:
                     header = f"📊 *گزارش هفتگی* {escape_markdown('-')} {escape_markdown(now_str)}{separator}"
