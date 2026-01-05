@@ -54,7 +54,7 @@ class NotificationFormatter:
         lines.append(f"👤 اکانت : *{name}*")
         
         # بخش ۱: حجم کل
-        lines.append(f"📊 حجم‌کل : `{total_limit_all:.2f} GB`")
+        lines.append(f"📊 حجم‌کل : {total_limit_all:.2f} GB")
         for flag, info in stats_by_flag.items():
             if info['limit'] > 0:
                 lines.append(f"{flag} : {info['limit']:.2f} GB")
