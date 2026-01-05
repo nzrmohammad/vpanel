@@ -1,6 +1,7 @@
 # bot/formatters/admin.py
 
-from bot.utils.formatters import format_currency, format_date, get_status_emoji
+import time
+from bot.utils.formatters import format_currency, format_date, get_status_emoji, bytes_to_gb, escape_markdown
 from bot.utils.date_helpers import to_shamsi, days_until_next_birthday
 from bot.config import EMOJIS
 
@@ -17,31 +18,25 @@ class AdminFormatter:
     def user_details(user_data, panel_name: str) -> str:
         """
         نمایش ریز جزئیات کاربر (کانفیگ) در پنل مدیریت
-        قابل استفاده برای دیکشنری یا آبجکت UserUUID
         """
-        # استخراج داده‌ها با تابع کمکی (سازگار با هر دو حالت)
         name = AdminFormatter._get_val(user_data, 'name') or "بی‌نام"
         uuid = AdminFormatter._get_val(user_data, 'uuid') or "---"
         is_active = AdminFormatter._get_val(user_data, 'is_active', True)
         status = "🟢 فعال" if is_active else "🔴 غیرفعال"
         
-        # تشخیص آنلاین بودن (مخصوص پنل‌هایی که این دیتا را می‌دهند)
         last_online = AdminFormatter._get_val(user_data, 'last_online') or AdminFormatter._get_val(user_data, 'online_at')
         if last_online:
             online_str = f"🕒 {format_date(last_online) if isinstance(last_online, (int, float)) else last_online}"
         else:
             online_str = "⚫️ آفلاین"
 
-        # حجم مصرفی (اگر آبجکت دیتابیس باشد، ممکن است نیاز به محاسبه جدا باشد)
-        # فرض بر این است که مقادیر usage قبلاً محاسبه و به اتریبیوت اضافه شده‌اند
         usage_val = AdminFormatter._get_val(user_data, 'current_usage_GB', 0)
         limit_val = AdminFormatter._get_val(user_data, 'usage_limit_GB', 0)
         usage_str = f"{usage_val} / {limit_val} GB"
         
-        expire_days = AdminFormatter._get_val(user_data, 'expire_days') # یا نام فیلد مشابه
+        expire_days = AdminFormatter._get_val(user_data, 'expire_days')
         if expire_days is None:
              expire_days = AdminFormatter._get_val(user_data, 'remaining_days')
-
         expire_str = f"{expire_days} روز" if expire_days is not None else "نامحدود"
 
         return (
@@ -58,18 +53,16 @@ class AdminFormatter:
     @staticmethod
     def user_list_row(user, index: int) -> str:
         """
-        یک خط خلاصه برای نمایش در لیست‌های طولانی (Pagination)
+        یک خط خلاصه برای نمایش در لیست‌های طولانی
         """
         is_active = AdminFormatter._get_val(user, 'is_active', False)
         status_icon = "✅" if is_active else "❌"
-        
         name = AdminFormatter._get_val(user, 'name') or AdminFormatter._get_val(user, 'first_name') or 'Unknown'
         
-        # هندل کردن تفاوت فیلدها در User (تلگرام) و UserUUID (کانفیگ)
-        if hasattr(user, 'wallet_balance'): # اگر آبجکت User تلگرام باشد
+        if hasattr(user, 'wallet_balance'):
             balance = AdminFormatter._get_val(user, 'wallet_balance', 0)
             extra_info = f"{int(balance):,} T"
-        else: # اگر کانفیگ باشد
+        else:
             usage = AdminFormatter._get_val(user, 'current_usage_GB', 0)
             extra_info = f"{usage:.1f}GB"
 
@@ -86,36 +79,23 @@ class AdminFormatter:
         
         total_pages = (total_count + page_size - 1) // page_size
         header = f"<b>{title}</b>\n(صفحه {page + 1} از {total_pages} | کل: {total_count})\n➖➖➖➖➖➖➖➖"
-        
         lines = [header]
         
         for user in users:
-            # دریافت نام
             name = AdminFormatter._get_val(user, 'first_name') or AdminFormatter._get_val(user, 'name') or "بی‌نام"
-            # ایمن‌سازی نام برای HTML
             name = str(name).replace('<', '&lt;').replace('>', '&gt;')
-            
-            # تاریخ تولد
             birthday = AdminFormatter._get_val(user, 'birthday')
             date_str = to_shamsi(birthday)
-            
-            # روزهای باقیمانده
             days = days_until_next_birthday(birthday)
-            if days == 0:
-                days_str = "امروز! 🎉"
-            elif days is not None:
-                days_str = f"{days} روز"
-            else:
-                days_str = "نامشخص"
+            days_str = "امروز! 🎉" if days == 0 else (f"{days} روز" if days is not None else "نامشخص")
             
-            # ساخت خط: 🎂 Name | Date | Days
             lines.append(f"🎂 <b>{name}</b> | {date_str} | {days_str}")
             
         return "\n".join(lines)
 
     @staticmethod
     def system_stats(stats: dict) -> str:
-        """نمایش وضعیت منابع سرور (معمولاً دیکشنری است)"""
+        """نمایش وضعیت منابع سرور"""
         return (
             f"🖥 <b>وضعیت سلامت سرور</b>\n"
             f"➖➖➖➖➖➖➖➖\n"
@@ -126,6 +106,7 @@ class AdminFormatter:
             f"\n"
             f"🔄 <i>به‌روزرسانی خودکار: هر 5 دقیقه</i>"
         )
+
     @staticmethod
     def purchase_report(user_name, user_id, service_name, type_text, plan_name, limit_gb, days, price, uuid_str, date_str, wallet_balance, server_name) -> str:
         """
@@ -143,3 +124,67 @@ class AdminFormatter:
             f"شناسه ورود : <code>{uuid_str}</code>\n"
             f"📅 تاریخ : {date_str}"
         )
+
+    # ---------------------------------------------------------
+    # متدهای جدید برای گزارش‌های اسکجولر
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def daily_server_report(users_info: list, db_instance=None) -> str:
+        """
+        ساخت متن گزارش جامع شبانه برای ادمین (جایگزین fmt_admin_report)
+        """
+        total_users = len(users_info)
+        active_users = sum(1 for u in users_info if u.get('enable', True))
+        
+        total_used = sum(u.get('current_usage_GB', 0) for u in users_info)
+        total_limit = sum(u.get('usage_limit_GB', 0) for u in users_info)
+        
+        expired_count = 0
+        expiring_soon_count = 0
+        now_ts = time.time()
+        
+        for u in users_info:
+            expire_ts = u.get('expire')
+            if expire_ts:
+                try:
+                    expire_ts = float(expire_ts)
+                    if expire_ts < now_ts:
+                        expired_count += 1
+                    elif (expire_ts - now_ts) < (3 * 86400):
+                        expiring_soon_count += 1
+                except: pass
+
+        return (
+            f"📊 *آمار کلی سرور*\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"👥 کل کاربران: `{total_users}`\n"
+            f"✅ فعال: `{active_users}`\n"
+            f"❌ غیرفعال: `{total_users - active_users}`\n"
+            f"\n"
+            f"📉 مصرف کل: `{total_used:,.2f} GB`\n"
+            f"📈 حجم کل مجاز: `{total_limit:,.2f} GB`\n"
+            f"\n"
+            f"⚠️ منقضی شده: `{expired_count}`\n"
+            f"⏳ انقضای نزدیک (۳ روز): `{expiring_soon_count}`\n"
+        )
+
+    @staticmethod
+    def weekly_top_consumers_report(data: dict) -> str:
+        """
+        فرمت‌دهی گزارش هفتگی پرمصرف‌ترین‌ها (جایگزین fmt_weekly_admin_summary)
+        """
+        top_users = data.get('top_20_overall', [])
+        
+        if not top_users:
+            return "📊 *گزارش هفتگی*\n\nهیچ مصرفی در هفته گذشته ثبت نشده است."
+            
+        lines = ["📊 *برترین مصرف‌کنندگان هفته*"]
+        lines.append("➖➖➖➖➖➖➖➖")
+        
+        for idx, user in enumerate(top_users[:15], 1):
+            name = escape_markdown(user.get('name', 'Unknown'))
+            usage = user.get('total_usage', 0)
+            lines.append(f"{idx}\\. {name}: `{usage:.2f} GB`")
+            
+        return "\n".join(lines)

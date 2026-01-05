@@ -1,3 +1,5 @@
+# bot/scheduler_jobs/reports.py
+
 import logging
 import asyncio
 import time
@@ -9,14 +11,11 @@ from telebot import apihelper, types
 from bot import combined_handler
 from bot.database import db
 from bot.utils import escape_markdown
-from bot.formatters.admin import fmt_admin_report
-from bot.formatters.admin import fmt_weekly_admin_summary
+# تغییر مهم: استفاده از کلاس AdminFormatter به جای توابع تکی
+from bot.formatters.admin import AdminFormatter
 from bot.formatters.user import fmt_user_report
 from bot.formatters.user import fmt_user_weekly_report
-
-# --- اضافه شدن ایمپورت منو ---
 from bot.keyboards.user.main import UserMainMenu
-
 from bot.config import ADMIN_IDS
 from bot.language import get_string
 
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------
 async def nightly_report(bot, target_user_id: int = None) -> None:
     """
-    نسخه Async: گزارش شبانه را برای کاربران ارسال کرده و گزارش جامع را برای ادمین‌ها در سوپرگروه می‌فرستد.
+    نسخه Async: گزارش شبانه را برای کاربران ارسال کرده و گزارش جامع را برای ادمین‌ها می‌فرستد.
     """
     tehran_tz = pytz.timezone("Asia/Tehran")
     now_gregorian = datetime.now(tehran_tz)
@@ -56,7 +55,15 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
 
                 if main_group_id != 0:
                     admin_header = f"👑 *گزارش جامع* {escape_markdown('-')} {escape_markdown(now_str)}\n" + '─' * 18 + '\n'
-                    admin_report_text = await loop.run_in_executor(None, fmt_admin_report, all_users_info_from_api, db)
+                    
+                    # اصلاح: فراخوانی متد جدید از کلاس AdminFormatter
+                    admin_report_text = await loop.run_in_executor(
+                        None, 
+                        AdminFormatter.daily_server_report, 
+                        all_users_info_from_api, 
+                        db
+                    )
+                    
                     admin_full_message = admin_header + admin_report_text
                     
                     thread_id = topic_id_log if topic_id_log != 0 else None
@@ -65,11 +72,9 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                         chunks = [admin_full_message[i:i + 4090] for i in range(0, len(admin_full_message), 4090)]
                         for i, chunk in enumerate(chunks):
                             if i > 0: chunk = f"*{escape_markdown('(ادامه گزارش جامع)')}*\n\n" + chunk
-                            # اصلاح: حذف executor و استفاده مستقیم از await
                             await bot.send_message(chat_id=main_group_id, text=chunk, parse_mode="MarkdownV2", message_thread_id=thread_id)
                             await asyncio.sleep(0.5)
                     else:
-                        # اصلاح: حذف executor و استفاده مستقیم از await
                         await bot.send_message(chat_id=main_group_id, text=admin_full_message, parse_mode="MarkdownV2", message_thread_id=thread_id)
                     
                     logger.info("SCHEDULER: Admin comprehensive report sent to supergroup.")
@@ -106,7 +111,6 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                     user_report_text = await loop.run_in_executor(None, fmt_user_report, user_infos_for_report, lang_code)
                     user_full_message = user_header + user_report_text
                     
-                    # اصلاح: حذف executor و استفاده مستقیم از await
                     sent_message = await bot.send_message(user_id, user_full_message, parse_mode="MarkdownV2")
                     
                     if sent_message:
@@ -166,7 +170,6 @@ async def weekly_report(bot, target_user_id: int = None) -> None:
                     
                     final_message = header + report_text
                     
-                    # اصلاح: استفاده مستقیم از await
                     sent_message = await bot.send_message(user_id, final_message, parse_mode="MarkdownV2")
                     if sent_message:
                         await loop.run_in_executor(None, db.add_sent_report, user_id, sent_message.message_id)
@@ -202,11 +205,16 @@ async def send_weekly_admin_summary(bot) -> None:
 
     try:
         report_data = await loop.run_in_executor(None, db.get_weekly_top_consumers_report)
-        report_text = await loop.run_in_executor(None, fmt_weekly_admin_summary, report_data)
+        
+        # اصلاح: فراخوانی متد جدید از کلاس AdminFormatter
+        report_text = await loop.run_in_executor(
+            None, 
+            AdminFormatter.weekly_top_consumers_report, 
+            report_data
+        )
 
         for admin_id in ADMIN_IDS:
             try:
-                # اصلاح: استفاده مستقیم
                 await bot.send_message(admin_id, report_text, parse_mode="MarkdownV2")
             except Exception as e:
                 logger.error(f"Failed to send weekly admin summary to {admin_id}: {e}")
@@ -244,8 +252,7 @@ async def send_weekly_admin_summary(bot) -> None:
                         format_args = {"usage": formatted_usage, "rank": rank}
                         final_msg = template.format(**format_args)
                         
-                        # اصلاح مهم: اگر send_warning_message ناهمگام است (که باید باشد)، نباید در executor اجرا شود.
-                        # فرض بر این است که تابع زیر async است.
+                        # فرض بر این است که send_warning_message ناهمگام (async) است
                         await send_warning_message(bot, user_id, final_msg, name=user_name)
                         
                         await asyncio.sleep(0.5)
@@ -259,7 +266,7 @@ async def send_weekly_admin_summary(bot) -> None:
         logger.error(f"SCHEDULER (Async): Error in weekly_admin_summary: {e}", exc_info=True)
 
 # ---------------------------------------------------------
-# 5. MONTHLY SATISFACTION SURVEY (نظرسنجی ماهانه)
+# 4. MONTHLY SATISFACTION SURVEY (نظرسنجی ماهانه)
 # ---------------------------------------------------------
 async def send_monthly_satisfaction_survey(bot) -> None:
     """
@@ -285,7 +292,6 @@ async def send_monthly_satisfaction_survey(bot) -> None:
         
         user_ids = list(await loop.run_in_executor(None, db.get_all_user_ids))
         
-        # اصلاح: ساخت نمونه از کلاس منو و فراخوانی صحیح
         menu = UserMainMenu()
         kb = await menu.feedback_rating_menu() 
 
@@ -293,7 +299,6 @@ async def send_monthly_satisfaction_survey(bot) -> None:
         
         for uid in user_ids:
             try:
-                # اصلاح: استفاده مستقیم
                 await bot.send_message(uid, prompt, reply_markup=kb, parse_mode="Markdown")
                 await asyncio.sleep(0.05)
             except Exception as e:

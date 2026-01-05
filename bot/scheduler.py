@@ -13,9 +13,8 @@ except ImportError:
     TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 # ایمپورت جاب‌ها (وظایف)
-# نکته: مطمئن شوید که فایل‌های مربوطه در پوشه bot/scheduler_jobs وجود دارند
 from bot.scheduler_jobs import warnings, reports
-# ایمپورت‌های اختیاری (اگر فایل‌هایشان را نساخته‌اید، ارور ندهد)
+# ایمپورت‌های اختیاری
 try:
     from bot.scheduler_jobs import rewards, maintenance, financials
 except ImportError:
@@ -43,7 +42,7 @@ class SchedulerManager:
         # -----------------------------------------------------------
         # 1. هشدارها (Warnings)
         # -----------------------------------------------------------
-        # چک کردن هشدارها (حجم، انقضا، عدم فعالیت) هر 10 دقیقه
+        # چک کردن هشدارها هر 10 دقیقه
         self.scheduler.add_job(
             warnings.check_and_send_warnings,
             trigger=IntervalTrigger(minutes=10),
@@ -56,12 +55,43 @@ class SchedulerManager:
         # 2. گزارش‌های سیستمی (Reports)
         # -----------------------------------------------------------
         if reports:
-            # ارسال گزارش شبانه (هم ادمین و هم کاربران)
+            # الف) گزارش شبانه (Nightly Report)
+            # زمان اجرا: هر شب ساعت 23:59
             self.scheduler.add_job(
-                reports.nightly_report,  # نام صحیح تابع
-                trigger=CronTrigger(hour=14, minute=36),
+                reports.nightly_report,
+                trigger=CronTrigger(hour=16, minute=15),
                 args=[self.bot],
                 id="job_nightly_report",
+                replace_existing=True
+            )
+
+            # ب) گزارش هفتگی کاربران (Weekly Report)
+            # زمان اجرا: جمعه‌ها ساعت 12:00 ظهر
+            self.scheduler.add_job(
+                reports.weekly_report,
+                trigger=CronTrigger(day_of_week='fri', hour=12, minute=0),
+                args=[self.bot],
+                id="job_weekly_report",
+                replace_existing=True
+            )
+
+            # ج) خلاصه هفتگی ادمین (Weekly Admin Summary)
+            # زمان اجرا: جمعه‌ها ساعت 23:30 شب
+            self.scheduler.add_job(
+                reports.send_weekly_admin_summary,
+                trigger=CronTrigger(day_of_week='fri', hour=23, minute=30),
+                args=[self.bot],
+                id="job_weekly_admin_summary",
+                replace_existing=True
+            )
+
+            # د) نظرسنجی ماهانه (Monthly Survey)
+            # زمان اجرا: جمعه‌ها ساعت 18:00 (تابع خودش چک می‌کند که جمعه آخر ماه باشد)
+            self.scheduler.add_job(
+                reports.send_monthly_satisfaction_survey,
+                trigger=CronTrigger(day_of_week='fri', hour=18, minute=0),
+                args=[self.bot],
+                id="job_monthly_survey",
                 replace_existing=True
             )
 
@@ -69,7 +99,6 @@ class SchedulerManager:
         # 3. نگهداری و تعمیرات (Maintenance)
         # -----------------------------------------------------------
         if maintenance:
-            # همگام‌سازی کاربران با پنل هر 1 ساعت
             self.scheduler.add_job(
                 maintenance.sync_users_with_panels,
                 trigger=IntervalTrigger(hours=1),
@@ -77,7 +106,6 @@ class SchedulerManager:
                 id="job_sync_panels"
             )
             
-            # پاکسازی گزارشات قدیمی هر 24 ساعت
             self.scheduler.add_job(
                 maintenance.cleanup_old_logs,
                 trigger=IntervalTrigger(hours=24),
