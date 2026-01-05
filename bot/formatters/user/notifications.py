@@ -2,7 +2,7 @@
 
 from bot.utils.formatters import escape_markdown, format_daily_usage
 
-class UserNotificationFormatter:
+class NotificationFormatter:
     
     @staticmethod
     def nightly_report(user_data: dict, daily_usage: dict, type_flags_map: dict = None) -> str:
