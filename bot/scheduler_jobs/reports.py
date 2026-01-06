@@ -174,6 +174,8 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
             
         separator = '\n' + '─' * 18 + '\n'
 
+        import time  # برای بررسی زمان انقضا
+
         for user_id in user_ids_to_process:
             try:
                 if is_friday and user_id not in ADMIN_IDS and not target_user_id:
@@ -200,6 +202,17 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                             user_data = user_map_by_name.get(str(row_name).lower())
                     
                     if user_data:
+                        # --- فیلتر کردن سرویس‌های منقضی شده ---
+                        
+                        if user_data.get('status') == 'expired':
+                            continue
+                        
+                        # 2. بررسی تاریخ انقضا (اگر وجود داشته باشد و نامحدود نباشد)
+                        expire_ts = user_data.get('expire')
+                        if expire_ts and isinstance(expire_ts, (int, float)) and expire_ts > 0:
+                            if time.time() > expire_ts:
+                                continue
+
                         this_uuid_daily = daily_usage_map.get(uuid_str, {})
                         
                         report_block = user_formatter.notification.nightly_report(
@@ -210,7 +223,7 @@ async def nightly_report(bot, target_user_id: int = None) -> None:
                         reports_content.append(report_block)
 
                 if reports_content:
-                    header = f"🌙 *گزارش شبانه* {escape_markdown('-')} {escape_markdown(now_str)}{separator}"
+                    header = f"🌙 *گزارش شبانه* {escape_markdown('-')} {escape_markdown(now_str)}\n"
                     full_body = ("\n" + separator + "\n").join(reports_content)
                     final_msg = header + full_body
                     
