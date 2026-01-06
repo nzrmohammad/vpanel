@@ -8,9 +8,7 @@ import jdatetime
 
 from sqlalchemy import select, delete, func, desc, and_, case, cast, Date, extract, distinct
 from sqlalchemy.orm import aliased
-
-# نکته مهم: اینجا دیگر DatabaseManager را ایمپورت نمی‌کنیم یا از آن ارث نمی‌بریم.
-# این کلاس فرض می‌کند که کلاسی که از آن استفاده می‌کند (BotDatabase) متد get_session را دارد.
+from bot.database import db
 from .base import UsageSnapshot, UserUUID, User
 
 logger = logging.getLogger(__name__)
@@ -18,38 +16,97 @@ logger = logging.getLogger(__name__)
 
 class UsageDB:
     """
-    کلاسی برای مدیریت تمام عملیات مربوط به آمار مصرف (usage).
-    این کلاس به صورت Mixin طراحی شده و نباید از DatabaseManager ارث‌بری کند.
+    مدیریت اسنپ‌شات‌های مصرف برای محاسبه دقیق مصرف روزانه.
     """
 
     def _calculate_diff(self, start_val: float, end_val: float) -> float:
-        """
-        محاسبه اختلاف مصرف با در نظر گرفتن ریست شدن سرور.
-        """
+        """محاسبه اختلاف مصرف با در نظر گرفتن ریست شدن سرور (منطق پروژه قدیمی)."""
         start_val = start_val or 0.0
         end_val = end_val or 0.0
         
+        # اگر مصرف فعلی بیشتر یا مساوی شروع بود، اختلاف را برگردان
         if end_val >= start_val:
             return end_val - start_val
+        # در غیر این صورت (پنل ریست شده)، کل مصرف فعلی را برگردان
         else:
             return end_val
 
-    async def add_usage_snapshot(self, uuid_id: int, hiddify_usage: float, marzban_usage: float) -> None:
-        async with self.get_session() as session:
+    async def add_usage_snapshot(self, uuid_id: int, 
+                                 hiddify_usage: float, 
+                                 marzban_usage: float, 
+                                 remnawave_usage: float, 
+                                 pasarguard_usage: float):
+        """ثبت یک اسنپ‌شات جدید در دیتابیس."""
+        async with db.get_session() as session:
             snapshot = UsageSnapshot(
                 uuid_id=uuid_id,
                 hiddify_usage_gb=hiddify_usage,
                 marzban_usage_gb=marzban_usage,
-                taken_at=datetime.now(timezone.utc)
+                remnawave_usage_gb=remnawave_usage,
+                pasarguard_usage_gb=pasarguard_usage,
+                # taken_at به صورت خودکار توسط مدل پر می‌شود (func.now)
             )
             session.add(snapshot)
             await session.commit()
 
-    async def get_usage_since_midnight(self, uuid_id: int) -> Dict[str, float]:
-        data = await self.get_bulk_usage_since_midnight([uuid_id])
-        if data:
-            return list(data.values())[0]
-        return {'hiddify': 0.0, 'marzban': 0.0}
+    async def get_usage_since_midnight(self, uuid_id: int) -> dict:
+        """
+        محاسبه مصرف دقیق امروز (از ۰۰:۰۰ بامداد) برای تمام پنل‌ها.
+        """
+        # محاسبه زمان نیمه‌شب به وقت تهران و تبدیل به UTC
+        import pytz
+        tehran_tz = pytz.timezone("Asia/Tehran")
+        now_tehran = datetime.now(tehran_tz)
+        midnight_tehran = now_tehran.replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight_utc = midnight_tehran.astimezone(timezone.utc)
+
+        async with db.get_session() as session:
+            # ۱. دریافت آخرین اسنپ‌شات قبل از نیمه‌شب (Baseline)
+            stmt_base = select(UsageSnapshot).where(
+                UsageSnapshot.uuid_id == uuid_id,
+                UsageSnapshot.taken_at < midnight_utc
+            ).order_by(desc(UsageSnapshot.taken_at)).limit(1)
+            
+            baseline = (await session.execute(stmt_base)).scalar_one_or_none()
+
+            # ۲. دریافت آخرین اسنپ‌شات ثبت شده (Current)
+            stmt_curr = select(UsageSnapshot).where(
+                UsageSnapshot.uuid_id == uuid_id
+            ).order_by(desc(UsageSnapshot.taken_at)).limit(1)
+            
+            current = (await session.execute(stmt_curr)).scalar_one_or_none()
+
+            # اگر اسنپ‌شات جدیدی نباشد، مصرف صفر است
+            if not current:
+                return {'total': 0.0, 'hiddify': 0.0, 'marzban': 0.0, 'remnawave': 0.0, 'pasarguard': 0.0}
+
+            # مقادیر شروع (اگر بیس‌لاین نباشد، یعنی کاربر امروز ساخته شده -> شروع از صفر)
+            base_h = baseline.hiddify_usage_gb if baseline else 0.0
+            base_m = baseline.marzban_usage_gb if baseline else 0.0
+            base_r = baseline.remnawave_usage_gb if baseline else 0.0
+            base_p = baseline.pasarguard_usage_gb if baseline else 0.0
+
+            # مقادیر پایان
+            curr_h = current.hiddify_usage_gb
+            curr_m = current.marzban_usage_gb
+            curr_r = current.remnawave_usage_gb
+            curr_p = current.pasarguard_usage_gb
+
+            # محاسبه اختلاف با تابع کمکی
+            usage_h = self._calculate_diff(base_h, curr_h)
+            usage_m = self._calculate_diff(base_m, curr_m)
+            usage_r = self._calculate_diff(base_r, curr_r)
+            usage_p = self._calculate_diff(base_p, curr_p)
+            
+            total = usage_h + usage_m + usage_r + usage_p
+
+            return {
+                'total': round(total, 3),
+                'hiddify': round(usage_h, 3),
+                'marzban': round(usage_m, 3),
+                'remnawave': round(usage_r, 3),
+                'pasarguard': round(usage_p, 3)
+            }
 
     async def get_usage_since_midnight_by_uuid(self, uuid_str: str) -> Dict[str, float]:
         async with self.get_session() as session:

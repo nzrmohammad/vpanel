@@ -54,8 +54,6 @@ def format_gb_ltr(value):
     if value is None:
         value = 0
     
-    # \u200e کاراکتر نامرئی LTR Mark است
-    # باعث می‌شود عدد و واحد GB به هم بچسبند و در متن فارسی جابجا نشوند
     return f"\u200e{float(value):.2f} GB"
 
 # نام جایگزین برای سازگاری با کدهای قدیمی

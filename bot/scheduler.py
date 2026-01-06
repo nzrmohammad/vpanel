@@ -59,7 +59,7 @@ class SchedulerManager:
             # زمان اجرا: هر شب ساعت 23:59
             self.scheduler.add_job(
                 reports.nightly_report,
-                trigger=CronTrigger(hour=16, minute=33),
+                trigger=CronTrigger(hour=16, minute=39),
                 args=[self.bot],
                 id="job_nightly_report",
                 replace_existing=True
@@ -99,6 +99,14 @@ class SchedulerManager:
         # 3. نگهداری و تعمیرات (Maintenance)
         # -----------------------------------------------------------
         if maintenance:
+            self.scheduler.add_job(
+            maintenance.hourly_snapshots,
+            trigger=CronTrigger(minute=55),
+            args=[self.bot],
+            id="job_hourly_snapshots",
+            replace_existing=True
+            )
+
             self.scheduler.add_job(
                 maintenance.sync_users_with_panels,
                 trigger=IntervalTrigger(hours=1),

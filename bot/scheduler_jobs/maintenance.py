@@ -112,63 +112,78 @@ async def cleanup_old_logs():
 # ---------------------------------------------------------
 async def hourly_snapshots(bot):
     """
-    ذخیره وضعیت مصرف کل کاربران برای نمودارها
+    جاب زمان‌بندی شده: دریافت اطلاعات تمام کاربران و ثبت اسنپ‌شات مصرف.
     """
-    logger.info("SNAPSHOT: Taking hourly usage snapshot...")
+    logger.info("SNAPSHOT: Starting hourly usage snapshot process...")
     loop = asyncio.get_running_loop()
-    
+
     try:
-        # دریافت اطلاعات تازه
+        # ۱. دریافت لیست تجمیعی کاربران (شامل breakdown پنل‌ها)
+        # اجرای تابع سنگین در Executor برای جلوگیری از بلاک شدن ربات
         all_users = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
-        if not all_users: return
 
-        # جمع‌بندی مصرف‌ها بر اساس نوع پنل (اختیاری)
-        # در اینجا ساده‌سازی شده و مصرف کل هر کاربر ذخیره می‌شود
+        if not all_users:
+            logger.warning("SNAPSHOT: No user data fetched from panels.")
+            return
+
+        snapshot_count = 0
         
+        # ۲. دریافت مپ UUIDهای دیتابیس برای پیدا کردن ID عددی
+        # (چون در جدول usage_snapshots باید ID عددی ذخیره کنیم نه رشته UUID)
         async with db.get_session() as session:
-            # دریافت نگاشت UUID به ID جدول
-            stmt = select(UserUUID.id, UserUUID.uuid)
-            result = await session.execute(stmt)
-            uuid_map = {str(row.uuid): row.id for row in result.all()}
-            
-            snapshots = []
-            for u_data in all_users:
-                uuid_str = u_data.get('uuid')
-                db_id = uuid_map.get(uuid_str)
-                
-                if db_id:
-                    # استخراج مصرف تفکیک شده (اگر در combined_handler موجود باشد)
-                    # فرض بر این است که breakdown داریم، اگر نه کل مصرف را می‌گذاریم
-                    h_usage = 0.0
-                    m_usage = 0.0
-                    
-                    breakdown = u_data.get('breakdown', {})
-                    if breakdown:
-                        for p_name, p_info in breakdown.items():
-                            p_type = p_info.get('type', 'unknown')
-                            u_val = p_info.get('data', {}).get('current_usage_GB', 0)
-                            
-                            if 'hiddify' in p_type: h_usage += u_val
-                            elif 'marzban' in p_type: m_usage += u_val
-                            else: h_usage += u_val # پیش‌فرض
-                    else:
-                        # حالت ساده
-                        h_usage = u_data.get('current_usage_GB', 0)
+            # گرفتن همه UUIDهای فعال
+            stmt = select(UserUUID)
+            user_uuids_db = (await session.execute(stmt)).scalars().all()
+            # مپ کردن رشته uuid به آبجکت دیتابیس: {'uuid-string': user_obj}
+            db_uuid_map = {u.uuid: u for u in user_uuids_db}
 
-                    snapshots.append(UsageSnapshot(
-                        user_uuid_id=db_id,
-                        hiddify_usage=h_usage,
-                        marzban_usage=m_usage,
-                        created_at=datetime.now()
-                    ))
+        # ۳. پردازش لیست کاربران و استخراج مصرف هر پنل
+        for user_data in all_users:
+            uuid_str = user_data.get('uuid')
             
-            if snapshots:
-                session.add_all(snapshots)
-                await session.commit()
-                logger.info(f"SNAPSHOT: Saved {len(snapshots)} usage snapshots.")
+            # اگر کاربر در دیتابیس ما نباشد، اسنپ‌شات نمی‌گیریم
+            if not uuid_str or uuid_str not in db_uuid_map:
+                continue
+
+            user_db_id = db_uuid_map[uuid_str].id
+            breakdown = user_data.get('breakdown', {})
+
+            # استخراج مصرف هر پنل از breakdown
+            # نکته: combined_handler دیتا را با ساختار {'panel_name': {'type': 'hiddify', 'data': {...}}} می‌دهد
+            
+            h_usage = 0.0
+            m_usage = 0.0
+            r_usage = 0.0
+            p_usage = 0.0
+
+            for p_info in breakdown.values():
+                p_type = p_info.get('type')
+                # فرض بر این است که current_usage_GB در دیتا موجود است
+                usage_val = p_info.get('data', {}).get('current_usage_GB', 0.0)
+
+                if p_type == 'hiddify':
+                    h_usage += usage_val
+                elif p_type == 'marzban':
+                    m_usage += usage_val
+                elif p_type == 'remnawave':
+                    r_usage += usage_val
+                elif p_type == 'pasarguard':
+                    p_usage += usage_val
+
+            # ۴. ثبت در دیتابیس
+            await db.add_usage_snapshot(
+                uuid_id=user_db_id,
+                hiddify_usage=h_usage,
+                marzban_usage=m_usage,
+                remnawave_usage=r_usage,
+                pasarguard_usage=p_usage
+            )
+            snapshot_count += 1
+
+        logger.info(f"SNAPSHOT: Successfully saved snapshots for {snapshot_count} users.")
 
     except Exception as e:
-        logger.error(f"SNAPSHOT: Error: {e}")
+        logger.error(f"SNAPSHOT: Critical error in hourly snapshot job: {e}", exc_info=True)
 
 # ---------------------------------------------------------
 # 4. آپدیت پیام آنلاین‌ها (LIVE ONLINE LIST)

@@ -83,7 +83,6 @@ class NotificationFormatter:
             lines.append(f"📥 حجم‌باقی‌مانده : {esc(format_gb_ltr(remain))}")
             
             # === اصلاح نمایش در موبایل ===
-            # اضافه کردن \u200e قبل از مقدار مصرف امروز تا در موبایل برعکس نشود
             raw_daily = format_daily_usage(today_usage)
             daily_fmt = f"\u200e{raw_daily}".replace('.', '\\.')
             
