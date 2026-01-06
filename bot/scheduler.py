@@ -59,7 +59,7 @@ class SchedulerManager:
             # زمان اجرا: هر شب ساعت 23:59
             self.scheduler.add_job(
                 reports.nightly_report,
-                trigger=CronTrigger(hour=19, minute=20),
+                trigger=CronTrigger(hour=20, minute=2),
                 args=[self.bot],
                 id="job_nightly_report",
                 replace_existing=True
@@ -101,7 +101,7 @@ class SchedulerManager:
         if maintenance:
             self.scheduler.add_job(
             maintenance.hourly_snapshots,
-            trigger=CronTrigger(minute=4),
+            trigger=CronTrigger(minute=55),
             args=[self.bot],
             id="job_hourly_snapshots",
             replace_existing=True

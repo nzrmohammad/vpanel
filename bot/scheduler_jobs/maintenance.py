@@ -30,7 +30,7 @@ async def sync_users_with_panels(bot):
     try:
         # 1. دریافت اطلاعات از API پنل‌ها (عملیات سنگین شبکه -> اجرا در Executor)
         # این کار باعث می‌شود هسته اصلی ربات بلاک نشود
-        all_users_from_api = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
+        all_users_from_api = await combined_handler.get_all_users_combined()
 
         if not all_users_from_api:
             logger.warning("SYNCER: Fetched user list is empty. Skipping sync.")
@@ -120,7 +120,7 @@ async def hourly_snapshots(bot):
 
     try:
         # ۱. دریافت اطلاعات از پنل‌ها
-        all_users = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
+        all_users = await combined_handler.get_all_users_combined()
         if not all_users:
             logger.warning("SNAPSHOT: No user data fetched.")
             return
@@ -233,7 +233,7 @@ async def update_online_reports(bot):
         if not messages: return
 
         loop = asyncio.get_running_loop()
-        all_users = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
+        all_users = await combined_handler.get_all_users_combined()
         
         # فیلتر آنلاین‌ها (زیر ۳ دقیقه)
         now = datetime.now(pytz.utc)
