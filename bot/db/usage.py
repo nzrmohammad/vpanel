@@ -8,7 +8,6 @@ import jdatetime
 
 from sqlalchemy import select, delete, func, desc, and_, case, cast, Date, extract, distinct
 from sqlalchemy.orm import aliased
-from bot.database import db
 from .base import UsageSnapshot, UserUUID, User
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,7 @@ class UsageDB:
                                  remnawave_usage: float, 
                                  pasarguard_usage: float):
         """ثبت یک اسنپ‌شات جدید در دیتابیس."""
-        async with db.get_session() as session:
+        async with self.get_session() as session:
             snapshot = UsageSnapshot(
                 uuid_id=uuid_id,
                 hiddify_usage_gb=hiddify_usage,
@@ -60,7 +59,7 @@ class UsageDB:
         midnight_tehran = now_tehran.replace(hour=0, minute=0, second=0, microsecond=0)
         midnight_utc = midnight_tehran.astimezone(timezone.utc)
 
-        async with db.get_session() as session:
+        async with self.get_session() as session:
             # ۱. دریافت آخرین اسنپ‌شات قبل از نیمه‌شب (Baseline)
             stmt_base = select(UsageSnapshot).where(
                 UsageSnapshot.uuid_id == uuid_id,

@@ -101,7 +101,7 @@ class SchedulerManager:
         if maintenance:
             self.scheduler.add_job(
             maintenance.hourly_snapshots,
-            trigger=CronTrigger(minute=55),
+            trigger=CronTrigger(minute=5),
             args=[self.bot],
             id="job_hourly_snapshots",
             replace_existing=True

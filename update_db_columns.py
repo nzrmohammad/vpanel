@@ -25,31 +25,43 @@ async def update_schema():
 
     async with engine.begin() as conn:
         # ---------------------------------------------------------
-        # 1. اضافه کردن ستون remnawave_usage_gb (تغییر قبلی)
+        # 1. اضافه کردن ستون remnawave_usage_gb
         # ---------------------------------------------------------
         try:
-            print("⚙️ [1/2] بررسی ستون remnawave_usage_gb...")
+            print("⚙️ [1/3] بررسی ستون remnawave_usage_gb...")
             await conn.execute(text("""
                 ALTER TABLE usage_snapshots 
                 ADD COLUMN IF NOT EXISTS remnawave_usage_gb FLOAT DEFAULT 0.0;
             """))
-            print("✅ ستون 'remnawave_usage_gb' بررسی/اضافه شد.")
+            print("✅ ستون 'remnawave_usage_gb' بررسی شد.")
         except Exception as e:
             print(f"⚠️ خطا در بخش 1: {e}")
 
         # ---------------------------------------------------------
-        # 2. اصلاح ستون updated_at در جدول broadcast_tasks (رفع ارور)
+        # 2. اضافه کردن ستون pasarguard_usage_gb (جدید - حل مشکل شما)
         # ---------------------------------------------------------
         try:
-            print("⚙️ [2/2] اصلاح ستون updated_at در جدول broadcast_tasks...")
+            print("⚙️ [2/3] بررسی ستون pasarguard_usage_gb...")
+            await conn.execute(text("""
+                ALTER TABLE usage_snapshots 
+                ADD COLUMN IF NOT EXISTS pasarguard_usage_gb FLOAT DEFAULT 0.0;
+            """))
+            print("✅ ستون 'pasarguard_usage_gb' با موفقیت اضافه شد.")
+        except Exception as e:
+            print(f"⚠️ خطا در بخش 2: {e}")
+
+        # ---------------------------------------------------------
+        # 3. اصلاح ستون updated_at در جدول broadcast_tasks
+        # ---------------------------------------------------------
+        try:
+            print("⚙️ [3/3] اصلاح ستون updated_at در جدول broadcast_tasks...")
             await conn.execute(text("""
                 ALTER TABLE broadcast_tasks 
                 ALTER COLUMN updated_at DROP NOT NULL;
             """))
-            print("✅ محدودیت NOT NULL از ستون 'updated_at' با موفقیت برداشته شد.")
+            print("✅ محدودیت NOT NULL از ستون 'updated_at' برداشته شد.")
         except Exception as e:
-            # اگر ارور داد شاید جدول هنوز ساخته نشده یا مشکل دیگری است
-            print(f"⚠️ خطا در بخش 2 (ممکن است قبلاً انجام شده باشد): {e}")
+            print(f"⚠️ خطا در بخش 3 (احتمالاً قبلاً انجام شده): {e}")
 
     await engine.dispose()
     print("🏁 عملیات دیتابیس به پایان رسید.")
