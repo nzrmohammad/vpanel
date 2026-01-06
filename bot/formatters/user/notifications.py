@@ -1,6 +1,5 @@
-# bot/formatters/user/notifications.py
+from bot.utils.formatters import escape_markdown, format_gb_ltr, format_daily_usage
 from datetime import datetime
-from bot.utils.formatters import escape_markdown, format_daily_usage
 
 class NotificationFormatter:
     
@@ -20,6 +19,8 @@ class NotificationFormatter:
 
         # شروع ساخت متن گزارش
         lines = []
+        
+        # 1. نام اکانت و سپس خط جداکننده (طبق درخواست شما)
         lines.append(f"👤 اکانت : *{name}*")
         lines.append("──────────────────")
         
@@ -27,8 +28,7 @@ class NotificationFormatter:
             lines.append("❌ هیچ سرویس فعالی یافت نشد\\.")
             return "\n".join(lines)
 
-        # مرتب‌سازی سرویس‌ها برای نظم در نمایش
-        # مرتب‌سازی بر اساس نام سرویس یا نوع آن
+        # مرتب‌سازی سرویس‌ها
         sorted_items = sorted(breakdown.items(), key=lambda x: x[0])
 
         for p_key, p_info in sorted_items:
@@ -45,7 +45,7 @@ class NotificationFormatter:
             used = float(data.get('current_usage_GB', 0) or 0)
             remain = max(0, limit - used)
             
-            # مصرف امروز (تقریبی بر اساس نوع پنل)
+            # مصرف امروز
             today_usage = daily_usage.get(p_type, 0.0)
             
             # --- 3. محاسبات انقضا ---
@@ -76,22 +76,21 @@ class NotificationFormatter:
                     expire_str = f"{int(pkg_days)} روز"
 
             # --- 4. ساخت بلوک نمایشی ---
-            # هدر بلوک: پرچم و نوع پنل (مثلاً: سرور 🇩🇪)
             lines.append(f"سرور {flag}")
             
-            # ردیف‌های اطلاعاتی
-            lines.append(f"📊 حجم‌کل : {esc(f'{limit:.2f}')} GB")
-            lines.append(f"🔥 حجم‌مصرف شده : {esc(f'{used:.2f}')} GB")
-            lines.append(f"📥 حجم‌باقی‌مانده : {esc(f'{remain:.2f}')} GB")
+            lines.append(f"📊 حجم‌کل : {esc(format_gb_ltr(limit))}")
+            lines.append(f"🔥 حجم‌مصرف شده : {esc(format_gb_ltr(used))}")
+            lines.append(f"📥 حجم‌باقی‌مانده : {esc(format_gb_ltr(remain))}")
             
-            # مصرف امروز
-            daily_fmt = format_daily_usage(today_usage).replace('.', '\\.')
+            # === اصلاح نمایش در موبایل ===
+            # اضافه کردن \u200e قبل از مقدار مصرف امروز تا در موبایل برعکس نشود
+            raw_daily = format_daily_usage(today_usage)
+            daily_fmt = f"\u200e{raw_daily}".replace('.', '\\.')
+            
             lines.append(f"⚡️ حجم مصرف شده امروز : {daily_fmt}")
             
-            # انقضا
             lines.append(f"📅 انقضا : {esc(expire_str)}")
             
-            # خط جداکننده برای پایان این بلوک
             lines.append("──────────────────")
 
         return "\n".join(lines)

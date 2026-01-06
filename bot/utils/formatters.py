@@ -45,6 +45,18 @@ def format_price(amount: float) -> str:
         return "{:,.0f} تومان".format(float(amount))
     except (ValueError, TypeError):
         return "0 تومان"
+    
+def format_gb_ltr(value):
+    """
+    تبدیل عدد به فرمت LTR برای نمایش صحیح در متن فارسی.
+    مثال: 8.68 -> ‎8.68 GB (با حفظ ترتیب صحیح)
+    """
+    if value is None:
+        value = 0
+    
+    # \u200e کاراکتر نامرئی LTR Mark است
+    # باعث می‌شود عدد و واحد GB به هم بچسبند و در متن فارسی جابجا نشوند
+    return f"\u200e{float(value):.2f} GB"
 
 # نام جایگزین برای سازگاری با کدهای قدیمی
 format_currency = format_price
