@@ -35,6 +35,11 @@ BOT_CONFIGS = {
         'category': 'channels', 'title': '📝 گزارشات', 'type': 'int',
         'desc': 'آیدی تاپیک برای لاگ‌های سیستم', 'def': '0'
     },
+    'topic_id_snapshots': 
+    {
+        'category': 'channels', 'title': '📊 اسنپ‌شات‌ها', 'type': 'int',
+        'desc': 'آیدی تاپیک برای ارسال اسنپ‌شات‌های مصرف', 'def': '0'
+    },
     'topic_id_shop': 
     {
         'category': 'channels', 'title': '🛒 خریدها', 'type': 'int',

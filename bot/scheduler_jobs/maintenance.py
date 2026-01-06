@@ -5,6 +5,7 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 import pytz
+import jdatetime
 from sqlalchemy import select, delete
 
 # ایمپورت‌های پروژه
@@ -112,65 +113,56 @@ async def cleanup_old_logs():
 # ---------------------------------------------------------
 async def hourly_snapshots(bot):
     """
-    جاب زمان‌بندی شده: دریافت اطلاعات تمام کاربران و ثبت اسنپ‌شات مصرف.
+    جاب زمان‌بندی شده: دریافت اطلاعات کاربران، ثبت اسنپ‌شات و ارسال گزارش به تاپیک مخصوص.
     """
     logger.info("SNAPSHOT: Starting hourly usage snapshot process...")
     loop = asyncio.get_running_loop()
 
     try:
-        # ۱. دریافت لیست تجمیعی کاربران (شامل breakdown پنل‌ها)
-        # اجرای تابع سنگین در Executor برای جلوگیری از بلاک شدن ربات
+        # ۱. دریافت اطلاعات از پنل‌ها
         all_users = await loop.run_in_executor(None, combined_handler.get_all_users_combined)
-
         if not all_users:
-            logger.warning("SNAPSHOT: No user data fetched from panels.")
+            logger.warning("SNAPSHOT: No user data fetched.")
             return
 
-        snapshot_count = 0
-        
-        # ۲. دریافت مپ UUIDهای دیتابیس برای پیدا کردن ID عددی
-        # (چون در جدول usage_snapshots باید ID عددی ذخیره کنیم نه رشته UUID)
+        # ۲. آماده‌سازی دیتابیس
         async with db.get_session() as session:
-            # گرفتن همه UUIDهای فعال
             stmt = select(UserUUID)
             user_uuids_db = (await session.execute(stmt)).scalars().all()
-            # مپ کردن رشته uuid به آبجکت دیتابیس: {'uuid-string': user_obj}
             db_uuid_map = {u.uuid: u for u in user_uuids_db}
 
-        # ۳. پردازش لیست کاربران و استخراج مصرف هر پنل
+        # متغیرهای جمع کل
+        total_hiddify = 0.0
+        total_marzban = 0.0
+        total_remnawave = 0.0
+        total_pasarguard = 0.0
+        snapshot_count = 0
+
+        # ۳. پردازش و ذخیره اسنپ‌شات‌ها
         for user_data in all_users:
             uuid_str = user_data.get('uuid')
-            
-            # اگر کاربر در دیتابیس ما نباشد، اسنپ‌شات نمی‌گیریم
             if not uuid_str or uuid_str not in db_uuid_map:
                 continue
 
             user_db_id = db_uuid_map[uuid_str].id
             breakdown = user_data.get('breakdown', {})
 
-            # استخراج مصرف هر پنل از breakdown
-            # نکته: combined_handler دیتا را با ساختار {'panel_name': {'type': 'hiddify', 'data': {...}}} می‌دهد
-            
-            h_usage = 0.0
-            m_usage = 0.0
-            r_usage = 0.0
-            p_usage = 0.0
+            h_usage, m_usage, r_usage, p_usage = 0.0, 0.0, 0.0, 0.0
 
             for p_info in breakdown.values():
                 p_type = p_info.get('type')
-                # فرض بر این است که current_usage_GB در دیتا موجود است
-                usage_val = p_info.get('data', {}).get('current_usage_GB', 0.0)
+                val = p_info.get('data', {}).get('current_usage_GB', 0.0)
+                
+                if p_type == 'hiddify': h_usage += val
+                elif p_type == 'marzban': m_usage += val
+                elif p_type == 'remnawave': r_usage += val
+                elif p_type == 'pasarguard': p_usage += val
 
-                if p_type == 'hiddify':
-                    h_usage += usage_val
-                elif p_type == 'marzban':
-                    m_usage += usage_val
-                elif p_type == 'remnawave':
-                    r_usage += usage_val
-                elif p_type == 'pasarguard':
-                    p_usage += usage_val
+            total_hiddify += h_usage
+            total_marzban += m_usage
+            total_remnawave += r_usage
+            total_pasarguard += p_usage
 
-            # ۴. ثبت در دیتابیس
             await db.add_usage_snapshot(
                 uuid_id=user_db_id,
                 hiddify_usage=h_usage,
@@ -180,11 +172,49 @@ async def hourly_snapshots(bot):
             )
             snapshot_count += 1
 
-        logger.info(f"SNAPSHOT: Successfully saved snapshots for {snapshot_count} users.")
+        logger.info(f"SNAPSHOT: Saved {snapshot_count} snapshots.")
+
+        # ---------------------------------------------------------
+        # ۴. ارسال گزارش به تاپیک اختصاصی (topic_id_snapshots)
+        # ---------------------------------------------------------
+        try:
+            # دریافت تنظیمات جدید
+            main_group_id = await db.get_config('main_group_id')
+            snapshot_topic_id = await db.get_config('topic_id_snapshots') # <--- تغییر مهم
+            
+            # فقط اگر گروپ آیدی و تاپیک آیدی تنظیم شده باشند ارسال می‌کنیم
+            if main_group_id and snapshot_topic_id and int(snapshot_topic_id) != 0:
+                
+                now_str = jdatetime.datetime.now().strftime("%Y/%m/%d - %H:%M")
+                grand_total = total_hiddify + total_marzban + total_remnawave + total_pasarguard
+
+                report_text = (
+                    f"📸 <b>گزارش وضعیت مصرف (Snapshot)</b>\n"
+                    f"📅 {now_str}\n"
+                    f"👥 تعداد سرویس‌ها: <code>{snapshot_count}</code>\n"
+                    f"──────────────\n"
+                    f"🔹 <b>Hiddify:</b> <code>{total_hiddify:,.2f} GB</code>\n"
+                    f"🔹 <b>Marzban:</b> <code>{total_marzban:,.2f} GB</code>\n"
+                    f"🔹 <b>Remnawave:</b> <code>{total_remnawave:,.2f} GB</code>\n"
+                    f"🔹 <b>Pasarguard:</b> <code>{total_pasarguard:,.2f} GB</code>\n"
+                    f"──────────────\n"
+                    f"📊 <b>مجموع کل مصرف: {grand_total:,.2f} GB</b>"
+                )
+
+                await bot.send_message(
+                    chat_id=int(main_group_id),
+                    text=report_text,
+                    parse_mode='HTML',
+                    message_thread_id=int(snapshot_topic_id) # ارسال به تاپیک اختصاصی
+                )
+            else:
+                logger.info("SNAPSHOT: Topic ID for snapshots is not set. Skipping Telegram report.")
+
+        except Exception as report_err:
+            logger.error(f"SNAPSHOT REPORT ERROR: {report_err}")
 
     except Exception as e:
-        logger.error(f"SNAPSHOT: Critical error in hourly snapshot job: {e}", exc_info=True)
-
+        logger.error(f"SNAPSHOT: Critical error: {e}", exc_info=True)
 # ---------------------------------------------------------
 # 4. آپدیت پیام آنلاین‌ها (LIVE ONLINE LIST)
 # ---------------------------------------------------------
