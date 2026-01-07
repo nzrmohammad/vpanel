@@ -37,7 +37,7 @@ async def wallet_history_handler(call: types.CallbackQuery):
     lang = await db.get_user_language(user_id)
     
     transactions = await db.get_wallet_history(user_id, limit=10)
-    text = user_formatter.wallet_history_list(transactions)
+    text = user_formatter.wallet.history_list(transactions)
 
     kb = await user_menu.wallet_history_menu(lang)
     await bot.edit_message_text(text, user_id, call.message.message_id, reply_markup=kb, parse_mode='MarkdownV2')
